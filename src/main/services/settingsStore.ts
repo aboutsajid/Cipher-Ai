@@ -15,7 +15,7 @@ const BUILT_IN_TEMPLATES: PromptTemplate[] = [
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
   baseUrl: "https://openrouter.ai/api/v1",
-  defaultModel: "qwen/qwen-coder-32b-instruct",
+  defaultModel: "qwen/qwen-2.5-coder-32b-instruct",
   routerPort: 3456,
   customTemplates: [],
   ollamaEnabled: false,
@@ -23,16 +23,16 @@ const DEFAULT_SETTINGS: Settings = {
   ollamaModels: [],
   mcpServers: [],
   models: [
-    "qwen/qwen-coder-32b-instruct",
-    "google/gemini-2.0-flash-exp:free",
+    "qwen/qwen-2.5-coder-32b-instruct",
+    "google/gemini-2.0-flash-001",
     "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-14b:free",
-    "deepseek/deepseek-chat-v3-0324:free"
+    "qwen/qwen3-14b",
+    "deepseek/deepseek-chat-v3-0324"
   ],
   routing: {
-    default: "qwen/qwen-coder-32b-instruct",
+    default: "qwen/qwen-2.5-coder-32b-instruct",
     think: "meta-llama/llama-3.3-70b-instruct:free",
-    longContext: "google/gemini-2.0-flash-exp:free"
+    longContext: "google/gemini-2.0-flash-001"
   }
 };
 
