@@ -74,7 +74,7 @@ npm run start
 
 Option A - OpenRouter:
 
-3. In `OpenRouter API Key`, paste your key (format starts with `sk-or-v1-`).
+3. In `OpenRouter API Key`, paste your key.
 4. Verify `OpenRouter Base URL` is `https://openrouter.ai/api/v1`.
 5. Choose an OpenRouter model like `qwen/qwen3-coder-flash`.
 6. Click `Save Settings`.
