@@ -81,6 +81,9 @@ interface Window {
     stats: {
       get: () => Promise<ChatStats>;
     };
+    clipboard: {
+      writeText: (text: string) => Promise<boolean>;
+    };
     router: {
       status: () => Promise<RouterStatus>;
       logs: () => Promise<string[]>;
@@ -221,6 +224,22 @@ function showToast(msg: string, duration = 2500) {
   el.textContent = msg;
   el.classList.add("show");
   setTimeout(() => el.classList.remove("show"), duration);
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  const normalized = (text ?? "").trim();
+  if (!normalized) return false;
+
+  try {
+    await navigator.clipboard.writeText(normalized);
+    return true;
+  } catch {
+    try {
+      return await window.api.clipboard.writeText(normalized);
+    } catch {
+      return false;
+    }
+  }
 }
 
 function normalizeApiKey(raw: string): string {
@@ -921,6 +940,14 @@ function createMessageWrapper(msg: Message): HTMLElement {
     editBtn.textContent = "Edit";
     actions.appendChild(editBtn);
   } else if (msg.role === "assistant") {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "msg-action-btn";
+    copyBtn.type = "button";
+    copyBtn.dataset["action"] = "copy";
+    copyBtn.dataset["msgId"] = msg.id;
+    copyBtn.textContent = "Copy";
+    actions.appendChild(copyBtn);
+
     const regenerateBtn = document.createElement("button");
     regenerateBtn.className = "msg-action-btn";
     regenerateBtn.type = "button";
@@ -1819,6 +1846,11 @@ async function addClipboardImages(files: File[]): Promise<void> {
 
 function setupComposer() {
   const input = $("composer-input") as HTMLTextAreaElement;
+  input.removeAttribute("readonly");
+  input.removeAttribute("disabled");
+  const composerInner = input.closest(".composer-inner") as HTMLElement | null;
+  composerInner?.addEventListener("click", () => input.focus());
+
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 160) + "px";
@@ -2265,6 +2297,13 @@ function setupMessageInteractions() {
         await regenerateAssistantMessage(msgId);
         return;
       }
+      if (action === "copy") {
+        const message = renderedMessages.find((item) => item.id === msgId);
+        if (!message?.content?.trim()) return;
+        const ok = await copyTextToClipboard(message.content);
+        showToast(ok ? "Response copied." : "Copy failed", 1800);
+        return;
+      }
     }
 
     const runBtn = target.closest(".run-btn") as HTMLButtonElement | null;
@@ -2291,7 +2330,8 @@ function setupMessageInteractions() {
     if (!codeEl) return;
 
     try {
-      await navigator.clipboard.writeText(codeEl.textContent ?? "");
+      const ok = await copyTextToClipboard(codeEl.textContent ?? "");
+      if (!ok) throw new Error("copy failed");
       btn.textContent = "Copied!";
       setTimeout(() => { btn.textContent = "Copy"; }, 1500);
     } catch {

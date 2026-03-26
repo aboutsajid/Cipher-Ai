@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog } from "electron";
+import { ipcMain, BrowserWindow, dialog, clipboard } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
@@ -871,6 +871,13 @@ export function registerIpcHandlers(deps: Deps): void {
       mostUsedModelCount,
       averageMessagesPerChat: totalChats > 0 ? Number((totalMessages / totalChats).toFixed(2)) : 0
     };
+  });
+
+  ipcMain.removeHandler("clipboard:writeText");
+  ipcMain.handle("clipboard:writeText", (_e, text: string) => {
+    const normalized = (text ?? "").toString();
+    clipboard.writeText(normalized);
+    return true;
   });
 
   ipcMain.removeHandler("settings:get");

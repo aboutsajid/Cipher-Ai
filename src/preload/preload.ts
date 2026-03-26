@@ -62,6 +62,9 @@ const api = {
   stats: {
     get: () => ipcRenderer.invoke("stats:get")
   },
+  clipboard: {
+    writeText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text)
+  },
   router: {
     status: () => ipcRenderer.invoke("router:status"),
     logs: () => ipcRenderer.invoke("router:logs"),

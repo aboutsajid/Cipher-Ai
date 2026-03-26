@@ -49,7 +49,10 @@
     "nsis": {
       "artifactName": "Cipher-Ai-Setup-${version}.exe",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "src/renderer/assets/cipher-ai-icon.ico",
+      "uninstallerIcon": "src/renderer/assets/cipher-ai-icon.ico",
+      "installerHeaderIcon": "src/renderer/assets/cipher-ai-icon.ico"
     }
   }
 }
