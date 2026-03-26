@@ -1,0 +1,25 @@
+{
+  "name": "cipher-ai",
+  "version": "1.0.0",
+  "description": "Cipher Ai - Desktop AI workspace with Claude Code Router",
+  "main": "dist/main/main.js",
+  "author": "Cipher",
+  "license": "MIT",
+  "scripts": {
+    "clean": "if exist dist rmdir /s /q dist",
+    "build:ts": "tsc -p tsconfig.json",
+    "build:assets": "node scripts/copy-assets.mjs",
+    "build": "npm run clean && npm run build:ts && npm run build:assets",
+    "start": "npm run build && node scripts/launch-electron.mjs",
+    "dev": "npm run build && node scripts/launch-electron.mjs"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "marked": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "^35.0.0",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,69 @@
+# Cipher AI
+
+Cipher AI is an Electron desktop workspace for AI chat, coding assistance, model comparison, and prompt workflows.
+
+Version: `1.0.0`
+
+## Features
+
+- Multi-chat interface with export and rename
+- OpenRouter and Ollama model support
+- Prompt templates and system prompt controls
+- File and folder attachments with smart bundling
+- Markdown rendering with code block copy/run actions
+- Voice-to-text input support (when available)
+- Router diagnostics and MCP server controls
+
+## Requirements
+
+- Node.js 22 LTS
+- npm 10+
+- Windows 10/11, macOS 12+, or modern Linux distro
+
+## Quick Start
+
+```bash
+git clone <your-repo-url> cipher-chat
+cd cipher-chat
+npm install
+npm run build
+```
+
+Run the app:
+
+- Windows PowerShell:
+
+```powershell
+npm.cmd run start
+```
+
+- macOS/Linux:
+
+```bash
+npm run start
+```
+
+## Development Scripts
+
+- `npm run build` - Compile TypeScript and copy renderer assets
+- `npm run start` - Build and launch Electron
+- `npm run dev` - Alias of start flow
+
+## Project Structure
+
+```text
+src/main      Electron main process + IPC handlers
+src/preload   Secure preload bridge
+src/renderer  UI (HTML/CSS/TS)
+src/shared    Shared types
+docs          Product documentation
+scripts       Build and launch helpers
+```
+
+## Documentation
+
+Full usage and setup guide: `docs/CIPHER_AI_DOCUMENTATION.md`
+
+## License
+
+MIT - see `LICENSE`.

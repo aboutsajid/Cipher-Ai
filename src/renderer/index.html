@@ -1,0 +1,295 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cipher Ai</title>
+  <link rel="icon" type="image/png" href="./assets/cipher-ai-icon.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">
+            <img src="./assets/cipher-ai-icon.png" alt="Cipher logo" class="brand-icon-image" />
+          </div>
+          <div class="brand-text">
+            <div class="cipher-logo">
+              <span class="word">Cipher</span>
+              <span class="tm">&trade;</span>
+              <span class="tool">Ai</span>
+            </div>
+            <span class="brand-motto">Free AI, No Fees. Powered by OpenRouter</span>
+          </div>
+        </div>
+        <button id="new-chat-btn" class="btn-new" title="New Chat">+</button>
+      </div>
+      <div class="chat-list-search">
+        <div class="chat-list-search-inner">
+          <span class="chat-list-search-icon" aria-hidden="true">&#128269;</span>
+          <input id="chat-search-input" class="chat-search-input" type="text" placeholder="Search chats" aria-label="Search chats" />
+          <button id="chat-search-clear-btn" class="chat-search-clear-btn" type="button" aria-label="Clear chat search">&times;</button>
+        </div>
+      </div>
+      <div id="chat-list" class="chat-list"></div>
+      <div class="sidebar-footer">
+        <button id="stats-btn" class="btn-sidebar-action btn-topbar-action" type="button">Stats</button>
+      </div>
+      <div class="sidebar-credit">
+        <span>© <span class="sidebar-credit-brand"><span class="sidebar-credit-word">Cipher</span><span class="sidebar-credit-tm">&trade;</span><span class="sidebar-credit-tool">Ai</span></span></span>
+        <span>Credit: <a href="mailto:aboutsajid@gmail.com">aboutsajid@gmail.com</a></span>
+        <span>Version 1.0.0</span>
+      </div>
+    </aside>
+
+    <main class="chat-area">
+      <header class="chat-header">
+        <div class="chat-header-left">
+          <div class="chat-title-stack">
+            <span class="chat-title-label">Chat Name</span>
+            <span id="chat-title-display" class="chat-title-display">Select a chat</span>
+          </div>
+          <div class="chat-title-actions">
+            <button id="rename-btn" class="btn-topbar-action" style="display:none">Rename</button>
+            <button id="export-btn" class="btn-topbar-action" style="display:none">Export</button>
+            <button id="system-prompt-toggle-btn" class="btn-topbar-action" style="display:none">System Prompt</button>
+          </div>
+        </div>
+        <div class="chat-header-right">
+          <button id="summarize-btn" class="btn-topbar-action" type="button">Summarize</button>
+          <button id="raw-toggle-btn" class="btn-topbar-action" type="button">Raw</button>
+          <button id="settings-toggle-btn" class="btn-topbar-action" type="button">Settings</button>
+          <button id="router-toggle-btn" class="btn-topbar-action" type="button">Router</button>
+          <div class="mode-switcher" id="mode-switcher">
+            <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
+            <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
+            <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
+          </div>
+          <button id="theme-toggle-btn" class="btn-theme" title="Switch to light mode">
+            <span id="theme-toggle-icon" aria-hidden="true">&#9728;</span>
+            <span id="theme-toggle-label">Light</span>
+          </button>
+          <div class="model-pill">
+            <span class="model-pill-icon" aria-hidden="true">◈</span>
+            <select id="model-select" class="model-select"></select>
+          </div>
+          <button id="compare-toggle-btn" class="btn-topbar-action" type="button">Compare</button>
+          <div id="compare-model-pill" class="model-pill" style="display:none">
+            <span class="model-pill-icon" aria-hidden="true">◈</span>
+            <select id="compare-model-select" class="model-select"></select>
+          </div>
+          <button id="stop-btn" class="btn-stop" style="display:none">Stop</button>
+        </div>
+      </header>
+      <section id="system-prompt-panel" class="system-prompt-panel" style="display:none">
+        <label class="field-label" for="system-prompt-input">System Prompt</label>
+        <textarea id="system-prompt-input" class="field-input" rows="3" placeholder="Optional: add instructions for this chat"></textarea>
+        <div class="system-prompt-actions">
+          <button id="save-system-prompt-btn" class="btn-ghost-sm">Save Prompt</button>
+        </div>
+      </section>
+
+      <section id="messages" class="messages">
+        <div id="chat-summary-overlay" class="chat-summary-overlay" style="display:none">
+          <div class="chat-summary-card">
+            <div class="chat-summary-head">
+              <span class="chat-summary-title">Summary</span>
+              <button id="summary-dismiss-btn" class="btn-ghost-sm" type="button">Dismiss</button>
+            </div>
+            <div id="chat-summary-content" class="chat-summary-content"></div>
+          </div>
+        </div>
+        <div class="empty-state">
+          <div class="empty-icon">✨</div>
+          <p>✨ Start a new conversation. Ask anything.</p>
+          <span><span class="empty-subtle-icon">⌘</span> Code, write, think with Cipher AI.</span>
+          <small class="empty-motto">Free AI, No Fees. Powered by OpenRouter</small>
+        </div>
+      </section>
+
+      <footer class="composer">
+        <div id="templates-dropdown" class="templates-dropdown" style="display:none">
+          <div class="templates-header">
+            <span>Prompt Templates</span>
+            <button id="save-template-btn" class="btn-ghost-sm" type="button">Save Current</button>
+          </div>
+          <div id="templates-list" class="templates-list"></div>
+        </div>
+        <div id="composer-attachments" class="composer-attachments" style="display:none"></div>
+        <div class="composer-inner">
+          <textarea id="composer-input" placeholder="Message Cipher Ai..." rows="1"></textarea>
+          <button id="templates-btn" class="btn-icon" type="button" title="Templates">⋯</button>
+          <button id="attach-btn" class="btn-icon" type="button" title="Attach files or folders">📎</button>
+          <button id="send-btn" class="btn-send">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 8L14 8M14 8L9 3M14 8L9 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+        <div class="composer-hint">
+          <span id="stream-status"></span>
+          <span class="composer-hint-right">
+            <span id="input-token-count" class="composer-token">~0 in</span>
+            <span id="context-token-count" class="composer-token">~0 ctx</span>
+            <span id="composer-shortcut-hint">Shift+Enter for new line &middot; Enter to send</span>
+          </span>
+        </div>
+      </footer>
+    </main>
+
+    <aside id="right-panel" class="right-panel" style="display:none">
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-tab="settings">Settings</button>
+        <button class="panel-tab" data-tab="router">Router</button>
+      </div>
+
+      <div class="panel-body active" data-panel="settings">
+        <div class="panel-section">
+          <label class="field-label">OpenRouter API Key</label>
+          <div class="field-row">
+            <input id="api-key-input" type="password" class="field-input" placeholder="sk-or-v1-..." />
+            <button id="toggle-key-btn" class="btn-ghost-sm">Show</button>
+          </div>
+        </div>
+        <div class="panel-section">
+          <label class="field-label">Base URL</label>
+          <input id="base-url-input" type="text" class="field-input" />
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between;align-items:center;">
+            <label class="field-label" for="ollama-enabled-toggle">Use Ollama</label>
+            <input id="ollama-enabled-toggle" type="checkbox" />
+          </div>
+        </div>
+        <div id="ollama-settings" class="panel-section" style="display:none">
+          <label class="field-label">Ollama Base URL</label>
+          <input id="ollama-base-url-input" type="text" class="field-input" placeholder="http://localhost:11434/v1" />
+        </div>
+        <div id="ollama-models-section" class="panel-section" style="display:none">
+          <div class="field-row" style="justify-content:space-between;align-items:center;">
+            <label class="field-label">Ollama Models</label>
+            <button id="refresh-ollama-models-btn" class="btn-ghost-sm" type="button">Refresh</button>
+          </div>
+          <div id="ollama-models-list" class="router-log" style="height:120px"></div>
+        </div>
+        <div class="panel-section">
+          <label class="field-label">Default Model</label>
+          <input id="default-model-input" type="text" class="field-input" placeholder="qwen/qwen-coder-32b-instruct" />
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between;align-items:center;">
+            <label class="field-label">Available Models (one per line)</label>
+            <button id="fill-models-btn" class="btn-ghost-sm" type="button">Use Recommended</button>
+          </div>
+          <textarea id="models-textarea" class="field-input" rows="6"></textarea>
+        </div>
+        <div class="btn-row">
+          <button id="save-settings-btn" class="btn-primary">Save Settings</button>
+          <button id="test-conn-btn" class="btn-ghost">Test Connection</button>
+        </div>
+        <p id="settings-status" class="status-msg"></p>
+      </div>
+
+      <div class="panel-body" data-panel="router">
+        <div class="router-status-card" id="router-status-card">
+          <div class="router-dot" id="router-dot"></div>
+          <div>
+            <span id="router-status-text">Checking...</span>
+            <small id="router-port-text"></small>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button id="start-router-btn" class="btn-primary">Start Router</button>
+          <button id="stop-router-btn" class="btn-ghost">Stop</button>
+        </div>
+        <p id="router-action-msg" class="status-msg"></p>
+        <div class="panel-section">
+          <label class="field-label">Router Log</label>
+          <div id="router-log" class="router-log"></div>
+        </div>
+        <div class="panel-section">
+          <label class="field-label">MCP Servers</label>
+          <div class="field-row">
+            <input id="mcp-name-input" class="field-input" placeholder="Name (e.g. Filesystem)" />
+          </div>
+          <div class="field-row">
+            <input id="mcp-command-input" class="field-input" placeholder="Command (e.g. npx)" />
+          </div>
+          <div class="field-row">
+            <input id="mcp-args-input" class="field-input" placeholder='Args JSON (e.g. ["-y","@modelcontextprotocol/server-filesystem","C:/"] )' />
+          </div>
+          <div class="btn-row">
+            <button id="mcp-add-btn" class="btn-primary">Add MCP</button>
+          </div>
+          <div id="mcp-list" class="mcp-list"></div>
+          <label class="field-label">Available Tools</label>
+          <div id="mcp-tools-list" class="mcp-tools-list"></div>
+          <label class="field-label">MCP Log</label>
+          <div id="mcp-log" class="router-log" style="height:120px"></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="rename-modal" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <p class="modal-title">Rename Chat</p>
+      <input id="rename-input" type="text" class="field-input" />
+      <div class="btn-row">
+        <button id="rename-confirm-btn" class="btn-primary">Rename</button>
+        <button id="rename-cancel-btn" class="btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="code-preview-modal" class="modal-overlay" style="display:none">
+    <div class="modal code-preview-modal">
+      <div class="code-preview-header">
+        <p class="modal-title">HTML Preview</p>
+        <button id="code-preview-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <iframe id="code-preview-frame" class="code-preview-frame" sandbox="allow-scripts"></iframe>
+    </div>
+  </div>
+
+  <div id="stats-modal" class="modal-overlay" style="display:none">
+    <div class="modal stats-modal">
+      <div class="stats-header">
+        <p class="modal-title">Chat Statistics</p>
+        <button id="stats-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <div class="stats-grid">
+        <div class="stats-card">
+          <span class="stats-label">Total Chats</span>
+          <strong id="stats-total-chats" class="stats-value">0</strong>
+        </div>
+        <div class="stats-card">
+          <span class="stats-label">Total Messages</span>
+          <strong id="stats-total-messages" class="stats-value">0</strong>
+        </div>
+        <div class="stats-card">
+          <span class="stats-label">Estimated Tokens</span>
+          <strong id="stats-total-tokens" class="stats-value">0</strong>
+        </div>
+        <div class="stats-card">
+          <span class="stats-label">Most Used Model</span>
+          <strong id="stats-most-used-model" class="stats-value">N/A</strong>
+          <small id="stats-most-used-count" class="stats-subvalue">0 messages</small>
+        </div>
+        <div class="stats-card">
+          <span class="stats-label">Avg Messages/Chat</span>
+          <strong id="stats-avg-per-chat" class="stats-value">0</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
+
