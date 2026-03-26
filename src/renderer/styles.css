@@ -1177,6 +1177,34 @@ textarea.field-input { resize: vertical; font-family: var(--mono); font-size: 12
   color: var(--text-3);
 }
 .messages { position: relative; }
+.scroll-bottom-btn {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 245, 196, 0.35);
+  background: rgba(10, 14, 23, 0.92);
+  color: #b9fff1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+}
+.scroll-bottom-btn:hover {
+  border-color: rgba(0, 245, 196, 0.55);
+  color: #e8fffa;
+}
+body[data-theme="light"] .scroll-bottom-btn {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(15, 23, 42, 0.22);
+  color: var(--text-1);
+}
 .chat-summary-overlay {
   position: absolute;
   top: 12px;

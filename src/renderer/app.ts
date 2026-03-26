@@ -124,10 +124,12 @@ let chatSearchQuery = "";
 let cachedChatSummaries: ChatSummary[] = [];
 const VIRTUAL_OVERSCAN_ITEMS = 8;
 const VIRTUAL_ESTIMATED_ITEM_HEIGHT = 140;
+const NEAR_BOTTOM_THRESHOLD_PX = 120;
 let renderedMessages: Message[] = [];
 let virtualItems: VirtualChatItem[] = [];
 const virtualItemHeights = new Map<string, number>();
 let virtualRenderScheduled = false;
+let shouldAutoScroll = true;
 const TOKEN_COUNTER_LIMIT = 8000;
 const TOKEN_WARNING_RATIO = 0.8;
 const TOKEN_CRITICAL_RATIO = 0.95;
@@ -846,7 +848,7 @@ async function loadChat(id: string) {
   activeAttachments = [];
   renderComposerAttachments();
   showTemplatesDropdown(false);
-  scrollToBottom();
+  scrollToBottom(true);
   updateContextTokenCount();
   await loadChatList();
 }
@@ -884,6 +886,7 @@ function clearMessages() {
   renderedMessages = [];
   virtualItems = [];
   virtualItemHeights.clear();
+  shouldAutoScroll = true;
   $("messages").appendChild(createEmptyStateElement());
   $("chat-title-display").textContent = "Select a chat";
   $("rename-btn").style.display = "none";
@@ -896,6 +899,7 @@ function clearMessages() {
   renderComposerAttachments();
   showTemplatesDropdown(false);
   updateContextTokenCount();
+  updateScrollBottomButton();
 }
 // Render Message
 function renderMessageBody(contentEl: HTMLElement, content: string, done: boolean): void {
@@ -1109,6 +1113,7 @@ function renderVirtualMessages(force = false): void {
     topSpacer.style.height = "0px";
     bottomSpacer.style.height = "0px";
     host.innerHTML = "";
+    updateScrollBottomButton();
     return;
   }
 
@@ -1174,6 +1179,7 @@ function renderVirtualMessages(force = false): void {
   if (changedMeasurements) {
     requestAnimationFrame(() => renderVirtualMessages(false));
   }
+  updateScrollBottomButton();
 }
 
 function scheduleVirtualRender(force = false): void {
@@ -1454,12 +1460,43 @@ async function openStatsModal(): Promise<void> {
   }
 }
 
-function scrollToBottom() {
+function getMessagesBottomDistance(): number {
+  const el = $("messages");
+  return Math.max(0, el.scrollHeight - (el.scrollTop + el.clientHeight));
+}
+
+function isNearBottom(threshold = NEAR_BOTTOM_THRESHOLD_PX): boolean {
+  return getMessagesBottomDistance() <= threshold;
+}
+
+function updateScrollBottomButton(): void {
+  const btn = $("scroll-bottom-btn");
+  const hasMessages = renderedMessages.length > 0;
+  const show = hasMessages && !isNearBottom();
+  btn.style.display = show ? "inline-flex" : "none";
+}
+
+function syncAutoScrollState(): void {
+  shouldAutoScroll = isNearBottom();
+  updateScrollBottomButton();
+}
+
+function scrollToBottom(forceAuto = false): void {
   const el = $("messages");
   el.scrollTop = el.scrollHeight;
   requestAnimationFrame(() => {
     el.scrollTop = el.scrollHeight;
+    if (forceAuto) shouldAutoScroll = true;
+    updateScrollBottomButton();
   });
+}
+
+function maybeAutoScroll(): void {
+  if (shouldAutoScroll) {
+    scrollToBottom();
+    return;
+  }
+  updateScrollBottomButton();
 }
 
 function setStreamingUi(active: boolean, statusText = "") {
@@ -1491,6 +1528,7 @@ async function createNewChat(showEmptyState = true): Promise<string> {
   renderedMessages = [];
   virtualItems = [];
   virtualItemHeights.clear();
+  shouldAutoScroll = true;
   if (showEmptyState) {
     $("messages").appendChild(createEmptyStateElement());
   }
@@ -1498,6 +1536,7 @@ async function createNewChat(showEmptyState = true): Promise<string> {
   renderComposerAttachments();
   showTemplatesDropdown(false);
   updateContextTokenCount();
+  updateScrollBottomButton();
   await loadChatList();
   return chat.id;
 }
@@ -1545,6 +1584,7 @@ async function sendMessage() {
   input.style.height = "auto";
   updateInputTokenCount();
 
+  shouldAutoScroll = true;
   activeStreamChatId = chatId;
   pendingStreamResponses = compareModeEnabled ? 2 : 1;
   setStreamingUi(true, compareModeEnabled ? "Comparing models..." : "Generating...");
@@ -1571,7 +1611,7 @@ function setupIpcListeners() {
     if (chatId !== currentChatId) return;
     if (msg.role === "assistant" && !msg.error) activeStreamingMessageIds.add(msg.id);
     appendMessage(msg);
-    scrollToBottom();
+    maybeAutoScroll();
   });
 
   window.api.chat.onChunk((chatId, msgId, _chunk) => {
@@ -1579,7 +1619,7 @@ function setupIpcListeners() {
     const existing = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
     const updated = existing + _chunk;
     updateMessageContent(msgId, updated, false);
-    scrollToBottom();
+    maybeAutoScroll();
   });
 
   window.api.chat.onDone((chatId, msgId) => {
@@ -2387,9 +2427,11 @@ function closeRightPanel() {
 function setupVirtualScrolling() {
   const messages = $("messages");
   messages.addEventListener("scroll", () => {
+    syncAutoScrollState();
     scheduleVirtualRender(false);
   }, { passive: true });
   window.addEventListener("resize", () => {
+    updateScrollBottomButton();
     scheduleVirtualRender(false);
   });
 }
@@ -2517,6 +2559,7 @@ async function init() {
   showTemplatesDropdown(false);
   applyRawMode(rawModeEnabled);
   hideSummaryOverlay();
+  updateScrollBottomButton();
   window.setInterval(() => {
     const panel = $("right-panel");
     if (panel.style.display !== "none" && (panel.dataset["openTab"] ?? "") === "router") {
@@ -2534,7 +2577,12 @@ async function init() {
 
   // Stop
   $("stop-btn").onclick = async () => {
-    if (currentChatId) await window.api.chat.stop(currentChatId);
+    const targetChatId = activeStreamChatId ?? currentChatId;
+    if (targetChatId) await window.api.chat.stop(targetChatId);
+  };
+
+  $("scroll-bottom-btn").onclick = () => {
+    scrollToBottom(true);
   };
 
   // Rename
