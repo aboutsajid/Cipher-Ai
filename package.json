@@ -12,7 +12,10 @@
     "build": "npm run clean && npm run build:ts && npm run build:assets",
     "start": "npm run build && node scripts/launch-electron.mjs",
     "dev": "npm run build && node scripts/launch-electron.mjs",
-    "pack:win": "npm run build && electron-builder --win nsis"
+    "pack:win:dir": "electron-builder --win dir",
+    "pack:win:icon": "node scripts/patch-win-icon.mjs",
+    "pack:win:nsis": "electron-builder --win nsis --prepackaged release/win-unpacked",
+    "pack:win": "npm run build && npm run pack:win:dir && npm run pack:win:icon && npm run pack:win:nsis"
   },
   "dependencies": {
     "electron-store": "^8.2.0",
@@ -22,6 +25,7 @@
     "@types/node": "^22.0.0",
     "electron": "^35.0.0",
     "electron-builder": "^26.8.1",
+    "rcedit": "^5.0.2",
     "typescript": "^5.8.3"
   },
   "build": {
