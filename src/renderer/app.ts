@@ -1469,8 +1469,30 @@ function isNearBottom(threshold = NEAR_BOTTOM_THRESHOLD_PX): boolean {
   return getMessagesBottomDistance() <= threshold;
 }
 
+function ensureScrollBottomButton(): HTMLButtonElement | null {
+  const existing = document.getElementById("scroll-bottom-btn");
+  if (existing instanceof HTMLButtonElement) return existing;
+
+  const messages = document.getElementById("messages");
+  if (!messages) return null;
+
+  const btn = document.createElement("button");
+  btn.id = "scroll-bottom-btn";
+  btn.className = "scroll-bottom-btn";
+  btn.type = "button";
+  btn.style.display = "none";
+  btn.title = "Jump to latest message";
+  btn.textContent = "Latest ↓";
+  messages.appendChild(btn);
+  btn.onclick = () => {
+    scrollToBottom(true);
+  };
+  return btn;
+}
+
 function updateScrollBottomButton(): void {
-  const btn = $("scroll-bottom-btn");
+  const btn = ensureScrollBottomButton();
+  if (!btn) return;
   const hasMessages = renderedMessages.length > 0;
   const show = hasMessages && !isNearBottom();
   btn.style.display = show ? "inline-flex" : "none";
@@ -2581,9 +2603,12 @@ async function init() {
     if (targetChatId) await window.api.chat.stop(targetChatId);
   };
 
-  $("scroll-bottom-btn").onclick = () => {
-    scrollToBottom(true);
-  };
+  const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
+  if (scrollBottomBtn instanceof HTMLButtonElement) {
+    scrollBottomBtn.onclick = () => {
+      scrollToBottom(true);
+    };
+  }
 
   // Rename
   $("rename-btn").onclick = openRenameModal;
