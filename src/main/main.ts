@@ -4,6 +4,7 @@ import { registerIpcHandlers } from "./ipc";
 import { ChatsStore } from "./services/chatsStore";
 import { SettingsStore } from "./services/settingsStore";
 import { CcrService } from "./services/ccrService";
+import { getDebugLogPath, initDebugLogger, writeDebugLog } from "./services/debugLogger";
 import type { IpcChannel } from "../shared/types";
 
 let mainWindow: InstanceType<typeof BrowserWindow> | null = null;
@@ -59,6 +60,20 @@ async function createWindow(): Promise<void> {
   mainWindow.removeMenu();
   mainWindow.setMenuBarVisibility(false);
   if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
+
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    const levelTag = level >= 2 ? "RENDERER_ERROR" : level === 1 ? "RENDERER_WARN" : "RENDERER_INFO";
+    writeDebugLog(levelTag, `${sourceId}:${line}`, message);
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    writeDebugLog("RENDERER_GONE", details);
+  });
+  mainWindow.on("unresponsive", () => {
+    writeDebugLog("WINDOW", "main window became unresponsive");
+  });
+  mainWindow.on("responsive", () => {
+    writeDebugLog("WINDOW", "main window responsive again");
+  });
 
   // Allow local renderer microphone access for voice input (Web Speech API).
   mainWindow.webContents.session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
@@ -131,6 +146,8 @@ async function bootstrap(): Promise<void> {
   Menu.setApplicationMenu(null);
 
   const userDataPath = app.getPath("userData");
+  const debugLogPath = initDebugLogger(userDataPath);
+  console.log(`[debug] main log: ${debugLogPath}`);
   settingsStore = new SettingsStore(userDataPath);
   chatsStore = new ChatsStore(userDataPath);
   ccrService = new CcrService(settingsStore);
@@ -146,6 +163,7 @@ app.whenReady().then(async () => {
     await bootstrap();
   } catch (err) {
     console.error("Bootstrap failed:", err);
+    writeDebugLog("FATAL", "bootstrap failed", err);
     app.exit(1);
   }
 });
@@ -156,6 +174,7 @@ app.on("activate", async () => {
     await createAndRegister();
   } catch (err) {
     console.error("Activate failed:", err);
+    writeDebugLog("ERROR", "activate failed", err, "logPath", getDebugLogPath());
   }
 });
 
