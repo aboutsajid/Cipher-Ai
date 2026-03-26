@@ -1,6 +1,6 @@
 {
   "name": "cipher-ai",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Cipher Ai - Desktop AI workspace with Claude Code Router",
   "main": "dist/main/main.js",
   "author": "Cipher",
