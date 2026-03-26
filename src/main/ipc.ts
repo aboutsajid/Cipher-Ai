@@ -464,6 +464,66 @@ function pickOpenRouterModel(settingsStore: SettingsStore): string {
   return candidates[0];
 }
 
+function pickOllamaModel(settingsStore: SettingsStore): string {
+  const settings = settingsStore.get();
+  const prefixed = [settings.defaultModel, ...settings.models]
+    .map((value) => (value ?? "").trim())
+    .filter(Boolean)
+    .filter((value) => value.startsWith("ollama/"))
+    .map((value) => value.slice("ollama/".length))
+    .filter(Boolean);
+
+  if (prefixed.length > 0) return prefixed[0];
+
+  const discovered = (settings.ollamaModels ?? [])
+    .map((value) => (value ?? "").trim())
+    .filter(Boolean);
+  if (discovered.length > 0) return discovered[0];
+
+  throw new Error("No Ollama model configured. Add an ollama/... model or click Refresh in Ollama settings.");
+}
+
+function resolveUtilityRoute(settingsStore: SettingsStore): {
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  skipAuth: boolean;
+} {
+  const settings = settingsStore.get();
+  const apiKey = (settings.apiKey ?? "").trim();
+
+  const defaultModel = (settings.defaultModel ?? "").trim();
+  const hasOllamaDefault = defaultModel.startsWith("ollama/");
+  if (settings.ollamaEnabled && hasOllamaDefault) {
+    return {
+      model: defaultModel.slice("ollama/".length),
+      baseUrl: (settings.ollamaBaseUrl ?? "").trim() || "http://localhost:11434/v1",
+      apiKey: "",
+      skipAuth: true
+    };
+  }
+
+  if (apiKey) {
+    return {
+      model: pickOpenRouterModel(settingsStore),
+      baseUrl: (settings.baseUrl ?? "").trim(),
+      apiKey,
+      skipAuth: false
+    };
+  }
+
+  if (settings.ollamaEnabled) {
+    return {
+      model: pickOllamaModel(settingsStore),
+      baseUrl: (settings.ollamaBaseUrl ?? "").trim() || "http://localhost:11434/v1",
+      apiKey: "",
+      skipAuth: true
+    };
+  }
+
+  throw new Error("Summary requires OpenRouter API key or Ollama enabled with an ollama/... model.");
+}
+
 function formatConversationHistory(messages: Array<{ role: string; content: string }>): string {
   return messages
     .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
@@ -543,46 +603,34 @@ async function transcribeAudio(settingsStore: SettingsStore, bytes: Uint8Array, 
   return text;
 }
 
-async function sendOpenRouterPrompt(settingsStore: SettingsStore, prompt: string, maxTokens: number): Promise<string> {
-  const settings = settingsStore.get();
-  const apiKey = (settings.apiKey ?? "").trim();
-  if (!apiKey) throw new Error("No API key set. Go to Settings and add your OpenRouter key.");
+async function sendUtilityPrompt(
+  settingsStore: SettingsStore,
+  ccrService: CcrService,
+  prompt: string
+): Promise<string> {
+  const route = resolveUtilityRoute(settingsStore);
+  const history: Array<{ role: string; content: string }> = [{ role: "user", content: prompt }];
+  let result = "";
 
-  const baseUrl = (settings.baseUrl ?? "").trim().replace(/\/+$/, "");
-  if (!baseUrl) throw new Error("No OpenRouter base URL configured.");
-
-  const model = pickOpenRouterModel(settingsStore);
-
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://cipher-ai.local",
-      "X-Title": "Cipher Ai"
+  await ccrService.sendMessageAdvanced(
+    history,
+    route.model,
+    (chunk) => {
+      result += chunk;
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      stream: false,
-      max_tokens: maxTokens
-    })
-  });
+    undefined,
+    {
+      baseUrl: route.baseUrl,
+      apiKey: route.apiKey,
+      skipAuth: route.skipAuth
+    }
+  );
 
-  if (!response.ok) {
-    const text = await response.text();
-    if (response.status === 401 || response.status === 403) throw new Error("Invalid API key. Check your OpenRouter key in Settings.");
-    if (response.status === 402) throw new Error("Insufficient OpenRouter credits/budget for this request.");
-    if (response.status === 429) throw new Error("Rate limit hit. Try again shortly.");
-    throw new Error(`API error ${response.status}: ${text.slice(0, 200)}`);
+  const normalized = result.trim();
+  if (!normalized) {
+    throw new Error("Received empty response from model.");
   }
-
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
-    throw new Error("Received empty response from OpenRouter.");
-  }
-  return content.trim();
+  return normalized;
 }
 
 export function registerIpcHandlers(deps: Deps): void {
@@ -671,7 +719,7 @@ export function registerIpcHandlers(deps: Deps): void {
     }
 
     const prompt = `Summarize this conversation concisely in bullet points:\n\n${formatConversationHistory(normalizedMessages)}`;
-    return sendOpenRouterPrompt(settingsStore, prompt, 320);
+    return sendUtilityPrompt(settingsStore, ccrService, prompt);
   });
 
   ipcMain.removeHandler("chat:generateTitle");
@@ -683,7 +731,7 @@ export function registerIpcHandlers(deps: Deps): void {
     if (!normalizedFirstUserMessage) throw new Error("First user message is required.");
 
     const prompt = `Generate a concise 4-6 word title for this conversation. Reply with only the title, no quotes, no punctuation:\n\n${normalizedFirstUserMessage}`;
-    const generated = await sendOpenRouterPrompt(settingsStore, prompt, 32);
+    const generated = await sendUtilityPrompt(settingsStore, ccrService, prompt);
     const title = normalizeGeneratedTitle(generated);
     await chatsStore.rename(normalizedChatId, title);
     return title;
