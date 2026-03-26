@@ -69,12 +69,13 @@ export class SettingsStore {
     if (this.settings.apiKey) return;
 
     const legacy = await this.loadLegacySettings();
-    if (!legacy?.apiKey) return;
+    if (!legacy) return;
 
     this.settings = {
       ...this.settings,
       ...legacy,
-      routing: legacy.routing ?? this.settings.routing
+      routing: legacy.routing ?? this.settings.routing,
+      apiKey: ""
     };
 
     for (const [k, v] of Object.entries(this.settings)) {
@@ -197,13 +198,10 @@ export class SettingsStore {
     }
   }
 
-  private async loadLegacySettings(): Promise<Partial<Settings> | null> {
+  private async loadLegacySettings(): Promise<Partial<Omit<Settings, "apiKey">> | null> {
     for (const path of this.getLegacySettingsPaths()) {
       const parsed = await this.readSettingsFile(path);
       if (!parsed) continue;
-
-      const apiKey = typeof parsed.apiKey === "string" ? parsed.apiKey.trim() : "";
-      if (!apiKey) continue;
 
       const baseUrl = typeof parsed.baseUrl === "string" && parsed.baseUrl ? parsed.baseUrl : undefined;
       const defaultModel = typeof parsed.defaultModel === "string" && parsed.defaultModel ? parsed.defaultModel : undefined;
@@ -216,7 +214,9 @@ export class SettingsStore {
         ? parsed.routing
         : undefined;
 
-      return { apiKey, baseUrl, defaultModel, routerPort, models, routing };
+      if (!baseUrl && !defaultModel && routerPort === undefined && !models?.length && !routing) continue;
+
+      return { baseUrl, defaultModel, routerPort, models, routing };
     }
 
     return null;

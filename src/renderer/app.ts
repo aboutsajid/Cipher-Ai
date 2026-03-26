@@ -240,6 +240,17 @@ function setStatus(msg: string, type: "ok" | "err" | "" = "") {
   el.className = "status-msg " + type;
 }
 
+function requireOpenRouterApiKey(message?: string): boolean {
+  const key = (settings?.apiKey ?? "").trim();
+  if (key) return true;
+  openPanel("settings");
+  setStatus(message ?? "OpenRouter API key required. Paste key and click Save Settings.", "err");
+  showToast("Open Settings and add your OpenRouter API key.", 3600);
+  const input = $("api-key-input") as HTMLInputElement;
+  input.focus();
+  return false;
+}
+
 function setRouterMsg(msg: string) {
   const el = $("router-action-msg");
   el.textContent = msg;
@@ -1386,6 +1397,10 @@ async function sendMessage() {
     return;
   }
 
+  if (!model.startsWith("ollama/") && !requireOpenRouterApiKey()) {
+    return;
+  }
+
   const compareModel = compareModeEnabled ? getSelectedCompareModel() : "";
   if (compareModeEnabled && !compareModel) {
     showToast("Select a compare model first.");
@@ -1512,6 +1527,9 @@ async function loadSettings() {
   toggleOllamaSettingsVisibility();
   renderOllamaModels(loaded.ollamaModels ?? []);
   populateModels();
+  if (!loaded.apiKey.trim()) {
+    requireOpenRouterApiKey("OpenRouter API key required before first chat. Paste key and save settings.");
+  }
 }
 
 async function saveSettings() {

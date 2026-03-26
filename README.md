@@ -43,6 +43,10 @@ npm.cmd run start
 npm run start
 ```
 
+## OpenRouter API Key
+
+Cipher AI does not bundle any API key. On first launch, open `Settings`, paste your own OpenRouter key (`sk-or-v1-...`), and click `Save Settings`.
+
 ## Development Scripts
 
 - `npm run build` - Compile TypeScript and copy renderer assets
