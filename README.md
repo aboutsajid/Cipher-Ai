@@ -2,7 +2,7 @@
 
 Cipher AI is an Electron desktop workspace for AI chat, coding assistance, model comparison, and prompt workflows.
 
-Version: `1.0.0`
+Version: `1.0.1`
 
 ## Features
 
