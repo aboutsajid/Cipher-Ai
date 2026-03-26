@@ -29,6 +29,13 @@ interface Settings {
   routing: { default: string; think: string; longContext: string; };
 }
 interface RouterStatus { running: boolean; pid?: number; port: number; }
+interface TextPromptOptions {
+  title: string;
+  initialValue?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  multiline?: boolean;
+}
 
 interface Window {
   api: {
@@ -101,9 +108,11 @@ let isStreaming = false;
 let settings: Settings | null = null;
 type ThemeMode = "dark" | "light";
 type UiMode = "write" | "code" | "think";
+type ProviderMode = "openrouter" | "ollama";
 const THEME_STORAGE_KEY = "cipher-ai-theme";
 let currentTheme: ThemeMode = "dark";
 let currentMode: UiMode = "write";
+let providerMode: ProviderMode = "openrouter";
 let rawModeEnabled = false;
 let contextTokenTotal = 0;
 let activeAttachments: AttachmentPayload[] = [];
@@ -124,12 +133,14 @@ let chatSearchQuery = "";
 let cachedChatSummaries: ChatSummary[] = [];
 const VIRTUAL_OVERSCAN_ITEMS = 8;
 const VIRTUAL_ESTIMATED_ITEM_HEIGHT = 140;
+const VIRTUAL_FULL_RENDER_THRESHOLD = 1000;
 const NEAR_BOTTOM_THRESHOLD_PX = 120;
 let renderedMessages: Message[] = [];
 let virtualItems: VirtualChatItem[] = [];
 const virtualItemHeights = new Map<string, number>();
 let virtualRenderScheduled = false;
 let shouldAutoScroll = true;
+let chunkAutoScrollTimer: ReturnType<typeof setTimeout> | null = null;
 const TOKEN_COUNTER_LIMIT = 8000;
 const TOKEN_WARNING_RATIO = 0.8;
 const TOKEN_CRITICAL_RATIO = 0.95;
@@ -369,19 +380,65 @@ function getEffectiveModels(source: Settings | null): string[] {
 
   for (const m of source?.models ?? []) push(m);
   push(source?.defaultModel);
-  if (source?.ollamaEnabled) {
-    for (const m of source.ollamaModels ?? []) push(`ollama/${m}`);
-  }
+  for (const m of source?.ollamaModels ?? []) push(`ollama/${m}`);
   return out;
 }
 
+function getProviderModeFromSettings(source: Settings | null): ProviderMode {
+  return source?.ollamaEnabled ? "ollama" : "openrouter";
+}
+
+function getVisibleModelsForProvider(source: Settings | null, mode: ProviderMode): string[] {
+  return getEffectiveModels(source).filter((model) => mode === "ollama" ? model.startsWith("ollama/") : !model.startsWith("ollama/"));
+}
+
+function applyProviderUiState(mode: ProviderMode): void {
+  const openrouterBtn = document.getElementById("provider-openrouter-btn");
+  const ollamaBtn = document.getElementById("provider-ollama-btn");
+  openrouterBtn?.classList.toggle("active", mode === "openrouter");
+  ollamaBtn?.classList.toggle("active", mode === "ollama");
+
+  const openrouterApiSection = document.getElementById("openrouter-api-section");
+  const openrouterBaseSection = document.getElementById("openrouter-base-section");
+  const ollamaSettingsSection = document.getElementById("ollama-settings");
+  const ollamaModelsSection = document.getElementById("ollama-models-section");
+  const testConnBtn = document.getElementById("test-conn-btn");
+  const helpText = document.getElementById("provider-help-text");
+
+  const ollamaMode = mode === "ollama";
+  if (openrouterApiSection instanceof HTMLElement) openrouterApiSection.style.display = ollamaMode ? "none" : "flex";
+  if (openrouterBaseSection instanceof HTMLElement) openrouterBaseSection.style.display = ollamaMode ? "none" : "flex";
+  if (ollamaSettingsSection instanceof HTMLElement) ollamaSettingsSection.style.display = ollamaMode ? "flex" : "none";
+  if (ollamaModelsSection instanceof HTMLElement) ollamaModelsSection.style.display = ollamaMode ? "flex" : "none";
+  if (testConnBtn instanceof HTMLButtonElement) testConnBtn.style.display = ollamaMode ? "none" : "inline-block";
+  if (helpText) {
+    helpText.textContent = ollamaMode
+      ? "Local mode: only ollama/... models will be shown and used."
+      : "Cloud mode: only OpenRouter models will be shown and used.";
+  }
+}
+
+function setProviderMode(mode: ProviderMode): void {
+  providerMode = mode;
+  applyProviderUiState(mode);
+  updateSidebarProviderButtons(mode);
+  populateModels();
+}
+
+function updateSidebarProviderButtons(mode: ProviderMode): void {
+  const ollamaBtn = document.getElementById("quick-ollama-btn");
+  const openrouterBtn = document.getElementById("quick-openrouter-btn");
+  ollamaBtn?.classList.toggle("active", mode === "ollama");
+  openrouterBtn?.classList.toggle("active", mode === "openrouter");
+}
+
 function shouldPreferOllamaWithoutApiKey(source: Settings | null): boolean {
-  return Boolean(source?.ollamaEnabled) && !Boolean((source?.apiKey ?? "").trim());
+  void source;
+  return providerMode === "ollama";
 }
 
 function getFirstOllamaModel(source: Settings | null): string {
-  if (!source?.ollamaEnabled) return "";
-  const first = (source.ollamaModels ?? []).map((model) => model.trim()).find(Boolean);
+  const first = (source?.ollamaModels ?? []).map((model) => model.trim()).find(Boolean);
   return first ? `ollama/${first}` : "";
 }
 
@@ -432,16 +489,17 @@ function populateModels() {
   const compareSel = $("compare-model-select") as HTMLSelectElement;
   sel.innerHTML = "";
   compareSel.innerHTML = "";
-  const models = getEffectiveModels(settings);
+  const models = getVisibleModelsForProvider(settings, providerMode);
 
   if (models.length === 0) {
     const emptyOpt = document.createElement("option");
     emptyOpt.value = "";
-    emptyOpt.textContent = "No model configured";
+    emptyOpt.textContent = providerMode === "ollama" ? "No Ollama model configured" : "No OpenRouter model configured";
     sel.appendChild(emptyOpt);
     compareSel.appendChild(emptyOpt.cloneNode(true));
     sel.value = "";
     compareSel.value = "";
+    ($("models-textarea") as HTMLTextAreaElement).value = "";
     return;
   }
 
@@ -464,14 +522,20 @@ function populateModels() {
   } else {
     compareSel.value = models.find((model) => model !== sel.value) ?? models[0];
   }
+
+  const defaultModelInput = $("default-model-input") as HTMLInputElement;
+  const defaultCandidate = defaultModelInput.value.trim();
+  defaultModelInput.value = models.includes(defaultCandidate) ? defaultCandidate : sel.value;
+  ($("models-textarea") as HTMLTextAreaElement).value = models.join("\n");
 }
 
 function getSelectedModel(): string {
   const selected = (($("model-select") as HTMLSelectElement).value ?? "").trim();
   if (selected) return selected;
   const fallback = (settings?.defaultModel ?? "").trim();
-  if (fallback) return fallback;
-  return getEffectiveModels(settings)[0] ?? "";
+  const models = getVisibleModelsForProvider(settings, providerMode);
+  if (fallback && models.includes(fallback)) return fallback;
+  return models[0] ?? "";
 }
 
 function getSelectedCompareModel(): string {
@@ -580,6 +644,96 @@ async function loadTemplates(): Promise<void> {
   renderTemplatesList();
 }
 
+async function promptForTextInput(options: TextPromptOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.display = "flex";
+
+    const modal = document.createElement("div");
+    modal.className = "modal";
+
+    const titleEl = document.createElement("p");
+    titleEl.className = "modal-title";
+    titleEl.textContent = options.title;
+
+    const inputEl: HTMLInputElement | HTMLTextAreaElement = options.multiline
+      ? document.createElement("textarea")
+      : document.createElement("input");
+    inputEl.className = "field-input";
+    inputEl.placeholder = options.placeholder ?? "";
+    inputEl.value = options.initialValue ?? "";
+    if (inputEl instanceof HTMLInputElement) {
+      inputEl.type = "text";
+    } else {
+      inputEl.rows = 6;
+      inputEl.style.minHeight = "140px";
+    }
+
+    const buttonRow = document.createElement("div");
+    buttonRow.className = "btn-row";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "btn-primary";
+    confirmBtn.type = "button";
+    confirmBtn.textContent = options.confirmLabel ?? "Save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-ghost";
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+
+    buttonRow.appendChild(confirmBtn);
+    buttonRow.appendChild(cancelBtn);
+    modal.appendChild(titleEl);
+    modal.appendChild(inputEl);
+    modal.appendChild(buttonRow);
+    overlay.appendChild(modal);
+
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown, true);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const submit = (): void => {
+      finish(inputEl.value);
+    };
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(null);
+        return;
+      }
+      if (event.key === "Enter") {
+        const canSubmit = !options.multiline || event.ctrlKey || event.metaKey;
+        if (!canSubmit) return;
+        event.preventDefault();
+        event.stopPropagation();
+        submit();
+      }
+    };
+
+    overlay.addEventListener("click", (event: Event) => {
+      if (event.target === overlay) finish(null);
+    });
+    cancelBtn.onclick = () => finish(null);
+    confirmBtn.onclick = submit;
+    document.addEventListener("keydown", onKeyDown, true);
+    document.body.appendChild(overlay);
+
+    requestAnimationFrame(() => {
+      inputEl.focus();
+      if (inputEl instanceof HTMLInputElement) inputEl.select();
+    });
+  });
+}
+
 async function saveCurrentAsTemplate(): Promise<void> {
   const input = $("composer-input") as HTMLTextAreaElement;
   const content = input.value.trim();
@@ -588,7 +742,11 @@ async function saveCurrentAsTemplate(): Promise<void> {
     return;
   }
 
-  const name = window.prompt("Template name")?.trim();
+  const name = (await promptForTextInput({
+    title: "Template name",
+    placeholder: "My template",
+    confirmLabel: "Save"
+  }))?.trim();
   if (!name) return;
 
   templates = await window.api.templates.save(name, content);
@@ -723,9 +881,7 @@ function renderOllamaModels(models: string[]): void {
 }
 
 function toggleOllamaSettingsVisibility(): void {
-  const enabled = ($("ollama-enabled-toggle") as HTMLInputElement).checked;
-  $("ollama-settings").style.display = enabled ? "flex" : "none";
-  $("ollama-models-section").style.display = enabled ? "flex" : "none";
+  applyProviderUiState(providerMode);
 }
 
 async function refreshOllamaModels(): Promise<void> {
@@ -736,7 +892,7 @@ async function refreshOllamaModels(): Promise<void> {
     renderOllamaModels(models);
     populateModels();
     const switched = autoSwitchToOllamaIfNeeded();
-    showToast(switched ? "Switched to Ollama model (OpenRouter key missing)." : `Loaded ${models.length} Ollama model(s).`, 2200);
+    showToast(switched ? "Switched to first available Ollama model." : `Loaded ${models.length} Ollama model(s).`, 2200);
   } catch (err) {
     showToast(`Failed to load Ollama models: ${err instanceof Error ? err.message : "unknown error"}`, 3500);
   }
@@ -840,6 +996,8 @@ async function loadChat(id: string) {
   clearRenderedMessages();
   hideSummaryOverlay();
   activeStreamingMessageIds.clear();
+  virtualItemHeights.clear();
+  $("messages").scrollTop = 0;
   renderedMessages = chat.messages.filter((msg) => msg.role !== "system");
   normalizeRenderedMessageOrder();
   rebuildVirtualItems();
@@ -856,7 +1014,7 @@ async function loadChat(id: string) {
 function createEmptyStateElement(): HTMLDivElement {
   const empty = document.createElement("div");
   empty.className = "empty-state";
-  empty.innerHTML = '<div class="empty-icon">&#10024;</div><p>&#10024; Start a new conversation. Ask anything.</p><span><span class="empty-subtle-icon">&#8984;</span> Code, write, think with Cipher AI.</span><small class="empty-motto">Free AI, No Fees. Powered by OpenRouter</small>';
+  empty.innerHTML = '<div class="empty-icon">&#10024;</div><p>&#10024; Start a new conversation. Ask anything.</p><span><span class="empty-subtle-icon">&#8984;</span> Code, write, think with Cipher AI.</span><small class="empty-motto">Free AI, No Fees. Supports OpenRouter &amp; Ollama</small>';
   return empty;
 }
 
@@ -1105,6 +1263,44 @@ function renderVirtualItem(item: VirtualChatItem): HTMLElement {
   return row;
 }
 
+function hostIntersectsViewport(container: HTMLElement, host: HTMLElement): boolean {
+  if (host.childElementCount === 0) return false;
+  const containerRect = container.getBoundingClientRect();
+  const hostRect = host.getBoundingClientRect();
+  return hostRect.bottom >= containerRect.top && hostRect.top <= containerRect.bottom;
+}
+
+function renderAllVirtualItems(
+  host: HTMLDivElement,
+  topSpacer: HTMLDivElement,
+  bottomSpacer: HTMLDivElement
+): void {
+  topSpacer.style.height = "0px";
+  bottomSpacer.style.height = "0px";
+  host.dataset["start"] = "0";
+  host.dataset["end"] = String(virtualItems.length);
+  host.innerHTML = "";
+  for (const item of virtualItems) {
+    host.appendChild(renderVirtualItem(item));
+  }
+}
+
+function measureVirtualHostItems(host: HTMLDivElement): boolean {
+  let changedMeasurements = false;
+  const renderedEls = host.querySelectorAll<HTMLElement>("[data-virtual-item-key]");
+  renderedEls.forEach((el) => {
+    const key = el.dataset["virtualItemKey"] ?? "";
+    if (!key) return;
+    const measured = Math.max(1, Math.ceil(el.getBoundingClientRect().height));
+    const known = virtualItemHeights.get(key) ?? VIRTUAL_ESTIMATED_ITEM_HEIGHT;
+    if (Math.abs(known - measured) > 1) {
+      virtualItemHeights.set(key, measured);
+      changedMeasurements = true;
+    }
+  });
+  return changedMeasurements;
+}
+
 function renderVirtualMessages(force = false): void {
   const container = $("messages");
   const { topSpacer, host, bottomSpacer } = ensureVirtualMessageElements();
@@ -1113,6 +1309,23 @@ function renderVirtualMessages(force = false): void {
     topSpacer.style.height = "0px";
     bottomSpacer.style.height = "0px";
     host.innerHTML = "";
+    updateScrollBottomButton();
+    return;
+  }
+
+  if (virtualItems.length <= VIRTUAL_FULL_RENDER_THRESHOLD) {
+    const prevStart = Number(host.dataset["start"] ?? "-1");
+    const prevEnd = Number(host.dataset["end"] ?? "-1");
+    const renderedAllItems =
+      prevStart === 0 &&
+      prevEnd === virtualItems.length &&
+      host.childElementCount === virtualItems.length;
+    if (force || !renderedAllItems) {
+      renderAllVirtualItems(host, topSpacer, bottomSpacer);
+    }
+    if (measureVirtualHostItems(host)) {
+      requestAnimationFrame(() => renderVirtualMessages(false));
+    }
     updateScrollBottomButton();
     return;
   }
@@ -1163,20 +1376,11 @@ function renderVirtualMessages(force = false): void {
     host.appendChild(renderVirtualItem(virtualItems[i]));
   }
 
-  let changedMeasurements = false;
-  const renderedEls = host.querySelectorAll<HTMLElement>("[data-virtual-item-key]");
-  renderedEls.forEach((el) => {
-    const key = el.dataset["virtualItemKey"] ?? "";
-    if (!key) return;
-    const measured = Math.max(1, Math.ceil(el.getBoundingClientRect().height));
-    const known = virtualItemHeights.get(key) ?? VIRTUAL_ESTIMATED_ITEM_HEIGHT;
-    if (Math.abs(known - measured) > 1) {
-      virtualItemHeights.set(key, measured);
-      changedMeasurements = true;
-    }
-  });
+  if (!hostIntersectsViewport(container, host)) {
+    renderAllVirtualItems(host, topSpacer, bottomSpacer);
+  }
 
-  if (changedMeasurements) {
+  if (measureVirtualHostItems(host)) {
     requestAnimationFrame(() => renderVirtualMessages(false));
   }
   updateScrollBottomButton();
@@ -1212,7 +1416,7 @@ function appendMessage(msg: Message): HTMLElement {
   return (document.querySelector<HTMLElement>(`.msg-wrapper[data-id="${msg.id}"]`) ?? document.createElement("div"));
 }
 
-function updateMessageContent(msgId: string, content: string, done = false) {
+function updateMessageContent(msgId: string, content: string, done = false, allowContainerFallback = true) {
   const index = renderedMessages.findIndex((item) => item.id === msgId);
   if (index >= 0) {
     renderedMessages[index] = { ...renderedMessages[index], content };
@@ -1220,6 +1424,11 @@ function updateMessageContent(msgId: string, content: string, done = false) {
 
   const wrapper = document.querySelector<HTMLElement>(`.msg-wrapper[data-id="${msgId}"]`);
   if (!wrapper) {
+    if (allowContainerFallback) {
+      normalizeRenderedMessageOrder();
+      rebuildVirtualItems();
+      scheduleVirtualRender(true);
+    }
     updateContextTokenCount();
     return;
   }
@@ -1260,7 +1469,12 @@ async function editUserMessage(msgId: string): Promise<void> {
   const message = chat.messages.find((item) => item.id === msgId && item.role === "user");
   if (!message) return;
 
-  const edited = window.prompt("Edit message", message.content);
+  const edited = await promptForTextInput({
+    title: "Edit message",
+    initialValue: message.content,
+    confirmLabel: "Resend",
+    multiline: true
+  });
   if (edited === null) return;
   const text = edited.trim();
   if (!text) {
@@ -1439,23 +1653,33 @@ async function maybeGenerateTitle(chatId: string): Promise<void> {
 }
 
 function closeStatsModal(): void {
-  $("stats-modal").style.display = "none";
-  $("stats-btn").classList.remove("active");
+  const statsModal = document.getElementById("stats-modal");
+  if (statsModal instanceof HTMLElement) statsModal.style.display = "none";
+  const statsBtn = document.getElementById("stats-btn");
+  if (statsBtn instanceof HTMLElement) statsBtn.classList.remove("active");
 }
 
 async function openStatsModal(): Promise<void> {
   try {
     const stats = await window.api.stats.get();
-    $("stats-total-chats").textContent = String(stats.totalChats);
-    $("stats-total-messages").textContent = String(stats.totalMessages);
-    $("stats-total-tokens").textContent = String(stats.totalEstimatedTokens);
-    $("stats-most-used-model").textContent = stats.mostUsedModel;
-    $("stats-most-used-count").textContent = `${stats.mostUsedModelCount} messages`;
-    $("stats-avg-per-chat").textContent = String(stats.averageMessagesPerChat);
-    $("stats-modal").style.display = "flex";
-    $("stats-btn").classList.add("active");
+    const setText = (id: string, value: string): void => {
+      const element = document.getElementById(id);
+      if (element) element.textContent = value;
+    };
+    setText("stats-total-chats", String(stats.totalChats));
+    setText("stats-total-messages", String(stats.totalMessages));
+    setText("stats-total-tokens", String(stats.totalEstimatedTokens));
+    setText("stats-most-used-model", stats.mostUsedModel);
+    setText("stats-most-used-count", `${stats.mostUsedModelCount} messages`);
+    setText("stats-avg-per-chat", String(stats.averageMessagesPerChat));
+
+    const statsModal = document.getElementById("stats-modal");
+    if (statsModal instanceof HTMLElement) statsModal.style.display = "flex";
+    const statsBtn = document.getElementById("stats-btn");
+    if (statsBtn instanceof HTMLElement) statsBtn.classList.add("active");
   } catch (err) {
-    $("stats-btn").classList.remove("active");
+    const statsBtn = document.getElementById("stats-btn");
+    if (statsBtn instanceof HTMLElement) statsBtn.classList.remove("active");
     showToast(`Stats failed: ${err instanceof Error ? err.message : "unknown error"}`, 3200);
   }
 }
@@ -1519,6 +1743,22 @@ function maybeAutoScroll(): void {
     return;
   }
   updateScrollBottomButton();
+}
+
+function scheduleChunkAutoScroll(): void {
+  if (chunkAutoScrollTimer) return;
+  chunkAutoScrollTimer = setTimeout(() => {
+    chunkAutoScrollTimer = null;
+    maybeAutoScroll();
+  }, 90);
+}
+
+function flushChunkAutoScroll(): void {
+  if (chunkAutoScrollTimer) {
+    clearTimeout(chunkAutoScrollTimer);
+    chunkAutoScrollTimer = null;
+  }
+  maybeAutoScroll();
 }
 
 function setStreamingUi(active: boolean, statusText = "") {
@@ -1640,8 +1880,8 @@ function setupIpcListeners() {
     if (chatId !== currentChatId) return;
     const existing = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
     const updated = existing + _chunk;
-    updateMessageContent(msgId, updated, false);
-    maybeAutoScroll();
+    updateMessageContent(msgId, updated, false, false);
+    scheduleChunkAutoScroll();
   });
 
   window.api.chat.onDone((chatId, msgId) => {
@@ -1660,6 +1900,7 @@ function setupIpcListeners() {
     if (chatId !== currentChatId) return;
     const raw = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
     updateMessageContent(msgId, raw, true);
+    flushChunkAutoScroll();
   });
 
   window.api.chat.onError((chatId, msgId, err) => {
@@ -1696,6 +1937,7 @@ function setupIpcListeners() {
       scheduleVirtualRender(true);
       updateContextTokenCount();
     }
+    flushChunkAutoScroll();
     showToast("Error: " + err, 4000);
   });
 
@@ -1713,12 +1955,9 @@ async function loadSettings() {
   ($("api-key-input") as HTMLInputElement).value = loaded.apiKey;
   ($("base-url-input") as HTMLInputElement).value = loaded.baseUrl;
   ($("default-model-input") as HTMLInputElement).value = loaded.defaultModel;
-  ($("ollama-enabled-toggle") as HTMLInputElement).checked = loaded.ollamaEnabled;
   ($("ollama-base-url-input") as HTMLInputElement).value = loaded.ollamaBaseUrl || "http://localhost:11434/v1";
-  ($("models-textarea") as HTMLTextAreaElement).value = loaded.models.join("\n");
-  toggleOllamaSettingsVisibility();
   renderOllamaModels(loaded.ollamaModels ?? []);
-  populateModels();
+  setProviderMode(getProviderModeFromSettings(loaded));
   autoSwitchToOllamaIfNeeded();
 }
 
@@ -1727,35 +1966,57 @@ async function saveSettings() {
   const apiKey = normalizeApiKey(apiKeyRaw);
   const baseUrl = ($("base-url-input") as HTMLInputElement).value.trim();
   const defaultModelInput = ($("default-model-input") as HTMLInputElement).value.trim();
-  const ollamaEnabled = ($("ollama-enabled-toggle") as HTMLInputElement).checked;
+  const ollamaEnabled = providerMode === "ollama";
   const ollamaBaseUrl = ($("ollama-base-url-input") as HTMLInputElement).value.trim() || "http://localhost:11434/v1";
-  const modelsInput = ($("models-textarea") as HTMLTextAreaElement).value
+  const modelsInput = [...new Set(($("models-textarea") as HTMLTextAreaElement).value
     .split(/[\n,]+/)
     .map((m) => m.trim())
-    .filter((m) => Boolean(m) && !m.startsWith("ollama/"));
+    .filter(Boolean))];
 
   const selectedModel = getSelectedModel();
   const existingDefault = (settings?.defaultModel ?? "").trim();
   const fallbackModel = "qwen/qwen3-coder-flash";
 
+  const openRouterInput = modelsInput.filter((model) => !model.startsWith("ollama/"));
+  const ollamaInput = modelsInput
+    .filter((model) => model.startsWith("ollama/"))
+    .map((model) => model.slice("ollama/".length))
+    .map((model) => model.trim())
+    .filter(Boolean);
+
   let models = [...new Set([
-    ...modelsInput,
-    selectedModel,
-    existingDefault,
+    ...openRouterInput,
     ...(settings?.models ?? []),
+    !selectedModel.startsWith("ollama/") ? selectedModel : "",
+    !existingDefault.startsWith("ollama/") ? existingDefault : "",
     fallbackModel
   ].map((m) => m.trim()).filter(Boolean))];
+  models = models.filter((model) => !model.startsWith("ollama/"));
 
-  const firstOllama = ollamaEnabled
-    ? (settings?.ollamaModels ?? []).map((model) => model.trim()).find(Boolean)
-    : "";
-  const ollamaDefault = firstOllama ? `ollama/${firstOllama}` : "";
+  let ollamaModels = [...new Set([
+    ...(settings?.ollamaModels ?? []),
+    ...ollamaInput,
+    selectedModel.startsWith("ollama/") ? selectedModel.slice("ollama/".length).trim() : "",
+    defaultModelInput.startsWith("ollama/") ? defaultModelInput.slice("ollama/".length).trim() : ""
+  ].filter(Boolean))];
 
-  let defaultModel = defaultModelInput || selectedModel || existingDefault || models[0] || fallbackModel;
-  if (!apiKey && ollamaEnabled && ollamaDefault && !defaultModel.startsWith("ollama/")) {
-    defaultModel = ollamaDefault;
+  let defaultModel = defaultModelInput || selectedModel || existingDefault;
+  if (ollamaEnabled) {
+    if (!defaultModel.startsWith("ollama/")) {
+      const firstOllama = ollamaModels[0] ?? "";
+      defaultModel = firstOllama ? `ollama/${firstOllama}` : "";
+    }
+    if (!defaultModel) {
+      setStatus("No Ollama model configured. Refresh Ollama models first.", "err");
+      showToast("No Ollama model found. Refresh models and save again.", 3200);
+      return;
+    }
+  } else {
+    if (!defaultModel || defaultModel.startsWith("ollama/")) {
+      defaultModel = models[0] ?? fallbackModel;
+    }
+    if (!models.includes(defaultModel)) models.unshift(defaultModel);
   }
-  if (!defaultModel.startsWith("ollama/") && !models.includes(defaultModel)) models.unshift(defaultModel);
 
   if (apiKeyRaw.trim() && !apiKey.startsWith("sk-or-v1-")) {
     setStatus("Invalid OpenRouter key format.", "err");
@@ -1770,16 +2031,13 @@ async function saveSettings() {
     models,
     ollamaEnabled,
     ollamaBaseUrl,
-    ollamaModels: settings?.ollamaModels ?? []
+    ollamaModels
   });
   ($("api-key-input") as HTMLInputElement).value = settings.apiKey;
   ($("default-model-input") as HTMLInputElement).value = settings.defaultModel;
-  ($("ollama-enabled-toggle") as HTMLInputElement).checked = settings.ollamaEnabled;
   ($("ollama-base-url-input") as HTMLInputElement).value = settings.ollamaBaseUrl;
   renderOllamaModels(settings.ollamaModels ?? []);
-  toggleOllamaSettingsVisibility();
-  ($("models-textarea") as HTMLTextAreaElement).value = settings.models.join("\n");
-  populateModels();
+  setProviderMode(getProviderModeFromSettings(settings));
   autoSwitchToOllamaIfNeeded();
   setStatus("Settings saved!", "ok");
   setTimeout(() => setStatus(""), 2000);
@@ -2347,10 +2605,10 @@ function setupCompareControls() {
 }
 
 function setupOllamaControls() {
-  $("ollama-enabled-toggle").addEventListener("change", () => {
-    toggleOllamaSettingsVisibility();
-    populateModels();
-  });
+  const openrouterBtn = document.getElementById("provider-openrouter-btn");
+  const ollamaBtn = document.getElementById("provider-ollama-btn");
+  openrouterBtn?.addEventListener("click", () => setProviderMode("openrouter"));
+  ollamaBtn?.addEventListener("click", () => setProviderMode("ollama"));
   $("refresh-ollama-models-btn").addEventListener("click", () => {
     void refreshOllamaModels();
   });
@@ -2450,7 +2708,9 @@ function setupVirtualScrolling() {
   const messages = $("messages");
   messages.addEventListener("scroll", () => {
     syncAutoScrollState();
-    scheduleVirtualRender(false);
+    if (virtualItems.length > VIRTUAL_FULL_RENDER_THRESHOLD) {
+      scheduleVirtualRender(false);
+    }
   }, { passive: true });
   window.addEventListener("resize", () => {
     updateScrollBottomButton();
@@ -2501,28 +2761,28 @@ function setupKeyboardShortcuts() {
     }
 
     if (e.key === "Escape") {
-      const panel = $("right-panel");
-      const renameModal = $("rename-modal");
-      const templatesDropdown = $("templates-dropdown");
-      const codePreviewModal = $("code-preview-modal");
-      const statsModal = $("stats-modal");
-      if (panel.style.display !== "none") {
+      const panel = document.getElementById("right-panel");
+      const renameModal = document.getElementById("rename-modal");
+      const templatesDropdown = document.getElementById("templates-dropdown");
+      const codePreviewModal = document.getElementById("code-preview-modal");
+      const statsModal = document.getElementById("stats-modal");
+      if (panel instanceof HTMLElement && panel.style.display !== "none") {
         closeRightPanel();
         return;
       }
-      if (renameModal.style.display !== "none") {
+      if (renameModal instanceof HTMLElement && renameModal.style.display !== "none") {
         renameModal.style.display = "none";
         return;
       }
-      if (codePreviewModal.style.display !== "none") {
+      if (codePreviewModal instanceof HTMLElement && codePreviewModal.style.display !== "none") {
         closeCodePreview();
         return;
       }
-      if (statsModal.style.display !== "none") {
+      if (statsModal instanceof HTMLElement && statsModal.style.display !== "none") {
         closeStatsModal();
         return;
       }
-      if (templatesDropdown.style.display !== "none") {
+      if (templatesDropdown instanceof HTMLElement && templatesDropdown.style.display !== "none") {
         showTemplatesDropdown(false);
       }
     }
@@ -2622,14 +2882,34 @@ async function init() {
   $("stats-btn").onclick = () => {
     void openStatsModal();
   };
-  $("stats-close-btn").onclick = closeStatsModal;
+  const quickOllamaBtn = document.getElementById("quick-ollama-btn");
+  if (quickOllamaBtn instanceof HTMLButtonElement) {
+    quickOllamaBtn.onclick = () => {
+      setProviderMode("ollama");
+      openPanel("settings");
+    };
+  }
+  const quickOpenRouterBtn = document.getElementById("quick-openrouter-btn");
+  if (quickOpenRouterBtn instanceof HTMLButtonElement) {
+    quickOpenRouterBtn.onclick = () => {
+      setProviderMode("openrouter");
+      openPanel("settings");
+    };
+  }
+  const statsCloseBtn = document.getElementById("stats-close-btn");
+  if (statsCloseBtn instanceof HTMLButtonElement) {
+    statsCloseBtn.onclick = closeStatsModal;
+  }
   $("code-preview-close-btn").onclick = closeCodePreview;
   $("code-preview-modal").addEventListener("click", (event: Event) => {
     if (event.target === event.currentTarget) closeCodePreview();
   });
-  $("stats-modal").addEventListener("click", (event: Event) => {
-    if (event.target === event.currentTarget) closeStatsModal();
-  });
+  const statsModal = document.getElementById("stats-modal");
+  if (statsModal) {
+    statsModal.addEventListener("click", (event: Event) => {
+      if (event.target === event.currentTarget) closeStatsModal();
+    });
+  }
   $("export-btn").onclick = async () => {
     if (!currentChatId) return;
     const res = await window.api.chat.export(currentChatId);
@@ -2659,12 +2939,29 @@ async function init() {
   $("save-settings-btn").onclick = saveSettings;
   $("fill-models-btn").onclick = () => {
     const area = $("models-textarea") as HTMLTextAreaElement;
-    area.value = RECOMMENDED_MODELS.join("\n");
     const defaultInput = $("default-model-input") as HTMLInputElement;
-    if (!defaultInput.value.trim()) defaultInput.value = RECOMMENDED_MODELS[0];
-    showToast("Recommended models add ho gaye. Save Settings dabao.");
+    if (providerMode === "ollama") {
+      const ollamaModels = (settings?.ollamaModels ?? []).map((model) => `ollama/${model}`);
+      area.value = ollamaModels.join("\n");
+      if (!defaultInput.value.trim().startsWith("ollama/")) {
+        defaultInput.value = ollamaModels[0] ?? "";
+      }
+      showToast(ollamaModels.length > 0 ? "Ollama models list updated. Save Settings dabao." : "No Ollama models found. Refresh first.", 2500);
+      return;
+    }
+
+    area.value = RECOMMENDED_MODELS.join("\n");
+    if (!defaultInput.value.trim() || defaultInput.value.trim().startsWith("ollama/")) {
+      defaultInput.value = RECOMMENDED_MODELS[0];
+    }
+    showToast("OpenRouter recommended models add ho gaye. Save Settings dabao.");
   };
   $("test-conn-btn").onclick = async () => {
+    if (providerMode === "ollama") {
+      setStatus("Switch to OpenRouter mode to test connection.", "");
+      showToast("Provider is Ollama. OpenRouter connection test is disabled.", 2200);
+      return;
+    }
     setStatus("Testing...", "");
     const res = await window.api.router.test();
     setStatus(res.message, res.ok ? "ok" : "err");

@@ -365,6 +365,11 @@ body[data-theme="light"] .empty-motto { color: #0ea5a4; }
 }
 .btn-sidebar-action:hover { background: var(--bg-3); color: var(--text-1); }
 .btn-sidebar-action.active { background: var(--accent-dim); border-color: rgba(0,245,196,0.3); color: var(--accent-hover); }
+#quick-ollama-btn, #quick-openrouter-btn {
+  font-size: 11px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
 
 #stats-btn {
   border-color: rgba(0,245,196,0.24);
@@ -495,6 +500,10 @@ body[data-theme="light"] .empty-motto { color: #0ea5a4; }
   color: var(--accent);
   box-shadow: inset 0 0 0 1px rgba(0,245,196,0.2);
 }
+.composer-mode-switcher {
+  align-self: flex-start;
+  margin: 0 0 8px 2px;
+}
 
 .system-prompt-panel {
   padding: 10px 20px 12px;
@@ -567,7 +576,7 @@ body[data-theme="light"] .empty-motto { color: #0ea5a4; }
 }
 
 /* â”€â”€ Messages â”€â”€ */
-.messages { flex: 1; overflow-y: auto; padding: 24px 0; display: flex; flex-direction: column; gap: 0; }
+.messages { flex: 1; overflow-y: auto; padding: 24px 0; display: flex; flex-direction: column; gap: 0; will-change: transform; transform: translateZ(0); }
 .messages::-webkit-scrollbar { width: 4px; }
 .messages::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 2px; }
 
@@ -1014,6 +1023,13 @@ body[data-theme="light"] .msg-wrapper:hover { background: rgba(15, 23, 42, 0.04)
   font-size: 10.5px;
 }
 .field-row { display: flex; gap: 6px; }
+.provider-mode-row { display: flex; gap: 6px; }
+.provider-mode-btn { flex: 1; text-align: center; }
+.provider-mode-btn.active {
+  color: var(--text-1);
+  border-color: rgba(111, 231, 214, 0.65);
+  background: rgba(111, 231, 214, 0.14);
+}
 
 .field-input {
   width: 100%;

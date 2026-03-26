@@ -22,7 +22,7 @@
               <span class="tm">&trade;</span>
               <span class="tool">Ai</span>
             </div>
-            <span class="brand-motto">Free AI, No Fees. Powered by OpenRouter</span>
+            <span class="brand-motto">Free AI, No Fees. Supports OpenRouter &amp; Ollama</span>
           </div>
         </div>
         <button id="new-chat-btn" class="btn-new" title="New Chat">+</button>
@@ -36,7 +36,9 @@
       </div>
       <div id="chat-list" class="chat-list"></div>
       <div class="sidebar-footer">
-        <button id="stats-btn" class="btn-sidebar-action btn-topbar-action" type="button">Stats</button>
+        <button id="stats-btn" class="btn-sidebar-action btn-topbar-action" type="button">Chat Status</button>
+        <button id="quick-ollama-btn" class="btn-sidebar-action" type="button">Ollama</button>
+        <button id="quick-openrouter-btn" class="btn-sidebar-action" type="button">OpenRouter</button>
       </div>
       <div class="sidebar-credit">
         <span>© <span class="sidebar-credit-brand"><span class="sidebar-credit-word">Cipher</span><span class="sidebar-credit-tm">&trade;</span><span class="sidebar-credit-tool">Ai</span></span></span>
@@ -63,11 +65,6 @@
           <button id="raw-toggle-btn" class="btn-topbar-action" type="button">Raw</button>
           <button id="settings-toggle-btn" class="btn-topbar-action" type="button">Settings</button>
           <button id="router-toggle-btn" class="btn-topbar-action" type="button">Router</button>
-          <div class="mode-switcher" id="mode-switcher">
-            <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
-            <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
-            <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
-          </div>
           <button id="theme-toggle-btn" class="btn-theme" title="Switch to light mode">
             <span id="theme-toggle-icon" aria-hidden="true">&#9728;</span>
             <span id="theme-toggle-label">Light</span>
@@ -106,7 +103,7 @@
           <div class="empty-icon">✨</div>
           <p>✨ Start a new conversation. Ask anything.</p>
           <span><span class="empty-subtle-icon">⌘</span> Code, write, think with Cipher AI.</span>
-          <small class="empty-motto">Free AI, No Fees. Powered by OpenRouter</small>
+          <small class="empty-motto">Free AI, No Fees. Supports OpenRouter &amp; Ollama</small>
         </div>
         <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" style="display:none" title="Jump to latest message">Latest ↓</button>
       </section>
@@ -120,6 +117,11 @@
           <div id="templates-list" class="templates-list"></div>
         </div>
         <div id="composer-attachments" class="composer-attachments" style="display:none"></div>
+        <div class="mode-switcher composer-mode-switcher" id="mode-switcher">
+          <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
+          <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
+          <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
+        </div>
         <div class="composer-inner">
           <textarea id="composer-input" placeholder="Message Cipher Ai..." rows="1"></textarea>
           <button id="templates-btn" class="btn-icon" type="button" title="Templates">⋯</button>
@@ -149,6 +151,14 @@
 
       <div class="panel-body active" data-panel="settings">
         <div class="panel-section">
+          <label class="field-label">AI Provider</label>
+          <div class="provider-mode-row">
+            <button id="provider-openrouter-btn" class="btn-ghost-sm provider-mode-btn" type="button">OpenRouter API</button>
+            <button id="provider-ollama-btn" class="btn-ghost-sm provider-mode-btn" type="button">Ollama Local</button>
+          </div>
+          <small id="provider-help-text" class="field-help">Choose how Cipher should send your requests.</small>
+        </div>
+        <div id="openrouter-api-section" class="panel-section">
           <label class="field-label">OpenRouter API Key (Optional for Ollama-only)</label>
           <div class="field-row">
             <input id="api-key-input" type="password" class="field-input" placeholder="Paste your OpenRouter key" />
@@ -156,16 +166,9 @@
           </div>
           <small class="field-help">Required for OpenRouter models, summaries, auto-title, and voice transcription.</small>
         </div>
-        <div class="panel-section">
+        <div id="openrouter-base-section" class="panel-section">
           <label class="field-label">OpenRouter Base URL</label>
           <input id="base-url-input" type="text" class="field-input" />
-        </div>
-        <div class="panel-section">
-          <div class="field-row" style="justify-content:space-between;align-items:center;">
-            <label class="field-label" for="ollama-enabled-toggle">Use Ollama</label>
-            <input id="ollama-enabled-toggle" type="checkbox" />
-          </div>
-          <small class="field-help">With Ollama enabled, you can chat without API key using an <code>ollama/...</code> model.</small>
         </div>
         <div id="ollama-settings" class="panel-section" style="display:none">
           <label class="field-label">Ollama Base URL</label>

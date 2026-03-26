@@ -14,7 +14,6 @@ function makeId(prefix: string): string {
 export class ChatsStore {
   private filePath: string;
   private chats: Chat[] = [];
-  private userMessageAutoTitleEnabled = false;
 
   constructor(userDataPath: string) {
     this.filePath = join(userDataPath, "cipher-chat", "chats.json");
@@ -85,6 +84,7 @@ export class ChatsStore {
   async appendMessage(chatId: string, message: Message): Promise<void> {
     const chat = this.get(chatId);
     if (!chat) return;
+    const wasEmptyBeforeAppend = chat.messages.length === 0;
     const normalized: Message = {
       ...message,
       metadata: message.metadata
@@ -95,9 +95,9 @@ export class ChatsStore {
         : undefined
     };
     chat.messages.push(normalized);
-    if (this.userMessageAutoTitleEnabled && chat.title === "New Chat" && message.role === "user") {
+    if (chat.title === "New Chat" && wasEmptyBeforeAppend && message.role === "user") {
       const compact = message.content.replace(/\s+/g, " ").trim();
-      chat.title = compact.length > 50 ? compact.slice(0, 47) + "..." : compact;
+      chat.title = compact.length > 50 ? compact.slice(0, 50) : compact;
     }
     chat.updatedAt = now();
     await this.persist();

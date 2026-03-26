@@ -332,7 +332,7 @@ export class CcrService {
     const baseUrl = (options.baseUrl ?? settings.baseUrl).replace(/\/+$/, "");
     const apiKey = options.apiKey ?? settings.apiKey;
     const skipAuth = options.skipAuth ?? false;
-    const maxOutputTokens = 1024;
+    const maxOutputTokens = 8192;
 
     if (!skipAuth && !apiKey) throw new Error("No API key set. Go to Settings and add your OpenRouter key.");
 
@@ -346,12 +346,24 @@ export class CcrService {
       headers["X-Title"] = "Cipher Ai";
     }
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const requestUrl = `${baseUrl}/chat/completions`;
+    const requestBody = JSON.stringify({ model, messages, stream: true, max_tokens: maxOutputTokens });
+    let response = await fetch(requestUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model, messages, stream: true, max_tokens: maxOutputTokens }),
+      body: requestBody,
       signal
     });
+
+    if (response.status === 429) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+      response = await fetch(requestUrl, {
+        method: "POST",
+        headers,
+        body: requestBody,
+        signal
+      });
+    }
 
     if (!response.ok) {
       const text = await response.text();

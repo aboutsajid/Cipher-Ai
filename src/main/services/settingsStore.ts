@@ -12,6 +12,13 @@ const BUILT_IN_TEMPLATES: PromptTemplate[] = [
   { name: "Explain this error", content: "Explain this error and provide a concrete fix:\n\n" }
 ];
 
+const MODEL_ID_MIGRATIONS: Record<string, string> = {
+  "google/gemini-2.5-flash-lite-": "google/gemini-2.5-flash-lite-preview-09-2025",
+  "google/gemini-2.5-flash-lite-preview": "google/gemini-2.5-flash-lite-preview-09-2025",
+  "qwen/qwen-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct",
+  "qwen/qwen2.5-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct"
+};
+
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
   baseUrl: "https://openrouter.ai/api/v1",
@@ -66,21 +73,23 @@ export class SettingsStore {
       routing: this.store.get("routing", DEFAULT_SETTINGS.routing)
     };
 
-    if (this.settings.apiKey) return;
+    if (!this.settings.apiKey) {
+      const legacy = await this.loadLegacySettings();
+      if (legacy) {
+        this.settings = {
+          ...this.settings,
+          ...legacy,
+          routing: legacy.routing ?? this.settings.routing,
+          apiKey: ""
+        };
 
-    const legacy = await this.loadLegacySettings();
-    if (!legacy) return;
-
-    this.settings = {
-      ...this.settings,
-      ...legacy,
-      routing: legacy.routing ?? this.settings.routing,
-      apiKey: ""
-    };
-
-    for (const [k, v] of Object.entries(this.settings)) {
-      this.store.set(k as keyof Settings, v as Settings[keyof Settings]);
+        for (const [k, v] of Object.entries(this.settings)) {
+          this.store.set(k as keyof Settings, v as Settings[keyof Settings]);
+        }
+      }
     }
+
+    this.applyModelIdMigration();
   }
 
   get(): Settings {
@@ -220,5 +229,34 @@ export class SettingsStore {
     }
 
     return null;
+  }
+
+  private migrateModelId(value: string): string {
+    const direct = MODEL_ID_MIGRATIONS[value];
+    if (direct) return direct;
+    const trimmed = value.trim();
+    return MODEL_ID_MIGRATIONS[trimmed] ?? value;
+  }
+
+  private applyModelIdMigration(): void {
+    let changed = false;
+    const migrate = (value: string): string => {
+      const migrated = this.migrateModelId(value);
+      if (migrated !== value) changed = true;
+      return migrated;
+    };
+
+    this.settings.defaultModel = migrate(this.settings.defaultModel);
+    this.settings.models = this.settings.models.map((model) => migrate(model));
+    this.settings.routing = {
+      default: migrate(this.settings.routing.default),
+      think: migrate(this.settings.routing.think),
+      longContext: migrate(this.settings.routing.longContext)
+    };
+
+    if (!changed) return;
+    this.store.set("defaultModel", this.settings.defaultModel);
+    this.store.set("models", this.settings.models);
+    this.store.set("routing", this.settings.routing);
   }
 }

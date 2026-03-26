@@ -601,26 +601,60 @@ async function transcribeAudio(settingsStore: SettingsStore, bytes: Uint8Array, 
   const apiKey = (settings.apiKey ?? "").trim();
   if (!apiKey) throw new Error("No API key set. Add your OpenRouter key in Settings.");
 
-  const baseUrl = (settings.baseUrl ?? "").trim().replace(/\/+$/, "");
-  if (!baseUrl) throw new Error("No OpenRouter base URL configured.");
+  const configuredBaseUrl = (settings.baseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!configuredBaseUrl) throw new Error("No OpenRouter base URL configured.");
+  const normalizedOpenRouterBaseUrl = configuredBaseUrl.includes("openrouter.ai")
+    ? `${configuredBaseUrl.replace(/\/api\/v1$/i, "")}/api/v1`
+    : configuredBaseUrl;
 
   const type = (mimeType ?? "audio/webm").trim() || "audio/webm";
   const ext = getAudioExtension(type);
   const blob = new Blob([Buffer.from(bytes)], { type });
 
-  const form = new FormData();
-  form.append("model", "openai/whisper-1");
-  form.append("file", blob, `voice.${ext}`);
+  const requestTranscription = async (
+    url: string,
+    modelId: string,
+    extraHeaders?: Record<string, string>
+  ): Promise<Response> => {
+    const form = new FormData();
+    form.append("model", modelId);
+    form.append("file", blob, `voice.${ext}`);
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(extraHeaders ?? {})
+      },
+      body: form
+    });
+  };
 
-  const response = await fetch(`${baseUrl}/audio/transcriptions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
+  let response = await requestTranscription(
+    `${normalizedOpenRouterBaseUrl}/audio/transcriptions`,
+    "openai/whisper-1",
+    {
       "HTTP-Referer": "https://cipher-ai.local",
       "X-Title": "Cipher Ai"
-    },
-    body: form
-  });
+    }
+  );
+
+  if (!response.ok) {
+    const probe = await response.text();
+    const probeLower = probe.toLowerCase();
+    const looksLikePageRoute = probeLower.includes("<!doctype html") || probeLower.includes("<html");
+    const unsupportedOnOpenRouter = response.status === 404 || response.status === 405 || looksLikePageRoute;
+    if (unsupportedOnOpenRouter) {
+      response = await requestTranscription(
+        "https://api.openai.com/v1/audio/transcriptions",
+        "whisper-1"
+      );
+    } else {
+      if (response.status === 401 || response.status === 403) throw new Error("Invalid API key for transcription.");
+      if (response.status === 402) throw new Error("Insufficient OpenRouter credits for transcription.");
+      if (response.status === 429) throw new Error("Transcription rate limit hit. Try again.");
+      throw new Error(`Transcription API error ${response.status}: ${probe.slice(0, 200)}`);
+    }
+  }
 
   if (!response.ok) {
     const text = await response.text();
