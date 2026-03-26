@@ -88,6 +88,23 @@ function formatPromptPath(input: string): string {
   return input.replace(/\\/g, "/");
 }
 
+function shouldSkipFolderEntry(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SKIPPED_FOLDER_NAMES.has(lower) || name.startsWith(".");
+}
+
+function isProbablyTextBuffer(buffer: Buffer): boolean {
+  if (buffer.length === 0) return true;
+  const sampleSize = Math.min(buffer.length, 4096);
+  let controlCount = 0;
+  for (let i = 0; i < sampleSize; i += 1) {
+    const byte = buffer[i];
+    if (byte === 0) return false;
+    if (byte < 7 || (byte > 14 && byte < 32)) controlCount += 1;
+  }
+  return controlCount / sampleSize < 0.2;
+}
+
 async function collectFolderTextFiles(rootDir: string): Promise<{
   files: FolderTextFile[];
   skippedEntries: number;
@@ -123,8 +140,7 @@ async function collectFolderTextFiles(rootDir: string): Promise<{
       const fullPath = join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
-        const lower = entry.name.toLowerCase();
-        if (SKIPPED_FOLDER_NAMES.has(lower) || entry.name.startsWith(".")) {
+        if (shouldSkipFolderEntry(entry.name)) {
           skippedDirs += 1;
           continue;
         }
@@ -133,6 +149,11 @@ async function collectFolderTextFiles(rootDir: string): Promise<{
       }
 
       if (!entry.isFile()) {
+        skippedEntries += 1;
+        continue;
+      }
+
+      if (entry.name.startsWith(".")) {
         skippedEntries += 1;
         continue;
       }
@@ -292,6 +313,9 @@ async function collectAttachmentPayloads(targetPath: string, rootDir?: string): 
     entries.sort((a, b) => a.name.localeCompare(b.name));
     const payloads: AttachmentPayload[] = [];
     for (const entry of entries) {
+      if (entry.isDirectory() && shouldSkipFolderEntry(entry.name)) continue;
+      if (entry.isFile() && entry.name.startsWith(".")) continue;
+
       const childPath = join(targetPath, entry.name);
       try {
         const collected = await collectAttachmentPayloads(childPath, folderRoot);
@@ -312,12 +336,21 @@ async function collectAttachmentPayloads(targetPath: string, rootDir?: string): 
   const name = relName || basename(targetPath);
   const extension = extname(targetPath).toLowerCase();
   const imageMime = IMAGE_MIME_BY_EXTENSION[extension];
+
+  const buffer = await readFile(targetPath);
   if (!imageMime) {
-    const content = await readFile(targetPath, "utf8");
+    const hasKnownTextExtension = TEXT_EXTENSIONS.has(extension);
+    if (!hasKnownTextExtension && !isProbablyTextBuffer(buffer)) {
+      return [];
+    }
+
+    let content = buffer.toString("utf8");
+    if (content.length > MAX_FOLDER_FILE_CHARS) {
+      content = content.slice(0, MAX_FOLDER_FILE_CHARS);
+    }
     return [{ name, type: "text", content }];
   }
 
-  const buffer = await readFile(targetPath);
   const base64 = buffer.toString("base64");
   return [{
     name,
@@ -944,8 +977,39 @@ export function registerIpcHandlers(deps: Deps): void {
       return [] as AttachmentPayload[];
     }
 
+    const normalizedPaths = [...new Set(selectedPaths.map((item) => item.trim()).filter(Boolean))];
+    const inspected: Array<{ path: string; isDirectory: boolean; isFile: boolean }> = [];
+    for (const selectedPath of normalizedPaths) {
+      try {
+        const info = await stat(selectedPath);
+        inspected.push({
+          path: selectedPath,
+          isDirectory: info.isDirectory(),
+          isFile: info.isFile()
+        });
+      } catch {
+        // Skip unreadable selections.
+      }
+    }
+
+    if (inspected.length === 0) {
+      return [] as AttachmentPayload[];
+    }
+
+    const hasDirectorySelection = inspected.some((entry) => entry.isDirectory);
+    if (hasDirectorySelection) {
+      try {
+        if (inspected.length === 1 && inspected[0].isDirectory) {
+          return [await buildFolderBundleAttachment(inspected[0].path)];
+        }
+        return [await buildMultiSelectionBundleAttachment(inspected.map((entry) => entry.path))];
+      } catch {
+        return [] as AttachmentPayload[];
+      }
+    }
+
     const payloads: AttachmentPayload[] = [];
-    for (const selectedPath of selectedPaths) {
+    for (const selectedPath of inspected.map((entry) => entry.path).filter(Boolean)) {
       try {
         const collected = await collectAttachmentPayloads(selectedPath);
         payloads.push(...collected);
