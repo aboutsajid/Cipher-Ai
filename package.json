@@ -12,7 +12,7 @@
     "build": "npm run clean && npm run build:ts && npm run build:assets",
     "start": "npm run build && node scripts/launch-electron.mjs",
     "dev": "npm run build && node scripts/launch-electron.mjs",
-    "pack:win": "npm run build && electron-builder --win nsis portable"
+    "pack:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "electron-store": "^8.2.0",
@@ -42,12 +42,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "src/renderer/assets/cipher-ai-icon.ico"
@@ -56,9 +50,6 @@
       "artifactName": "Cipher-Ai-Setup-${version}.exe",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "portable": {
-      "artifactName": "Cipher-Ai-Portable-${version}.exe"
     }
   }
 }

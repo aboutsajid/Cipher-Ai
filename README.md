@@ -65,6 +65,7 @@ Note:
 - `npm run build` - Compile TypeScript and copy renderer assets
 - `npm run start` - Build and launch Electron
 - `npm run dev` - Alias of start flow
+- `npm run pack:win` - Build Windows installer (`Cipher-Ai-Setup-<version>.exe`)
 
 ## Project Structure
 
