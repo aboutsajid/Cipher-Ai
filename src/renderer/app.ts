@@ -283,6 +283,34 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+function messageRolePriority(role: string): number {
+  if (role === "user") return 0;
+  if (role === "assistant") return 1;
+  return 2;
+}
+
+function compareMessagesForRender(a: Message, b: Message): number {
+  const tsA = Date.parse(a.createdAt ?? "");
+  const tsB = Date.parse(b.createdAt ?? "");
+
+  const aHasTime = Number.isFinite(tsA);
+  const bHasTime = Number.isFinite(tsB);
+  if (aHasTime && bHasTime && tsA !== tsB) return tsA - tsB;
+
+  if ((a.createdAt ?? "") !== (b.createdAt ?? "")) {
+    return (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
+  }
+
+  const roleDelta = messageRolePriority(a.role) - messageRolePriority(b.role);
+  if (roleDelta !== 0) return roleDelta;
+
+  return (a.id ?? "").localeCompare(b.id ?? "");
+}
+
+function normalizeRenderedMessageOrder(): void {
+  renderedMessages.sort(compareMessagesForRender);
+}
+
 function updateTokenCounterTone(el: HTMLElement, tokens: number): void {
   el.classList.remove("warning", "critical");
   const ratio = tokens / TOKEN_COUNTER_LIMIT;
@@ -811,6 +839,7 @@ async function loadChat(id: string) {
   hideSummaryOverlay();
   activeStreamingMessageIds.clear();
   renderedMessages = chat.messages.filter((msg) => msg.role !== "system");
+  normalizeRenderedMessageOrder();
   rebuildVirtualItems();
   scheduleVirtualRender(true);
 
@@ -1169,6 +1198,7 @@ function appendMessage(msg: Message): HTMLElement {
   if (existingIndex >= 0) renderedMessages[existingIndex] = msg;
   else renderedMessages.push(msg);
 
+  normalizeRenderedMessageOrder();
   rebuildVirtualItems();
   scheduleVirtualRender(true);
   updateContextTokenCount();
@@ -1427,6 +1457,9 @@ async function openStatsModal(): Promise<void> {
 function scrollToBottom() {
   const el = $("messages");
   el.scrollTop = el.scrollHeight;
+  requestAnimationFrame(() => {
+    el.scrollTop = el.scrollHeight;
+  });
 }
 
 function setStreamingUi(active: boolean, statusText = "") {
@@ -1583,6 +1616,7 @@ function setupIpcListeners() {
     const index = renderedMessages.findIndex((message) => message.id === msgId);
     if (index >= 0) {
       renderedMessages[index] = { ...renderedMessages[index], content: err, error: err };
+      normalizeRenderedMessageOrder();
       rebuildVirtualItems();
     }
 
