@@ -10,6 +10,7 @@ let mainWindow: InstanceType<typeof BrowserWindow> | null = null;
 let settingsStore: SettingsStore | null = null;
 let chatsStore: ChatsStore | null = null;
 let ccrService: CcrService | null = null;
+const APP_USER_MODEL_ID = "com.cipher.ai";
 
 const IPC_CHANNELS: IpcChannel[] = [
   "chat:list",
@@ -30,7 +31,9 @@ const IPC_CHANNELS: IpcChannel[] = [
 
 async function createWindow(): Promise<void> {
   const appIconPath = process.platform === "win32"
-    ? join(__dirname, "..", "renderer", "assets", "cipher-ai-icon.ico")
+    ? (app.isPackaged
+      ? join(process.resourcesPath, "assets", "cipher-ai-icon.ico")
+      : join(__dirname, "..", "renderer", "assets", "cipher-ai-icon.ico"))
     : join(__dirname, "..", "renderer", "assets", "cipher-ai-icon.png");
 
   mainWindow = new BrowserWindow({
@@ -122,6 +125,9 @@ async function createAndRegister(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   app.setName("Cipher Ai");
+  if (process.platform === "win32") {
+    app.setAppUserModelId(APP_USER_MODEL_ID);
+  }
   Menu.setApplicationMenu(null);
 
   const userDataPath = app.getPath("userData");

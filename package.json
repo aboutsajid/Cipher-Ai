@@ -30,6 +30,12 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "src/renderer/assets/cipher-ai-icon.ico",
+        "to": "assets/cipher-ai-icon.ico"
+      }
+    ],
     "files": [
       "dist/**/*",
       "package.json"
