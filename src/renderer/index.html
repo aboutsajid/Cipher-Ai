@@ -148,14 +148,15 @@
 
       <div class="panel-body active" data-panel="settings">
         <div class="panel-section">
-          <label class="field-label">OpenRouter API Key</label>
+          <label class="field-label">OpenRouter API Key (Optional for Ollama-only)</label>
           <div class="field-row">
             <input id="api-key-input" type="password" class="field-input" placeholder="sk-or-v1-..." />
             <button id="toggle-key-btn" class="btn-ghost-sm">Show</button>
           </div>
+          <small class="field-help">Required for OpenRouter models, summaries, auto-title, and voice transcription.</small>
         </div>
         <div class="panel-section">
-          <label class="field-label">Base URL</label>
+          <label class="field-label">OpenRouter Base URL</label>
           <input id="base-url-input" type="text" class="field-input" />
         </div>
         <div class="panel-section">
@@ -163,6 +164,7 @@
             <label class="field-label" for="ollama-enabled-toggle">Use Ollama</label>
             <input id="ollama-enabled-toggle" type="checkbox" />
           </div>
+          <small class="field-help">With Ollama enabled, you can chat without API key using an <code>ollama/...</code> model.</small>
         </div>
         <div id="ollama-settings" class="panel-section" style="display:none">
           <label class="field-label">Ollama Base URL</label>
@@ -177,7 +179,7 @@
         </div>
         <div class="panel-section">
           <label class="field-label">Default Model</label>
-          <input id="default-model-input" type="text" class="field-input" placeholder="qwen/qwen-coder-32b-instruct" />
+          <input id="default-model-input" type="text" class="field-input" placeholder="qwen/qwen-coder-32b-instruct or ollama/qwen3:8b" />
         </div>
         <div class="panel-section">
           <div class="field-row" style="justify-content:space-between;align-items:center;">
@@ -188,7 +190,7 @@
         </div>
         <div class="btn-row">
           <button id="save-settings-btn" class="btn-primary">Save Settings</button>
-          <button id="test-conn-btn" class="btn-ghost">Test Connection</button>
+          <button id="test-conn-btn" class="btn-ghost">Test OpenRouter</button>
         </div>
         <p id="settings-status" class="status-msg"></p>
       </div>

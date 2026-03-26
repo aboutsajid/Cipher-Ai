@@ -47,6 +47,19 @@ npm run start
 
 Cipher AI does not bundle any API key. On first launch, open `Settings`, paste your own OpenRouter key (`sk-or-v1-...`), and click `Save Settings`.
 
+## Ollama-Only Mode (No API Key)
+
+You can use Cipher AI without an OpenRouter key if you want local-only chat with Ollama:
+
+1. In `Settings`, enable `Use Ollama`.
+2. Set `Ollama Base URL` (default: `http://localhost:11434/v1`).
+3. Click `Refresh` under `Ollama Models`.
+4. Select an `ollama/...` model in the top model picker.
+5. Click `Save Settings`.
+
+Note:
+- `Summarize`, auto-title generation, voice transcription, and `Test OpenRouter` still use OpenRouter.
+
 ## Development Scripts
 
 - `npm run build` - Compile TypeScript and copy renderer assets

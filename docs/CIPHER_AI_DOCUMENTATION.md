@@ -14,7 +14,7 @@ Cipher AI is an Electron desktop app for AI chat, coding assistance, prompt work
 | RAM | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended | 8 GB minimum, 16 GB recommended |
 | Disk | 2 GB free minimum | 2 GB free minimum | 2 GB free minimum |
 | Node.js | v22 LTS recommended | v22 LTS recommended | v22 LTS recommended |
-| Network | Required for OpenRouter cloud models | Required for OpenRouter cloud models | Required for OpenRouter cloud models |
+| Network | Required for OpenRouter cloud models; optional for Ollama-only local use | Required for OpenRouter cloud models; optional for Ollama-only local use | Required for OpenRouter cloud models; optional for Ollama-only local use |
 
 ### 1.2 Installation Instructions
 
@@ -71,11 +71,22 @@ npm run start
 
 1. Launch Cipher AI.
 2. Open the right panel using the `Settings` button in the top bar.
+
+Option A - OpenRouter:
+
 3. In `OpenRouter API Key`, paste your key (format starts with `sk-or-v1-`).
-4. Verify `Base URL` is `https://openrouter.ai/api/v1`.
-5. Choose a default model in settings.
+4. Verify `OpenRouter Base URL` is `https://openrouter.ai/api/v1`.
+5. Choose an OpenRouter model like `qwen/qwen3-coder-flash`.
 6. Click `Save Settings`.
-7. Click `Test Connection` to confirm API access.
+7. Click `Test OpenRouter` to confirm API access.
+
+Option B - Ollama-only (no API key):
+
+3. Enable `Use Ollama`.
+4. Verify `Ollama Base URL` (usually `http://localhost:11434/v1`).
+5. Click `Refresh` in `Ollama Models`.
+6. Select an `ollama/...` model from the top model picker.
+7. Click `Save Settings`.
 8. Start a new chat with the `+` button in the left sidebar.
 
 
@@ -170,6 +181,8 @@ Use Settings to define:
 - **OpenRouter**: requires API key and internet.
 - **Ollama**: local model serving, base URL usually `http://localhost:11434/v1`.
 - You can keep both enabled and switch models from the model selector.
+- If `Use Ollama` is enabled and API key is empty, choose an `ollama/...` model to chat without OpenRouter key.
+- `Summarize`, auto-title, voice transcription, and `Test OpenRouter` still require OpenRouter API access.
 
 ### 3.3 MCP Server Integration (Tooling)
 
@@ -245,12 +258,14 @@ Check:
 
 Use practical repo roots, and avoid selecting huge monorepo roots when unnecessary. Folder bundling has limits and skips common heavy folders to stay responsive.
 
-### 4.6 Connection Test Fails
+### 4.6 OpenRouter Test Fails
 
 1. Open `Settings`.
 2. Verify key and base URL.
-3. Click `Test Connection`.
+3. Click `Test OpenRouter`.
 4. If needed, try a different model from the model list.
+
+If you only use Ollama local models, you can skip this test.
 
 ### 4.7 How Do I Reset Cipher AI Data?
 
@@ -264,7 +279,7 @@ Use practical repo roots, and avoid selecting huge monorepo roots when unnecessa
 - Build succeeds: `npm run build`
 - App starts without startup errors
 - Settings save works
-- Test Connection passes
+- Test OpenRouter passes (only needed when using OpenRouter)
 - One chat roundtrip succeeds
 
 
@@ -273,8 +288,8 @@ Use practical repo roots, and avoid selecting huge monorepo roots when unnecessa
 ## Appendix: Recommended First 10 Minutes
 
 1. Start app.
-2. Add OpenRouter API key.
-3. Save settings and test connection.
+2. Either add OpenRouter API key or enable Ollama local mode.
+3. Save settings and test OpenRouter (skip if Ollama-only).
 4. Create first chat.
 5. Try `Summarize`, `Raw`, and `Compare`.
 6. Attach one file.

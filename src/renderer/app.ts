@@ -244,8 +244,11 @@ function requireOpenRouterApiKey(message?: string): boolean {
   const key = (settings?.apiKey ?? "").trim();
   if (key) return true;
   openPanel("settings");
-  setStatus(message ?? "OpenRouter API key required. Paste key and click Save Settings.", "err");
-  showToast("Open Settings and add your OpenRouter API key.", 3600);
+  setStatus(
+    message ?? "OpenRouter API key required for OpenRouter models. Add key, or choose an ollama/... model.",
+    "err"
+  );
+  showToast("Add OpenRouter API key, or select an ollama model to continue without key.", 4200);
   const input = $("api-key-input") as HTMLInputElement;
   input.focus();
   return false;
@@ -323,6 +326,58 @@ function getEffectiveModels(source: Settings | null): string[] {
   return out;
 }
 
+function shouldPreferOllamaWithoutApiKey(source: Settings | null): boolean {
+  return Boolean(source?.ollamaEnabled) && !Boolean((source?.apiKey ?? "").trim());
+}
+
+function getFirstOllamaModel(source: Settings | null): string {
+  if (!source?.ollamaEnabled) return "";
+  const first = (source.ollamaModels ?? []).map((model) => model.trim()).find(Boolean);
+  return first ? `ollama/${first}` : "";
+}
+
+function selectHasOption(select: HTMLSelectElement, value: string): boolean {
+  return Array.from(select.options).some((option) => option.value === value);
+}
+
+function autoSwitchToOllamaIfNeeded(): boolean {
+  if (!shouldPreferOllamaWithoutApiKey(settings)) return false;
+
+  const fallbackModel = getFirstOllamaModel(settings);
+  if (!fallbackModel) return false;
+
+  let switched = false;
+  const modelSelect = $("model-select") as HTMLSelectElement;
+  const compareSelect = $("compare-model-select") as HTMLSelectElement;
+
+  if (selectHasOption(modelSelect, fallbackModel) && !modelSelect.value.startsWith("ollama/")) {
+    modelSelect.value = fallbackModel;
+    switched = true;
+  }
+
+  if (selectHasOption(compareSelect, fallbackModel) && !compareSelect.value.startsWith("ollama/")) {
+    compareSelect.value = fallbackModel;
+    switched = true;
+  }
+
+  const defaultModelInput = $("default-model-input") as HTMLInputElement;
+  if (!defaultModelInput.value.trim().startsWith("ollama/")) {
+    defaultModelInput.value = fallbackModel;
+    switched = true;
+  }
+
+  if (settings && !settings.defaultModel.trim().startsWith("ollama/")) {
+    settings.defaultModel = fallbackModel;
+  }
+
+  const statusText = ($("settings-status").textContent ?? "").toLowerCase();
+  if (statusText.includes("openrouter api key required")) {
+    setStatus("");
+  }
+
+  return switched;
+}
+
 function populateModels() {
   const sel = $("model-select") as HTMLSelectElement;
   const compareSel = $("compare-model-select") as HTMLSelectElement;
@@ -349,9 +404,17 @@ function populateModels() {
     compareSel.appendChild(opt.cloneNode(true));
   }
 
-  const preferred = (settings?.defaultModel ?? "").trim();
+  const preferOllama = shouldPreferOllamaWithoutApiKey(settings);
+  const ollamaPreferred = preferOllama ? models.find((model) => model.startsWith("ollama/")) ?? "" : "";
+  const preferred = ollamaPreferred || (settings?.defaultModel ?? "").trim();
   sel.value = preferred && models.includes(preferred) ? preferred : models[0];
-  compareSel.value = models.find((model) => model !== sel.value) ?? models[0];
+
+  if (preferOllama) {
+    const ollamaModels = models.filter((model) => model.startsWith("ollama/"));
+    compareSel.value = ollamaModels.find((model) => model !== sel.value) ?? sel.value;
+  } else {
+    compareSel.value = models.find((model) => model !== sel.value) ?? models[0];
+  }
 }
 
 function getSelectedModel(): string {
@@ -623,7 +686,8 @@ async function refreshOllamaModels(): Promise<void> {
     if (settings) settings.ollamaModels = models;
     renderOllamaModels(models);
     populateModels();
-    showToast(`Loaded ${models.length} Ollama model(s).`, 1800);
+    const switched = autoSwitchToOllamaIfNeeded();
+    showToast(switched ? "Switched to Ollama model (OpenRouter key missing)." : `Loaded ${models.length} Ollama model(s).`, 2200);
   } catch (err) {
     showToast(`Failed to load Ollama models: ${err instanceof Error ? err.message : "unknown error"}`, 3500);
   }
@@ -1397,14 +1461,19 @@ async function sendMessage() {
     return;
   }
 
-  if (!model.startsWith("ollama/") && !requireOpenRouterApiKey()) {
-    return;
-  }
-
   const compareModel = compareModeEnabled ? getSelectedCompareModel() : "";
   if (compareModeEnabled && !compareModel) {
     showToast("Select a compare model first.");
     return;
+  }
+
+  const modelsNeedingOpenRouterKey = [model, ...(compareModeEnabled ? [compareModel] : [])]
+    .map((m) => (m ?? "").trim())
+    .filter(Boolean)
+    .some((m) => !m.startsWith("ollama/"));
+  if (modelsNeedingOpenRouterKey) {
+    const message = "Selected model is OpenRouter. Add API key, or switch model to ollama/...";
+    if (!requireOpenRouterApiKey(message)) return;
   }
 
   const attachmentsToSend = [...activeAttachments];
@@ -1527,9 +1596,7 @@ async function loadSettings() {
   toggleOllamaSettingsVisibility();
   renderOllamaModels(loaded.ollamaModels ?? []);
   populateModels();
-  if (!loaded.apiKey.trim()) {
-    requireOpenRouterApiKey("OpenRouter API key required before first chat. Paste key and save settings.");
-  }
+  autoSwitchToOllamaIfNeeded();
 }
 
 async function saveSettings() {
@@ -1556,8 +1623,16 @@ async function saveSettings() {
     fallbackModel
   ].map((m) => m.trim()).filter(Boolean))];
 
-  const defaultModel = defaultModelInput || selectedModel || existingDefault || models[0] || fallbackModel;
-  if (!models.includes(defaultModel)) models.unshift(defaultModel);
+  const firstOllama = ollamaEnabled
+    ? (settings?.ollamaModels ?? []).map((model) => model.trim()).find(Boolean)
+    : "";
+  const ollamaDefault = firstOllama ? `ollama/${firstOllama}` : "";
+
+  let defaultModel = defaultModelInput || selectedModel || existingDefault || models[0] || fallbackModel;
+  if (!apiKey && ollamaEnabled && ollamaDefault && !defaultModel.startsWith("ollama/")) {
+    defaultModel = ollamaDefault;
+  }
+  if (!defaultModel.startsWith("ollama/") && !models.includes(defaultModel)) models.unshift(defaultModel);
 
   if (apiKeyRaw.trim() && !apiKey.startsWith("sk-or-v1-")) {
     setStatus("Invalid OpenRouter key format.", "err");
@@ -1582,6 +1657,7 @@ async function saveSettings() {
   toggleOllamaSettingsVisibility();
   ($("models-textarea") as HTMLTextAreaElement).value = settings.models.join("\n");
   populateModels();
+  autoSwitchToOllamaIfNeeded();
   setStatus("Settings saved!", "ok");
   setTimeout(() => setStatus(""), 2000);
   showToast("Settings saved");
