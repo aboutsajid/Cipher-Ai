@@ -1,17 +1,23 @@
 ﻿# Cipher AI
 
 Cipher AI is an Electron desktop workspace for AI chat, coding assistance, model comparison, and prompt workflows.
+Cipher AI is a free, no-subscription desktop AI workspace for OpenRouter and Ollama with privacy-first defaults.
 
 Version: `1.0.0`
 
 ## Features
 
-- Multi-chat interface with export and rename
+- Free forever, no subscription
+- No telemetry, privacy-first desktop experience
 - OpenRouter and Ollama model support
+- Ollama-only mode (no OpenRouter API key required)
+- Multi-chat workspace with rename and export
+- Router and compare mode workflows
 - Prompt templates and system prompt controls
 - File and folder attachments with smart bundling
+- Fast model switching for quick iteration
 - Markdown rendering with code block copy/run actions
-- Voice-to-text input support (when available)
+- Voice-to-text support will be available in an upcoming feature update.
 - Router diagnostics and MCP server controls
 
 ## Requirements
@@ -58,7 +64,7 @@ You can use Cipher AI without an OpenRouter key if you want local-only chat with
 5. Click `Save Settings`.
 
 Note:
-- `Summarize`, auto-title generation, voice transcription, and `Test OpenRouter` still use OpenRouter.
+- `Summarize`, auto-title generation, and `Test OpenRouter` still use OpenRouter.
 
 ## Development Scripts
 
