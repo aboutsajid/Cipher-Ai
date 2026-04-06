@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Chat, ChatSummary, Message } from "../../shared/types";
 
@@ -13,10 +13,12 @@ function makeId(prefix: string): string {
 
 export class ChatsStore {
   private filePath: string;
+  private userDataPath: string;
   private chats: Chat[] = [];
 
   constructor(userDataPath: string) {
-    this.filePath = join(userDataPath, "cipher-chat", "chats.json");
+    this.userDataPath = userDataPath;
+    this.filePath = join(userDataPath, "cipher-workspace", "chats.json");
   }
 
   async init(): Promise<void> {
@@ -25,8 +27,15 @@ export class ChatsStore {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
       this.chats = Array.isArray(parsed.chats) ? parsed.chats : [];
+      if (this.chats.length === 0) {
+        const legacyChats = await this.loadLegacyChats();
+        if (legacyChats.length > 0) {
+          this.chats = legacyChats;
+          await this.persist();
+        }
+      }
     } catch {
-      this.chats = [];
+      this.chats = await this.loadLegacyChats();
       await this.persist();
     }
   }
@@ -81,6 +90,30 @@ export class ChatsStore {
     return true;
   }
 
+  async importChat(input: { title: string; messages: Message[]; systemPrompt?: string }): Promise<Chat> {
+    const t = now();
+    const normalizedMessages = (input.messages ?? [])
+      .filter((message) => message && typeof message.content === "string" && typeof message.role === "string")
+      .map((message) => ({
+        ...message,
+        id: message.id?.trim() || makeId("msg"),
+        createdAt: message.createdAt || t
+      }));
+
+    const chat: Chat = {
+      id: makeId("chat"),
+      title: input.title.trim() || "Imported Chat",
+      createdAt: t,
+      updatedAt: t,
+      messages: normalizedMessages,
+      systemPrompt: input.systemPrompt ?? ""
+    };
+
+    this.chats.unshift(chat);
+    await this.persist();
+    return { ...chat, messages: chat.messages.map((message) => ({ ...message })) };
+  }
+
   async appendMessage(chatId: string, message: Message): Promise<void> {
     const chat = this.get(chatId);
     if (!chat) return;
@@ -120,5 +153,39 @@ export class ChatsStore {
   private async persist(): Promise<void> {
     await mkdir(join(this.filePath, ".."), { recursive: true });
     await writeFile(this.filePath, JSON.stringify({ chats: this.chats }, null, 2), "utf8");
+  }
+
+  private getLegacyChatPaths(): string[] {
+    const appDataPath = dirname(this.userDataPath);
+    const appNames = ["Electron", "cipher-ai", "cipher-chat", "Cipher Chat", "CipherChat", "Cipher Workspace"];
+    const paths = new Set<string>();
+
+    for (const appName of appNames) {
+      paths.add(join(appDataPath, appName, "cipher-chat", "chats.json"));
+      paths.add(join(appDataPath, appName, "chats.json"));
+    }
+
+    paths.add(join(this.userDataPath, "chats.json"));
+    paths.add(join(dirname(this.userDataPath), "cipher-chat", "chats.json"));
+
+    const current = resolve(this.filePath);
+    return [...paths].map((path) => resolve(path)).filter((path) => path !== current);
+  }
+
+  private async loadLegacyChats(): Promise<Chat[]> {
+    for (const path of this.getLegacyChatPaths()) {
+      try {
+        await access(path);
+        const raw = await readFile(path, "utf8");
+        const parsed = JSON.parse(raw) as { chats?: Chat[] };
+        if (Array.isArray(parsed?.chats)) {
+          return parsed.chats;
+        }
+      } catch {
+        // Ignore unreadable legacy files.
+      }
+    }
+
+    return [];
   }
 }

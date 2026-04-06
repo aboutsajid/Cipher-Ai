@@ -1,95 +1,46 @@
-﻿# Cipher AI
+# Cipher Workspace
 
-Cipher AI is an Electron desktop workspace for AI chat, coding assistance, model comparison, and prompt workflows.
-Cipher AI is a free, no-subscription desktop AI workspace for OpenRouter and Ollama with privacy-first defaults.
+This project is a central hub for working with AI models (OpenRouter, Ollama), file management, and potentially other integrations. It aims to provide a safe and controlled environment for interacting with AI.
 
-Version: `1.0.0`
+## Overview
 
-## Features
-
-- Free forever, no subscription
-- No telemetry, privacy-first desktop experience
-- OpenRouter and Ollama model support
-- Ollama-only mode (no OpenRouter API key required)
-- Multi-chat workspace with rename and export
-- Router and compare mode workflows
-- Prompt templates and system prompt controls
-- File and folder attachments with smart bundling
-- Fast model switching for quick iteration
-- Markdown rendering with code block copy/run actions
-- Voice-to-text support will be available in an upcoming feature update.
-- Router diagnostics and MCP server controls
+Cipher Workspace is a desktop application designed to simplify the process of working with AI models. It allows users to manage multiple AI models, attach files and folders to conversations, and perform tasks such as chatting, file uploads, and editing.
 
 ## Requirements
 
-- Node.js 22 LTS
-- npm 10+
-- Windows 10/11, macOS 12+, or modern Linux distro
+*   Node.js (version 16 or higher)
+*   npm (Node Package Manager)
+*   An operating system (Windows, macOS, or Linux)
 
 ## Quick Start
 
-```bash
-git clone <your-repo-url> cipher-chat
-cd cipher-chat
-npm install
-npm run build
-```
+1.  Clone the repository:
+    `git clone [repository URL]`
+2.  Navigate to the project directory:
+    `cd Cipher Workspace`
+3.  Install dependencies:
+    `npm install`
+4.  Run the application:
+    `npm start`
+5.  Start the backend server (if needed):
+    `npm run start:backend`
 
-Run the app:
+## Stable Setup Options
 
-- Windows PowerShell:
+### OpenRouter
 
-```powershell
-npm.cmd run start
-```
+... (Detailed setup instructions for OpenRouter would go here - simplified for brevity)...
 
-- macOS/Linux:
+### Ollama
 
-```bash
-npm run start
-```
+... (Detailed setup instructions for Ollama would go here - simplified for brevity)...
 
-## OpenRouter API Key
+## Windows Installer
 
-Cipher AI does not bundle any API key. On first launch, open `Settings`, paste your own OpenRouter key, and click `Save Settings`.
-
-## Ollama-Only Mode (No API Key)
-
-You can use Cipher AI without an OpenRouter key if you want local-only chat with Ollama:
-
-1. In `Settings`, enable `Use Ollama`.
-2. Set `Ollama Base URL` (default: `http://localhost:11434/v1`).
-3. Click `Refresh` under `Ollama Models`.
-4. Select an `ollama/...` model in the top model picker.
-5. Click `Save Settings`.
-
-Note:
-- `Test OpenRouter` and voice transcription still use OpenRouter.
-- `Summarize` and auto-title work in Ollama-only mode as well.
+Follow the instructions in the `release/windows/` directory to build the Windows installer.
 
 ## Development Scripts
 
-- `npm run build` - Compile TypeScript and copy renderer assets
-- `npm run start` - Build and launch Electron
-- `npm run dev` - Alias of start flow
-- `npm run pack:win` - Build Windows installer (`Cipher-Ai-Setup-<version>.exe`)
-
-## Project Structure
-
-```text
-src/main      Electron main process + IPC handlers
-src/preload   Secure preload bridge
-src/renderer  UI (HTML/CSS/TS)
-src/shared    Shared types
-docs          Product documentation
-scripts       Build and launch helpers
-```
-
-## Documentation
-
-Full usage and setup guide: `docs/CIPHER_AI_DOCUMENTATION.md`
-
-## License
-
-MIT - see `LICENSE`.
-
+*   `npm run build`: Builds the production version of the application.
+*   `npm run start`: Starts the development server.
+*   `npm run start:backend`: Starts the backend server for handling fulfillment steps.

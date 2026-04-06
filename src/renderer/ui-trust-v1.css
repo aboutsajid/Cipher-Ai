@@ -1,0 +1,38 @@
+.ui-trust-v1 .trust-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ui-trust-v1 .trust-chip-stable {
+  background: rgba(16, 185, 129, 0.12);
+  color: #0f8f68;
+}
+
+.ui-trust-v1 .trust-chip-experimental {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b7791f;
+}
+
+.ui-trust-v1 .btn-provider-switch,
+.ui-trust-v1 .mode-btn.mode-btn-save {
+  gap: 6px;
+}
+
+.ui-trust-v1 .btn-provider-switch,
+.ui-trust-v1 .mode-btn,
+.ui-trust-v1 .composer-tool-btn {
+  align-items: center;
+}
+
+.ui-trust-v1 .mode-btn.mode-btn-save.is-hidden {
+  display: none !important;
+}

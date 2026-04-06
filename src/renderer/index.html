@@ -1,10 +1,14 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cipher Ai</title>
-  <link rel="icon" type="image/png" href="./assets/cipher-ai-icon.png" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: http: https: file:; connect-src 'self' http: https: ws: wss:; media-src 'self' data: blob: file:; frame-src 'self' http: https: file:; child-src 'self' http: https: file:; object-src 'none'; base-uri 'self'; form-action 'self';"
+  />
+  <title>Cipher Workspace</title>
+    <link rel="icon" type="image/png" href="./assets/cipher-ai-icon.png" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -20,31 +24,22 @@
             <div class="cipher-logo">
               <span class="word">Cipher</span>
               <span class="tm">&trade;</span>
-              <span class="tool">Ai</span>
+              <span class="tool">AI</span>
             </div>
-            <span class="brand-motto">Free AI, No Fees. Supports OpenRouter &amp; Ollama</span>
+            <span class="brand-motto">Cipher Workspace: Intelligent desktop work, with local control</span>
           </div>
         </div>
-        <button id="new-chat-btn" class="btn-new" title="New Chat">+</button>
       </div>
       <div class="chat-list-search">
         <div class="chat-list-search-inner">
           <span class="chat-list-search-icon" aria-hidden="true">&#128269;</span>
           <input id="chat-search-input" class="chat-search-input" type="text" placeholder="Search chats" aria-label="Search chats" />
           <button id="chat-search-clear-btn" class="chat-search-clear-btn" type="button" aria-label="Clear chat search">&times;</button>
+          <button id="new-chat-btn" class="btn-new btn-new-inline" title="New Chat" aria-label="New Chat">+</button>
+          <button id="import-chat-btn" class="chat-search-import-btn" type="button" title="Import chat" aria-label="Import chat">Import</button>
         </div>
       </div>
       <div id="chat-list" class="chat-list"></div>
-      <div class="sidebar-footer">
-        <button id="stats-btn" class="btn-sidebar-action btn-topbar-action" type="button">Chat Status</button>
-        <button id="quick-ollama-btn" class="btn-sidebar-action" type="button">Ollama</button>
-        <button id="quick-openrouter-btn" class="btn-sidebar-action" type="button">OpenRouter</button>
-      </div>
-      <div class="sidebar-credit">
-        <span>© <span class="sidebar-credit-brand"><span class="sidebar-credit-word">Cipher</span><span class="sidebar-credit-tm">&trade;</span><span class="sidebar-credit-tool">Ai</span></span></span>
-        <span>Credit: <a href="mailto:aboutsajid@gmail.com">aboutsajid@gmail.com</a></span>
-        <span>Version 1.0.0</span>
-      </div>
     </aside>
 
     <main class="chat-area">
@@ -52,19 +47,34 @@
         <div class="chat-header-left">
           <div class="chat-title-stack">
             <span class="chat-title-label">Chat Name</span>
-            <span id="chat-title-display" class="chat-title-display">Select a chat</span>
+            <span id="chat-title-display" class="chat-title-display">Open a conversation</span>
           </div>
           <div class="chat-title-actions">
-            <button id="rename-btn" class="btn-topbar-action" style="display:none">Rename</button>
-            <button id="export-btn" class="btn-topbar-action" style="display:none">Export</button>
-            <button id="system-prompt-toggle-btn" class="btn-topbar-action" style="display:none">System Prompt</button>
+            <button id="rename-btn" class="btn-plain" style="display:none">Rename</button>
+            <button id="export-btn" class="btn-plain" style="display:none">Export</button>
+            <button id="system-prompt-toggle-btn" class="btn-plain" style="display:none">System Prompt</button>
           </div>
         </div>
         <div class="chat-header-right">
-          <button id="summarize-btn" class="btn-topbar-action" type="button">Summarize</button>
-          <button id="raw-toggle-btn" class="btn-topbar-action" type="button">Raw</button>
-          <button id="settings-toggle-btn" class="btn-topbar-action" type="button">Settings</button>
-          <button id="router-toggle-btn" class="btn-topbar-action" type="button">Router</button>
+          <div class="header-action-group header-action-group-main">
+          <button id="stats-btn" class="btn-plain" type="button">Chat Status</button>
+          <button id="summarize-btn" class="btn-plain" type="button">Summarize</button>
+          <button id="raw-toggle-btn" class="btn-plain" type="button">Raw</button>
+          </div>
+          <div class="header-action-group header-action-group-tools">
+          <button id="new-window-btn" class="btn-plain btn-new-window" type="button" title="Open a new Cipher Workspace window" aria-label="Open a new Cipher Workspace window">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 3.25A1.25 1.25 0 0 1 3.75 2h5.5A1.25 1.25 0 0 1 10.5 3.25v1.25H9V3.5H4v7h1v1.5H3.75A1.25 1.25 0 0 1 2.5 10.75v-7.5Z" />
+              <path d="M6.75 5.25A1.25 1.25 0 0 1 8 4h4.25A1.25 1.25 0 0 1 13.5 5.25v5.5A1.25 1.25 0 0 1 12.25 12H8A1.25 1.25 0 0 1 6.75 10.75v-5.5Z" />
+              <path d="M10.125 5.75v4.5M7.875 8h4.5" />
+            </svg>
+            <span>New Window</span>
+          </button>
+          <button id="settings-toggle-btn" class="btn-plain" type="button">Settings</button>
+          <button id="router-toggle-btn" class="btn-plain" type="button">Router</button>
+          <button id="agent-toggle-btn" class="btn-plain" type="button">Agent</button>
+          </div>
+          <div class="header-action-group header-action-group-status">
           <button id="theme-toggle-btn" class="btn-theme" title="Switch to light mode">
             <span id="theme-toggle-icon" aria-hidden="true">&#9728;</span>
             <span id="theme-toggle-label">Light</span>
@@ -73,17 +83,26 @@
             <span class="model-pill-icon" aria-hidden="true">◈</span>
             <select id="model-select" class="model-select"></select>
           </div>
-          <button id="compare-toggle-btn" class="btn-topbar-action" type="button">Compare</button>
+          </div>
+          <div class="header-action-group header-action-group-version">
+            <span class="header-build-pill">
+              <span class="header-build-label">Version</span>
+              <span class="header-build-value">1.1.0</span>
+            </span>
+          </div>
+          <div class="header-action-group header-action-group-compare">
+          <button id="compare-toggle-btn" class="btn-plain" type="button">Compare</button>
           <div id="compare-model-pill" class="model-pill" style="display:none">
             <span class="model-pill-icon" aria-hidden="true">◈</span>
             <select id="compare-model-select" class="model-select"></select>
           </div>
           <button id="stop-btn" class="btn-stop" style="display:none">Stop</button>
+          </div>
         </div>
       </header>
       <section id="system-prompt-panel" class="system-prompt-panel" style="display:none">
         <label class="field-label" for="system-prompt-input">System Prompt</label>
-        <textarea id="system-prompt-input" class="field-input" rows="3" placeholder="Optional: add instructions for this chat"></textarea>
+        <textarea id="system-prompt-input" class="field-input" rows="3" placeholder="Optional: add instructions for this chat" spellcheck="true"></textarea>
         <div class="system-prompt-actions">
           <button id="save-system-prompt-btn" class="btn-ghost-sm">Save Prompt</button>
         </div>
@@ -102,8 +121,13 @@
         <div class="empty-state">
           <div class="empty-icon">✨</div>
           <p>✨ Start a new conversation. Ask anything.</p>
-          <span><span class="empty-subtle-icon">⌘</span> Code, write, think with Cipher AI.</span>
-          <small class="empty-motto">Free AI, No Fees. Supports OpenRouter &amp; Ollama</small>
+          <span><span class="empty-subtle-icon">⌘</span> Code, write, think with Cipher Workspace.</span>
+          <div class="empty-actions">
+            <button class="btn-ghost empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>
+            <button class="btn-ghost empty-action-btn" type="button" data-empty-action="template">Use a Template</button>
+            <button class="btn-ghost empty-action-btn" type="button" data-empty-action="new-chat">Start Chat</button>
+          </div>
+          <small class="empty-motto">Cipher Workspace: Intelligent desktop work, with local control</small>
         </div>
         <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" style="display:none" title="Jump to latest message">Latest ↓</button>
       </section>
@@ -114,18 +138,40 @@
             <span>Prompt Templates</span>
             <button id="save-template-btn" class="btn-ghost-sm" type="button">Save Current</button>
           </div>
+          <div id="templates-help" class="field-help" style="padding:0 4px 10px 4px;">Save the current composer text as a reusable template, then click any template to load it.</div>
           <div id="templates-list" class="templates-list"></div>
         </div>
         <div id="composer-attachments" class="composer-attachments" style="display:none"></div>
-        <div class="mode-switcher composer-mode-switcher" id="mode-switcher">
-          <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
-          <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
-          <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
+        <div class="composer-controls-row">
+          <div class="provider-switcher" id="interaction-switcher">
+            <button id="interaction-chat-btn" class="btn-provider-switch active" type="button">Chat</button>
+            <button id="interaction-agent-btn" class="btn-provider-switch" type="button">Agent</button>
+          </div>
+          <div class="provider-switcher" id="provider-switcher">
+            <button id="quick-ollama-btn" class="btn-provider-switch" type="button">Ollama</button>
+            <button id="quick-openrouter-btn" class="btn-provider-switch" type="button">OpenRouter</button>
+            <button id="quick-claude-btn" class="btn-provider-switch" type="button">Claude Code</button>
+          </div>
+          <div class="mode-switcher composer-mode-switcher" id="mode-switcher">
+            <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
+            <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
+            <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
+            <button id="mode-edit-btn" class="mode-btn mode-btn-save" data-mode="edit" type="button">Edit &amp; Save</button>
+          </div>
+          <div class="composer-tools-row">
+            <button id="templates-btn" class="btn-plain composer-tool-btn" type="button" title="Templates">Templates</button>
+            <button id="save-template-inline-btn" class="btn-plain composer-tool-btn" type="button" title="Save current text as a template">Save Template</button>
+            <button id="attach-btn" class="btn-plain composer-tool-btn btn-attach" type="button" title="Attach files or folders" aria-label="Attach files or folders">Attach</button>
+          </div>
         </div>
         <div class="composer-inner">
-          <textarea id="composer-input" placeholder="Message Cipher Ai..." rows="1"></textarea>
-          <button id="templates-btn" class="btn-icon" type="button" title="Templates">⋯</button>
-          <button id="attach-btn" class="btn-icon" type="button" title="Attach files or folders">📎</button>
+          <textarea id="composer-input" placeholder="Message Cipher Workspace..." rows="1" spellcheck="true" autocorrect="on" autocapitalize="sentences"></textarea>
+              <button id="voice-btn" class="btn-icon" type="button" title="Local voice input" aria-label="Local voice input" style="display:none">
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 10.5a2.5 2.5 0 0 0 2.5-2.5V5a2.5 2.5 0 1 0-5 0v3A2.5 2.5 0 0 0 8 10.5Z" stroke="currentColor" stroke-width="1.4"/>
+                  <path d="M4.5 8.5a3.5 3.5 0 1 0 7 0M8 12.5V14M5.5 14h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+              </button>
           <button id="send-btn" class="btn-send">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M2 8L14 8M14 8L9 3M14 8L9 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -135,22 +181,63 @@
         <div class="composer-hint">
           <span id="stream-status"></span>
           <span class="composer-hint-right">
-            <span id="input-token-count" class="composer-token">~0 in</span>
-            <span id="context-token-count" class="composer-token">~0 ctx</span>
+            <span id="direct-save-badge" class="direct-save-badge">Direct save off</span>
+            <span id="direct-save-detail" class="composer-token">Use Edit &amp; Save mode for Claude-only file edits.</span>
             <span id="composer-shortcut-hint">Shift+Enter for new line &middot; Enter to send</span>
           </span>
         </div>
       </footer>
     </main>
 
+    <aside id="preview-workspace" class="preview-workspace" style="display:none">
+      <div class="preview-workspace-topbar">
+        <div class="preview-workspace-branding">
+          <span class="preview-kicker">Cipher Preview</span>
+          <div class="preview-workspace-title-row">
+            <span id="preview-workspace-title" class="preview-workspace-title">Task Output</span>
+            <span id="preview-workspace-target" class="preview-workspace-target"></span>
+          </div>
+        </div>
+        <div class="preview-workspace-actions">
+          <button id="preview-workspace-refresh-btn" class="btn-ghost-sm" type="button">Refresh</button>
+          <button id="preview-workspace-detach-btn" class="btn-ghost-sm" type="button">Detach</button>
+          <button id="preview-workspace-browser-btn" class="btn-ghost-sm" type="button">Open in Browser</button>
+          <button id="preview-workspace-close-btn" class="btn-ghost-sm" type="button">Hide</button>
+        </div>
+      </div>
+      <div id="preview-workspace-empty" class="preview-workspace-empty visible">
+        <span class="preview-workspace-empty-kicker">Preview Ready</span>
+        <p>Generated app previews will open here.</p>
+      </div>
+      <iframe
+        id="preview-workspace-webview"
+        class="preview-workspace-webview"
+        title="Task Preview"
+        sandbox="allow-scripts allow-forms"
+      ></iframe>
+    </aside>
+
     <aside id="right-panel" class="right-panel" style="display:none">
+      <div class="panel-topbar">
+        <span id="panel-title" class="panel-title">Settings</span>
+        <button id="panel-close-btn" class="panel-close-btn" type="button" aria-label="Close panel">x</button>
+      </div>
       <div class="panel-tabs">
         <button class="panel-tab active" data-tab="settings">Settings</button>
         <button class="panel-tab" data-tab="router">Router</button>
+        <button class="panel-tab" data-tab="agent">Agent</button>
       </div>
 
       <div class="panel-body active" data-panel="settings">
-        <div class="panel-section">
+        <div class="settings-group-label">Start Here</div>
+        <div class="panel-section settings-card settings-card-primary">
+          <label class="field-label">Interface Mode</label>
+          <div class="btn-row">
+            <button id="ui-mode-toggle-btn" class="btn-ghost" type="button">Switch to Simple UI</button>
+          </div>
+          <small id="ui-mode-help" class="field-help">Simple UI hides advanced controls and keeps the main chat flow easier to follow.</small>
+        </div>
+        <div class="panel-section settings-card settings-card-primary">
           <label class="field-label">AI Provider</label>
           <div class="provider-mode-row">
             <button id="provider-openrouter-btn" class="btn-ghost-sm provider-mode-btn" type="button">OpenRouter API</button>
@@ -158,13 +245,42 @@
           </div>
           <small id="provider-help-text" class="field-help">Choose how Cipher should send your requests.</small>
         </div>
+        <div class="panel-section local-agent-card settings-card settings-card-primary">
+          <label class="field-label">Free Local Coding Agent</label>
+          <p class="field-help">Use Ollama as the coding model and prepare a Filesystem MCP entry for this workspace.</p>
+          <div class="local-agent-workspace">
+            <span class="local-agent-workspace-label">Workspace root</span>
+            <code id="local-agent-workspace-path" class="local-agent-workspace-path">Loading...</code>
+          </div>
+          <div class="btn-row">
+            <button id="setup-local-agent-btn" class="btn-primary" type="button">Setup Local Mode</button>
+            <button id="setup-filesystem-mcp-btn" class="btn-ghost" type="button">Prepare Filesystem MCP</button>
+          </div>
+          <p id="local-agent-status" class="status-msg"></p>
+        </div>
+        <div id="local-voice-settings" class="panel-section settings-card settings-card-primary">
+          <label class="field-label">Free Local Voice</label>
+          <div class="field-row" style="align-items:center;justify-content:space-between;">
+            <label for="local-voice-enabled-input" class="field-help" style="margin:0;">Enable local speech-to-text with faster-whisper</label>
+            <input id="local-voice-enabled-input" type="checkbox" />
+          </div>
+          <label class="field-label" for="local-voice-model-select">Voice Model</label>
+          <select id="local-voice-model-select" class="field-input">
+            <option value="tiny">tiny</option>
+            <option value="base">base</option>
+            <option value="small">small</option>
+            <option value="medium">medium</option>
+          </select>
+          <small class="field-help">Local voice input is currently disabled in this build.</small>
+        </div>
+        <div class="settings-group-label">Connection &amp; Models</div>
         <div id="openrouter-api-section" class="panel-section">
           <label class="field-label">OpenRouter API Key (Optional for Ollama-only)</label>
           <div class="field-row">
             <input id="api-key-input" type="password" class="field-input" placeholder="Paste your OpenRouter key" />
             <button id="toggle-key-btn" class="btn-ghost-sm">Show</button>
           </div>
-          <small class="field-help">Required for OpenRouter models, summaries, auto-title, and voice transcription.</small>
+          <small class="field-help">Required for OpenRouter models, summaries, and auto-title.</small>
         </div>
         <div id="openrouter-base-section" class="panel-section">
           <label class="field-label">OpenRouter Base URL</label>
@@ -183,14 +299,40 @@
         </div>
         <div class="panel-section">
           <label class="field-label">Default Model</label>
+          <select id="default-model-select" class="field-input"></select>
           <input id="default-model-input" type="text" class="field-input" placeholder="qwen/qwen-2.5-coder-32b-instruct or ollama/qwen3:8b" />
         </div>
-        <div class="panel-section">
+        <div id="advanced-models-section" class="panel-section">
           <div class="field-row" style="justify-content:space-between;align-items:center;">
             <label class="field-label">Available Models (one per line)</label>
             <button id="fill-models-btn" class="btn-ghost-sm" type="button">Use Recommended</button>
           </div>
           <textarea id="models-textarea" class="field-input" rows="6"></textarea>
+        </div>
+        <div id="route-strategy-section" class="panel-section">
+          <div class="field-row" style="justify-content:space-between;align-items:center;">
+            <label class="field-label">Agent Route Strategy</label>
+            <span class="route-strategy-kicker">Inspectable policy</span>
+          </div>
+          <p class="field-help">The agent biases different models for implementation, repair, and planning. Reliability scoring and per-task blacklisting can still reorder the final route during execution.</p>
+          <div class="route-strategy-grid">
+            <div class="route-strategy-field">
+              <label class="field-label" for="route-default-select">Implementation Route</label>
+              <select id="route-default-select" class="field-input"></select>
+              <small class="field-help">Primary bias for generation and implementation work.</small>
+            </div>
+            <div class="route-strategy-field">
+              <label class="field-label" for="route-think-select">Repair Route</label>
+              <select id="route-think-select" class="field-input"></select>
+              <small class="field-help">Preferred model when build, launch, or verification repair is needed.</small>
+            </div>
+            <div class="route-strategy-field">
+              <label class="field-label" for="route-long-context-select">Planning Route</label>
+              <select id="route-long-context-select" class="field-input"></select>
+              <small class="field-help">Preferred model when task planning needs more context before edits start.</small>
+            </div>
+          </div>
+          <div id="route-strategy-preview" class="route-strategy-preview"></div>
         </div>
         <div class="btn-row">
           <button id="save-settings-btn" class="btn-primary">Save Settings</button>
@@ -213,7 +355,10 @@
         </div>
         <p id="router-action-msg" class="status-msg"></p>
         <div class="panel-section">
-          <label class="field-label">Router Log</label>
+          <div class="field-row" style="justify-content:space-between;align-items:center;">
+            <label class="field-label">Router Log</label>
+            <button id="refresh-diagnostics-btn" class="btn-ghost-sm" type="button">Refresh</button>
+          </div>
           <div id="router-log" class="router-log"></div>
         </div>
         <div class="panel-section">
@@ -237,6 +382,68 @@
           <div id="mcp-log" class="router-log" style="height:120px"></div>
         </div>
       </div>
+
+        <div class="panel-body" data-panel="agent">
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between; align-items:center;">
+            <label class="field-label">Agent Runner</label>
+            <button id="agent-paste-btn" class="btn-ghost-sm" type="button">Paste</button>
+          </div>
+          <textarea
+            id="agent-prompt-input"
+            class="field-input"
+            rows="4"
+            placeholder="Describe the coding task. The agent will inspect the workspace, verify the build, and try controlled fixes on failures."
+          ></textarea>
+          <div class="btn-row">
+            <button id="agent-start-btn" class="btn-primary" type="button">Start Agent</button>
+            <button id="agent-stop-btn" class="btn-ghost" type="button">Stop Agent</button>
+            <button id="agent-restore-btn" class="btn-ghost" type="button">Restore Rollback</button>
+          </div>
+          <p id="agent-status-msg" class="status-msg"></p>
+          <p id="agent-target-msg" class="status-msg"></p>
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between; align-items:center;">
+            <label class="field-label">Recent Tasks</label>
+          </div>
+          <div id="agent-history-filters" class="agent-history-filters">
+            <button class="btn-ghost-sm active" type="button" data-agent-history-filter="all">All</button>
+            <button class="btn-ghost-sm" type="button" data-agent-history-filter="running">Running</button>
+            <button class="btn-ghost-sm" type="button" data-agent-history-filter="completed">Completed</button>
+            <button class="btn-ghost-sm" type="button" data-agent-history-filter="failed">Failed</button>
+          </div>
+          <div id="agent-history" class="agent-history-list"></div>
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between; align-items:center;">
+            <label class="field-label">Rollback Snapshots</label>
+            <button id="agent-refresh-snapshots-btn" class="btn-ghost-sm" type="button">Refresh</button>
+          </div>
+          <div id="agent-snapshots" class="agent-history-list"></div>
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between; align-items:center;">
+            <label class="field-label">Route Health</label>
+          </div>
+          <div id="agent-route-health" class="agent-history-list"></div>
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between; align-items:center;">
+            <label class="field-label">Agent Steps</label>
+            <button id="agent-copy-steps-btn" class="btn-ghost-sm" type="button">Copy Steps</button>
+          </div>
+          <div id="agent-steps" class="router-log" style="height:140px"></div>
+        </div>
+        <div class="panel-section">
+          <div class="field-row" style="justify-content:space-between; align-items:center;">
+            <label class="field-label">Agent Log</label>
+            <button id="agent-copy-log-btn" class="btn-ghost-sm" type="button">Copy Log</button>
+          </div>
+          <div id="agent-log" class="router-log" style="height:220px"></div>
+        </div>
+      </div>
+
     </aside>
   </div>
 
@@ -254,12 +461,13 @@
   <div id="code-preview-modal" class="modal-overlay" style="display:none">
     <div class="modal code-preview-modal">
       <div class="code-preview-header">
-        <p class="modal-title">HTML Preview</p>
+        <p id="code-preview-title" class="modal-title">HTML Preview</p>
         <button id="code-preview-close-btn" class="btn-ghost-sm" type="button">Close</button>
       </div>
       <iframe id="code-preview-frame" class="code-preview-frame" sandbox="allow-scripts"></iframe>
     </div>
   </div>
+
 
   <div id="stats-modal" class="modal-overlay" style="display:none">
     <div class="modal stats-modal">
@@ -277,10 +485,6 @@
           <strong id="stats-total-messages" class="stats-value">0</strong>
         </div>
         <div class="stats-card">
-          <span class="stats-label">Estimated Tokens</span>
-          <strong id="stats-total-tokens" class="stats-value">0</strong>
-        </div>
-        <div class="stats-card">
           <span class="stats-label">Most Used Model</span>
           <strong id="stats-most-used-model" class="stats-value">N/A</strong>
           <small id="stats-most-used-count" class="stats-subvalue">0 messages</small>
@@ -293,9 +497,86 @@
     </div>
   </div>
 
+  <div id="managed-save-preview-modal" class="modal-overlay" style="display:none">
+    <div class="modal managed-save-preview-modal">
+      <div class="code-preview-header">
+        <p class="modal-title">Review Claude Changes</p>
+        <button id="managed-save-preview-close-btn" class="btn-ghost-sm" type="button">Cancel</button>
+      </div>
+      <p id="managed-save-preview-summary" class="field-help">Review the proposed file content before saving.</p>
+      <div id="managed-save-preview-files" class="router-log managed-save-preview-files"></div>
+      <textarea
+        id="managed-save-preview-content"
+        class="field-input managed-save-preview-content"
+        rows="16"
+        readonly
+        spellcheck="false"
+      ></textarea>
+      <div class="btn-row">
+        <button id="managed-save-apply-btn" class="btn-primary" type="button">Save Changes</button>
+        <button id="managed-save-cancel-btn" class="btn-ghost" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="snapshot-restore-modal" class="modal-overlay" style="display:none">
+    <div class="modal snapshot-restore-modal">
+      <div class="code-preview-header">
+        <p class="modal-title">Restore Snapshot</p>
+        <button id="snapshot-restore-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <p id="snapshot-restore-label" class="field-help">Snapshot details</p>
+      <div id="snapshot-restore-badges" class="agent-history-badges"></div>
+      <p id="snapshot-restore-warning" class="field-help"></p>
+      <div>
+        <p class="field-label">Sample files</p>
+        <div id="snapshot-restore-files" class="router-log managed-save-preview-files"></div>
+      </div>
+      <div id="snapshot-compare-section" style="display:none">
+        <p class="field-label">Compare Before vs After</p>
+        <div class="snapshot-compare-grid">
+          <div class="snapshot-compare-col">
+            <p class="snapshot-compare-title">Before</p>
+            <div id="snapshot-compare-before" class="router-log managed-save-preview-files"></div>
+          </div>
+          <div class="snapshot-compare-col">
+            <p class="snapshot-compare-title">After</p>
+            <div id="snapshot-compare-after" class="router-log managed-save-preview-files"></div>
+          </div>
+        </div>
+        <p id="snapshot-compare-summary" class="field-help"></p>
+      </div>
+      <div class="btn-row">
+        <button id="snapshot-restore-confirm-btn" class="btn-primary" type="button">Restore Snapshot</button>
+        <button id="snapshot-restore-cancel-btn" class="btn-ghost" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="onboarding-modal" class="modal-overlay" style="display:none">
+    <div class="modal onboarding-modal">
+      <div class="onboarding-kicker">WELCOME</div>
+      <p class="modal-title">Set Up Cipher Workspace</p>
+      <p class="field-help">Start with the easiest path now. You can switch providers and change all settings later.</p>
+      <div class="onboarding-options">
+        <button id="onboarding-local-btn" class="onboarding-option onboarding-option-recommended" type="button">
+          <span class="onboarding-badge">Recommended</span>
+          <strong>Use Local AI with Ollama</strong>
+          <span>Best for beginners who want a free private setup on their own PC. Cipher will guide local setup.</span>
+        </button>
+        <button id="onboarding-openrouter-btn" class="onboarding-option" type="button">
+          <strong>Use Cloud AI with OpenRouter</strong>
+          <span>Best if you already have an API key and want quick access to hosted models.</span>
+        </button>
+      </div>
+      <div class="btn-row">
+        <button id="onboarding-close-btn" class="btn-ghost" type="button">Skip for now</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script src="./app.js"></script>
 </body>
 </html>
-

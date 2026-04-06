@@ -1,0 +1,287 @@
+name: windows-packaging
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_update_smoke:
+        description: "Run version-to-version update smoke after packaging."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      baseline_run_id:
+        description: "Optional prior windows-packaging run id to use as the baseline installer."
+        required: false
+        type: string
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package_and_smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package Windows installer
+        run: npm.cmd run pack:win
+
+      - name: Resolve installer path
+        id: installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release -Filter 'Cipher-Workspace-Setup-*.exe' |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw 'Installer not found in release/.'
+          }
+          "path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Write installer metadata
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path tmp -Force | Out-Null
+          $metadata = [ordered]@{
+            workflow = 'windows-packaging'
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            refName = '${{ github.ref_name }}'
+            sha = '${{ github.sha }}'
+            event = '${{ github.event_name }}'
+            generatedAt = [DateTime]::UtcNow.ToString('o')
+            installerPath = '${{ steps.installer.outputs.path }}'
+          } | ConvertTo-Json -Depth 4
+          Set-Content -Path tmp/win-installer-metadata.json -Value $metadata -Encoding utf8
+
+      - name: Run install smoke
+        run: >
+          npm.cmd run smoke:win:install --
+          --installer "${{ steps.installer.outputs.path }}"
+          --report "tmp/win-installer-smoke-report.json"
+
+      - name: Render install smoke summary
+        if: ${{ always() }}
+        run: >
+          npm.cmd run smoke:win:summary --
+          "tmp/win-installer-smoke-report.json"
+          --title "Windows Install Smoke"
+          --output "tmp/win-installer-smoke-summary.md"
+          --github-step-summary
+          --allow-missing
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload installer metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-metadata
+          path: tmp/win-installer-metadata.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload unpacked app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unpacked
+          path: release/win-unpacked
+          if-no-files-found: error
+          retention-days: 21
+
+      - name: Upload install smoke report
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-smoke-report
+          path: tmp/win-installer-smoke-report.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload install smoke summary
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-smoke-summary
+          path: tmp/win-installer-smoke-summary.md
+          if-no-files-found: error
+          retention-days: 90
+
+  update_smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    needs: package_and_smoke
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.run_update_smoke == 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download current installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: tmp/current-installer
+
+      - name: Select baseline run
+        id: baseline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const explicit = `${{ github.event.inputs.baseline_run_id || '' }}`.trim();
+            if (explicit) {
+              core.setOutput('run_id', explicit);
+              core.setOutput('skip', 'false');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const currentRunId = String(context.runId);
+            const workflowName = 'windows-packaging.yml';
+            const currentBranch = context.ref.replace('refs/heads/', '');
+            const defaultBranch = context.payload.repository?.default_branch || currentBranch || 'main';
+            const branchCandidates = [...new Set([currentBranch, defaultBranch].filter(Boolean))];
+
+            for (const branch of branchCandidates) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id: workflowName,
+                branch,
+                status: 'completed',
+                per_page: 100
+              });
+
+              for (const run of runs) {
+                if (String(run.id) === currentRunId) continue;
+                if (run.conclusion !== 'success') continue;
+                const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                  owner,
+                  repo,
+                  run_id: run.id,
+                  per_page: 100
+                });
+                const hasInstaller = artifacts.some((artifact) => artifact.name === 'windows-installer' && !artifact.expired);
+                if (hasInstaller) {
+                  core.setOutput('run_id', String(run.id));
+                  core.setOutput('skip', 'false');
+                  core.setOutput('source_branch', branch);
+                  return;
+                }
+              }
+            }
+
+            if (context.eventName === 'schedule') {
+              core.notice('No reusable prior windows-installer artifact was found for scheduled update smoke. Install smoke still completed and this run can seed the next scheduled upgrade check.');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setFailed('No reusable prior windows-installer artifact was found. Re-run with baseline_run_id or trigger another successful packaging run first.');
+
+      - name: Download baseline installer artifact
+        if: ${{ steps.baseline.outputs.skip != 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: tmp/baseline-installer
+          run-id: ${{ steps.baseline.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Resolve installer paths
+        if: ${{ steps.baseline.outputs.skip != 'true' }}
+        id: installers
+        shell: pwsh
+        run: |
+          $baseline = Get-ChildItem -Path tmp/baseline-installer -Filter 'Cipher-Workspace-Setup-*.exe' -Recurse |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          $upgrade = Get-ChildItem -Path tmp/current-installer -Filter 'Cipher-Workspace-Setup-*.exe' -Recurse |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $baseline) {
+            throw 'Baseline installer artifact did not contain a setup executable.'
+          }
+          if (-not $upgrade) {
+            throw 'Current installer artifact did not contain a setup executable.'
+          }
+          "baseline=$($baseline.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "upgrade=$($upgrade.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Report skipped update smoke
+        if: ${{ steps.baseline.outputs.skip == 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host 'Skipping update smoke because no retained baseline installer artifact was available for this scheduled run.'
+          @"
+          # Windows Update Smoke
+
+          - Status: skipped
+          - Reason: no retained baseline installer artifact was available for this run
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Run update smoke
+        if: ${{ steps.baseline.outputs.skip != 'true' }}
+        run: >
+          npm.cmd run smoke:win:update --
+          --baseline-installer "${{ steps.installers.outputs.baseline }}"
+          --upgrade-installer "${{ steps.installers.outputs.upgrade }}"
+          --report "tmp/win-update-smoke-report.json"
+
+      - name: Render update smoke summary
+        if: ${{ always() && steps.baseline.outputs.skip != 'true' }}
+        run: >
+          npm.cmd run smoke:win:summary --
+          "tmp/win-update-smoke-report.json"
+          --title "Windows Update Smoke"
+          --output "tmp/win-update-smoke-summary.md"
+          --github-step-summary
+          --allow-missing
+
+      - name: Upload update smoke report
+        if: ${{ steps.baseline.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-update-smoke-report
+          path: tmp/win-update-smoke-report.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload update smoke summary
+        if: ${{ always() && steps.baseline.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-update-smoke-summary
+          path: tmp/win-update-smoke-summary.md
+          if-no-files-found: error
+          retention-days: 90

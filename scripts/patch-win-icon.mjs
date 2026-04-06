@@ -1,8 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { rcedit } from "rcedit";
 
-const exePath = resolve("release", "win-unpacked", "Cipher Ai.exe");
+const winUnpackedDir = resolve("release", "win-unpacked");
+const exeName = readdirSync(winUnpackedDir).find((entry) => entry.toLowerCase().endsWith(".exe"));
+const exePath = exeName ? resolve(winUnpackedDir, exeName) : resolve(winUnpackedDir, "Cipher Workspace.exe");
 const iconPath = resolve("src", "renderer", "assets", "cipher-ai-icon.ico");
 
 if (!existsSync(exePath)) {

@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { AgentRouteDiagnostics, AgentSnapshotRestoreResult } from "../shared/types";
 
 const api = {
+  app: {
+    workspacePath: () => ipcRenderer.invoke("app:workspacePath"),
+    newWindow: () => ipcRenderer.invoke("app:newWindow"),
+    openExternal: (targetUrl: string) => ipcRenderer.invoke("app:openExternal", targetUrl),
+    openPreview: (targetPath: string, preferredUrl?: string) => ipcRenderer.invoke("app:openPreview", targetPath, preferredUrl),
+    openPreviewWindow: (targetUrl: string, title?: string) => ipcRenderer.invoke("app:openPreviewWindow", targetUrl, title)
+  },
   chat: {
     list: () => ipcRenderer.invoke("chat:list"),
     get: (id: string) => ipcRenderer.invoke("chat:get", id),
@@ -8,6 +16,9 @@ const api = {
     delete: (id: string) => ipcRenderer.invoke("chat:delete", id),
     rename: (id: string, title: string) => ipcRenderer.invoke("chat:rename", id, title),
     export: (id: string) => ipcRenderer.invoke("chat:export", id),
+    import: () => ipcRenderer.invoke("chat:import"),
+    appendMessage: (chatId: string, message: unknown) => ipcRenderer.invoke("chat:appendMessage", chatId, message),
+    updateMessage: (chatId: string, messageId: string, patch: unknown) => ipcRenderer.invoke("chat:updateMessage", chatId, messageId, patch),
     setSystemPrompt: (id: string, systemPrompt: string) => ipcRenderer.invoke("chat:setSystemPrompt", id, systemPrompt),
     summarize: (messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) => ipcRenderer.invoke("chat:summarize", messages),
     generateTitle: (chatId: string, firstUserMessage: string) => ipcRenderer.invoke("chat:generateTitle", chatId, firstUserMessage),
@@ -17,7 +28,7 @@ const api = {
       content: string,
       model: string,
       options?: {
-        attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string }>;
+        attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string; sourcePath?: string }>;
         compareModel?: string;
         enabledTools?: string[];
       }
@@ -34,6 +45,9 @@ const api = {
     },
     onError: (cb: (chatId: string, msgId: string, err: string) => void) => {
       ipcRenderer.on("chat:error", (_e, chatId, msgId, err) => cb(chatId, msgId, err));
+    },
+    onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => {
+      ipcRenderer.on("chat:storeChanged", (_e, payload) => cb(payload));
     }
   },
   attachments: {
@@ -45,6 +59,7 @@ const api = {
     delete: (name: string) => ipcRenderer.invoke("templates:delete", name)
   },
   ollama: {
+    check: () => ipcRenderer.invoke("ollama:check"),
     listModels: (baseUrl?: string) => ipcRenderer.invoke("ollama:listModels", baseUrl)
   },
   mcp: {
@@ -55,9 +70,58 @@ const api = {
     stop: (name: string) => ipcRenderer.invoke("mcp:stop", name),
     status: () => ipcRenderer.invoke("mcp:status")
   },
+  claude: {
+      status: () => ipcRenderer.invoke("claude:status"),
+      start: () => ipcRenderer.invoke("claude:start"),
+      send: (
+        prompt: string,
+        options?: {
+          attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string; sourcePath?: string }>;
+          enabledTools?: string[];
+        }
+      ) => ipcRenderer.invoke("claude:send", prompt, options),
+      applyEdits: (edits: Array<{ path: string; content: string }>, allowedPaths: string[]) =>
+        ipcRenderer.invoke("claude:applyEdits", edits, allowedPaths),
+      stop: () => ipcRenderer.invoke("claude:stop"),
+    onOutput: (cb: (payload: { text: string; stream: "stdout" | "stderr" | "system" }) => void) => {
+      ipcRenderer.on("claude:output", (_e, payload) => cb(payload));
+    },
+    onError: (cb: (message: string) => void) => {
+      ipcRenderer.on("claude:error", (_e, message) => cb(message));
+    },
+    onExit: (cb: (payload: { code: number | null; signal: string | null }) => void) => {
+      ipcRenderer.on("claude:exit", (_e, payload) => cb(payload));
+    }
+  },
+  agent: {
+    listTasks: () => ipcRenderer.invoke("agent:listTasks"),
+    getTask: (taskId: string) => ipcRenderer.invoke("agent:getTask", taskId),
+    getLogs: (taskId: string) => ipcRenderer.invoke("agent:getLogs", taskId),
+    getRouteDiagnostics: (taskId?: string): Promise<AgentRouteDiagnostics> => ipcRenderer.invoke("agent:getRouteDiagnostics", taskId),
+    startTask: (prompt: string) => ipcRenderer.invoke("agent:startTask", prompt),
+    stopTask: (taskId: string) => ipcRenderer.invoke("agent:stopTask", taskId),
+    listSnapshots: () => ipcRenderer.invoke("agent:listSnapshots"),
+    getRestoreState: (): Promise<AgentSnapshotRestoreResult | null> => ipcRenderer.invoke("agent:getRestoreState"),
+    restoreSnapshot: (snapshotId: string): Promise<AgentSnapshotRestoreResult> => ipcRenderer.invoke("agent:restoreSnapshot", snapshotId)
+  },
+  terminal: {
+    run: (request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) =>
+      ipcRenderer.invoke("terminal:run", request)
+  },
+  workspace: {
+    listFiles: (targetPath?: string, depth?: number) => ipcRenderer.invoke("workspace:listFiles", targetPath, depth),
+    readFile: (targetPath: string) => ipcRenderer.invoke("workspace:readFile", targetPath),
+    writeFile: (targetPath: string, content: string) => ipcRenderer.invoke("workspace:writeFile", targetPath, content),
+    search: (pattern: string, targetPath?: string) => ipcRenderer.invoke("workspace:search", pattern, targetPath),
+    pathExists: (targetPath: string) => ipcRenderer.invoke("workspace:pathExists", targetPath),
+    openPath: (targetPath: string) => ipcRenderer.invoke("workspace:openPath", targetPath)
+  },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
-    save: (partial: unknown) => ipcRenderer.invoke("settings:save", partial)
+    save: (partial: unknown) => ipcRenderer.invoke("settings:save", partial),
+    onChanged: (cb: () => void) => {
+      ipcRenderer.on("settings:changed", () => cb());
+    }
   },
   stats: {
     get: () => ipcRenderer.invoke("stats:get")
@@ -73,6 +137,9 @@ const api = {
     test: () => ipcRenderer.invoke("router:test"),
     onLog: (cb: (line: string) => void) => {
       ipcRenderer.on("router:log", (_e, line) => cb(line));
+    },
+    onStateChanged: (cb: () => void) => {
+      ipcRenderer.on("router:stateChanged", () => cb());
     }
   }
 };

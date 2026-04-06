@@ -1,0 +1,79 @@
+[
+  {
+    "id": "manual.bookkeeping-dashboard",
+    "category": "react-web",
+    "title": "Bookkeeping dashboard",
+    "expectedArtifactType": "web-app",
+    "prompt": "Build me a very small bookkeeping dashboard for a local shop. I want overdue invoices, this week revenue, a recent activity list, and a quick way to add a new invoice."
+  },
+  {
+    "id": "manual.sales-followups",
+    "category": "interactive-web",
+    "title": "Sales follow-up tracker",
+    "expectedArtifactType": "web-app",
+    "prompt": "Make a tiny follow-up tracker for sales calls. I need to add people, mark status, change next contact date, and still see the saved list after updates."
+  },
+  {
+    "id": "manual.desktop-snippet-desk",
+    "category": "desktop-app",
+    "title": "Desktop snippet desk",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a desktop snippet desk for support work. Give me a sidebar, categories, a main snippet list, and a clear add snippet action."
+  },
+  {
+    "id": "manual.fulfillment-api",
+    "category": "api-service",
+    "title": "Fulfillment steps API",
+    "expectedArtifactType": "api-service",
+    "prompt": "Build a tiny backend for fulfillment steps with endpoints to list orders, create one, mark packed, and mark shipped."
+  },
+  {
+    "id": "manual.csv-ticket-summary",
+    "category": "developer-tool",
+    "title": "CSV ticket summary CLI",
+    "expectedArtifactType": "script-tool",
+    "prompt": "Create a small command-line tool that reads a CSV file of support tickets and prints a short status summary grouped by priority."
+  },
+  {
+    "id": "manual.money-format-library",
+    "category": "library",
+    "title": "Money format helper package",
+    "expectedArtifactType": "library",
+    "prompt": "Create a tiny reusable JavaScript package that formats money amounts, percentage deltas, and compact counts for dashboards."
+  },
+  {
+    "id": "manual.shipment-exceptions-api",
+    "category": "api-service",
+    "title": "Shipment exceptions API",
+    "expectedArtifactType": "api-service",
+    "prompt": "Build a tiny backend service for shipment exceptions with endpoints to list exceptions, create one, assign an owner, and mark one resolved."
+  },
+  {
+    "id": "manual.refunds-math-library",
+    "category": "library",
+    "title": "Refunds math helper package",
+    "expectedArtifactType": "library",
+    "prompt": "Create a small reusable JavaScript package for refunds math with helpers for subtotal, fees, tax, refund amount, and net payout."
+  },
+  {
+    "id": "manual.field-service-visits",
+    "category": "interactive-web",
+    "title": "Field service visits tracker",
+    "expectedArtifactType": "web-app",
+    "prompt": "Create a tiny web app for tracking field service visits. I need a form to add a visit, a visible list of saved visits, status updates, and a quick filter by technician."
+  },
+  {
+    "id": "manual.handoff-priority-cli",
+    "category": "developer-tool",
+    "title": "Markdown handoff priority CLI",
+    "expectedArtifactType": "script-tool",
+    "prompt": "Create a tiny command-line tool that reads a markdown handoff file and prints action items grouped by priority."
+  },
+  {
+    "id": "manual.dispatch-followups",
+    "category": "interactive-web",
+    "title": "Dispatch follow-up workspace",
+    "expectedArtifactType": "web-app",
+    "prompt": "Build a small internal operations workspace for dispatch follow-ups. I need overdue items, owner assignment, status changes, and a visible saved list I can keep updating."
+  }
+]

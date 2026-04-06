@@ -1,25 +1,39 @@
+
 {
   "name": "cipher-ai",
-  "version": "1.0.0",
-  "description": "Cipher Ai - Desktop AI workspace with Claude Code Router",
+  "version": "1.1.0",
+  "description": "Cipher Workspace - Desktop AI workspace with Claude Code Router",
   "main": "dist/main/main.js",
   "author": "Cipher",
   "license": "MIT",
   "scripts": {
-    "clean": "if exist dist rmdir /s /q dist",
+    "clean": "node scripts/clean-paths.mjs dist",
+    "clean:release": "node scripts/clean-paths.mjs release",
     "build:ts": "tsc -p tsconfig.json",
     "build:assets": "node scripts/copy-assets.mjs",
     "build": "npm run clean && npm run build:ts && npm run build:assets",
+    "test": "npm run build && node scripts/run-tests.mjs",
     "start": "npm run build && node scripts/launch-electron.mjs",
     "dev": "npm run build && node scripts/launch-electron.mjs",
-    "pack:win:dir": "electron-builder --win dir",
-    "pack:win:icon": "node scripts/patch-win-icon.mjs",
-    "pack:win:nsis": "electron-builder --win nsis --prepackaged release/win-unpacked",
-    "pack:win": "npm run build && npm run pack:win:dir && npm run pack:win:icon && npm run pack:win:nsis"
+    "pack:win": "npm run build && npm run clean:release && electron-builder --win nsis",
+    "soak:agent:prompts": "node scripts/agent-soak-report.mjs prompts",
+    "soak:agent:report": "node scripts/agent-soak-report.mjs report",
+    "soak:agent:run": "node scripts/agent-soak-run.mjs",
+    "soak:agent:manual:prompts": "node scripts/agent-soak-report.mjs prompts --scenarios-file prompts/agent-manual-freeform-pack.json --markdown tmp/agent-manual-freeform-prompts.md",
+    "soak:agent:manual:report": "node scripts/agent-soak-report.mjs report --scenarios-file prompts/agent-manual-freeform-pack.json --markdown tmp/agent-manual-freeform-report.md --json tmp/agent-manual-freeform-report.json --history tmp/agent-manual-freeform-history.json",
+    "soak:agent:manual:run": "node scripts/agent-soak-run.mjs --scenarios-file prompts/agent-manual-freeform-pack.json --markdown tmp/agent-manual-freeform-report.md --json tmp/agent-manual-freeform-report.json",
+    "soak:agent:realworld:prompts": "node scripts/agent-soak-report.mjs prompts --scenarios-file prompts/agent-realworld-pack.json --markdown tmp/agent-realworld-prompts.md",
+    "soak:agent:realworld:report": "node scripts/agent-soak-report.mjs report --scenarios-file prompts/agent-realworld-pack.json --markdown tmp/agent-realworld-report.md --json tmp/agent-realworld-report.json --history tmp/agent-realworld-history.json",
+    "soak:agent:realworld:run": "node scripts/agent-soak-run.mjs --scenarios-file prompts/agent-realworld-pack.json --markdown tmp/agent-realworld-report.md --json tmp/agent-realworld-report.json",
+    "smoke:win:install": "node scripts/smoke-win-installer.mjs",
+    "smoke:win:update": "node scripts/smoke-win-installer.mjs",
+    "smoke:win:summary": "node scripts/format-win-smoke-report.mjs",
+    "start:backend": "node src/server.js"
   },
   "dependencies": {
     "electron-store": "^8.2.0",
-    "marked": "^9.0.0"
+    "marked": "^9.0.0",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -30,7 +44,8 @@
   },
   "build": {
     "appId": "com.cipher.ai",
-    "productName": "Cipher Ai",
+    "productName": "Cipher Workspace",
+    "executableName": "Cipher Workspace",
     "directories": {
       "output": "release"
     },
@@ -57,8 +72,9 @@
       "icon": "src/renderer/assets/cipher-ai-icon.ico"
     },
     "nsis": {
-      "artifactName": "Cipher-Ai-Setup-${version}.exe",
+      "artifactName": "Cipher-Workspace-Setup-${version}.exe",
       "oneClick": false,
+      "createDesktopShortcut": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "src/renderer/assets/cipher-ai-icon.ico",
       "uninstallerIcon": "src/renderer/assets/cipher-ai-icon.ico",

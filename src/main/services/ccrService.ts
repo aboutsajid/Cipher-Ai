@@ -12,6 +12,7 @@ interface SendMessageOptions {
   baseUrl?: string;
   apiKey?: string;
   skipAuth?: boolean;
+  timeoutMs?: number;
 }
 
 interface CommandResult {
@@ -24,6 +25,8 @@ interface ParsedStatus {
   running: boolean;
   pid?: number;
 }
+
+const CHAT_COMPLETION_TIMEOUT_MS = 30_000;
 
 export class CcrService {
   private settingsStore: SettingsStore;
@@ -332,6 +335,7 @@ export class CcrService {
     const baseUrl = (options.baseUrl ?? settings.baseUrl).replace(/\/+$/, "");
     const apiKey = options.apiKey ?? settings.apiKey;
     const skipAuth = options.skipAuth ?? false;
+    const timeoutMs = Math.max(5_000, options.timeoutMs ?? CHAT_COMPLETION_TIMEOUT_MS);
     const maxOutputTokens = 8192;
 
     if (!skipAuth && !apiKey) throw new Error("No API key set. Go to Settings and add your OpenRouter key.");
@@ -343,26 +347,25 @@ export class CcrService {
     if (!skipAuth && apiKey) {
       headers["Authorization"] = `Bearer ${apiKey}`;
       headers["HTTP-Referer"] = "https://cipher-ai.local";
-      headers["X-Title"] = "Cipher Ai";
+      headers["X-Title"] = "Cipher Workspace";
     }
 
     const requestUrl = `${baseUrl}/chat/completions`;
     const requestBody = JSON.stringify({ model, messages, stream: true, max_tokens: maxOutputTokens });
-    let response = await fetch(requestUrl, {
+    const createRequestSignal = () => signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+      : AbortSignal.timeout(timeoutMs);
+    const sendCompletionRequest = () => fetch(requestUrl, {
       method: "POST",
       headers,
       body: requestBody,
-      signal
+      signal: createRequestSignal()
     });
+    let response = await sendCompletionRequest();
 
     if (response.status === 429) {
       await new Promise<void>((resolve) => setTimeout(resolve, 2000));
-      response = await fetch(requestUrl, {
-        method: "POST",
-        headers,
-        body: requestBody,
-        signal
-      });
+      response = await sendCompletionRequest();
     }
 
     if (!response.ok) {
@@ -375,7 +378,11 @@ export class CcrService {
       throw new Error(`API error ${response.status}: ${text.slice(0, 200)}`);
     }
 
-    const reader = response.body!.getReader();
+    if (!response.body) {
+      throw new Error("API returned an empty response body.");
+    }
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let result = "";
     let buffer = "";

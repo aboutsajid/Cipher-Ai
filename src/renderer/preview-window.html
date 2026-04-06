@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: file:; frame-src http: https: file:; child-src http: https: file:; object-src 'none'; base-uri 'self'; form-action 'self';"
+  />
+  <title>Cipher Preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-0: #0f1115;
+      --bg-1: #151821;
+      --bg-2: #1c2433;
+      --border: rgba(255,255,255,0.08);
+      --text-1: #edf1f8;
+      --text-2: #9fb0c8;
+      --accent: #00f5c4;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg-0);
+      color: var(--text-1);
+      font-family: "Segoe UI", Inter, sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      background:
+        radial-gradient(circle at top left, rgba(0,245,196,0.08), transparent 18%),
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent 20%),
+        var(--bg-0);
+    }
+
+    .preview-shell-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent);
+    }
+
+    .preview-shell-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .preview-shell-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text-1);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(255,255,255,0.04);
+    }
+
+    .preview-shell-link:hover {
+      background: rgba(255,255,255,0.08);
+    }
+
+    .preview-shell-body {
+      flex: 1;
+      min-height: 0;
+      padding: 14px;
+    }
+
+    .preview-shell-frame {
+      width: 100%;
+      height: 100%;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <header class="preview-shell-head">
+    <div></div>
+    <div class="preview-shell-actions">
+      <a id="preview-shell-browser-link" class="preview-shell-link" href="#" target="_blank" rel="noreferrer">Open in Browser</a>
+    </div>
+  </header>
+  <main class="preview-shell-body">
+    <iframe id="preview-shell-frame" class="preview-shell-frame" title="Cipher Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+  </main>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get("url") || "about:blank";
+    const title = params.get("title") || "Task Output";
+    const frame = document.getElementById("preview-shell-frame");
+    const browserLink = document.getElementById("preview-shell-browser-link");
+
+    document.title = `Cipher Preview - ${title}`;
+    frame.setAttribute("src", url);
+    browserLink.setAttribute("href", url);
+  </script>
+</body>
+</html>

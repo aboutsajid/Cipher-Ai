@@ -1,16 +1,8 @@
+import { safeStorage } from "electron";
 import Store from "electron-store";
 import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { McpServerConfig, PromptTemplate, Settings } from "../../shared/types";
-
-const BUILT_IN_TEMPLATES: PromptTemplate[] = [
-  { name: "Review this code", content: "Review this code and list issues by severity with actionable fixes:\n\n```" },
-  { name: "Explain this code", content: "Explain what this code does, step by step, including key tradeoffs and edge cases:\n\n```" },
-  { name: "Write unit tests for this", content: "Write unit tests for this code. Include happy paths and edge cases:\n\n```" },
-  { name: "Find bugs in this code", content: "Find likely bugs in this code and propose minimal fixes:\n\n```" },
-  { name: "Refactor this code", content: "Refactor this code for readability and maintainability while preserving behavior:\n\n```" },
-  { name: "Explain this error", content: "Explain this error and provide a concrete fix:\n\n" }
-];
 
 const MODEL_ID_MIGRATIONS: Record<string, string> = {
   "google/gemini-2.5-flash-lite-": "google/gemini-2.5-flash-lite-preview-09-2025",
@@ -19,17 +11,30 @@ const MODEL_ID_MIGRATIONS: Record<string, string> = {
   "qwen/qwen2.5-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct"
 };
 
+const ENCRYPTED_SECRET_PREFIX = "cipher-protected:";
+
+function isSafeStorageEncryptionAvailable(): boolean {
+  try {
+    return typeof safeStorage?.isEncryptionAvailable === "function" && safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
   baseUrl: "https://openrouter.ai/api/v1",
-  defaultModel: "qwen/qwen-2.5-coder-32b-instruct",
+  defaultModel: "qwen/qwen3-coder:free",
   routerPort: 3456,
   customTemplates: [],
   ollamaEnabled: false,
   ollamaBaseUrl: "http://localhost:11434/v1",
   ollamaModels: [],
+  localVoiceEnabled: false,
+  localVoiceModel: "base",
   mcpServers: [],
   models: [
+    "qwen/qwen3-coder:free",
     "qwen/qwen-2.5-coder-32b-instruct",
     "google/gemini-2.0-flash-001",
     "meta-llama/llama-3.3-70b-instruct:free",
@@ -37,7 +42,7 @@ const DEFAULT_SETTINGS: Settings = {
     "deepseek/deepseek-chat-v3-0324"
   ],
   routing: {
-    default: "qwen/qwen-2.5-coder-32b-instruct",
+    default: "qwen/qwen3-coder:free",
     think: "meta-llama/llama-3.3-70b-instruct:free",
     longContext: "google/gemini-2.0-flash-001"
   }
@@ -51,16 +56,17 @@ export class SettingsStore {
   constructor(userDataPath: string) {
     this.userDataPath = userDataPath;
     this.store = new Store<Settings>({
-      name: "cipher-chat-settings",
-      cwd: join(userDataPath, "cipher-chat"),
+      name: "cipher-workspace-settings",
+      cwd: join(userDataPath, "cipher-workspace"),
       defaults: DEFAULT_SETTINGS
     });
     this.settings = DEFAULT_SETTINGS;
   }
 
   async init(): Promise<void> {
+    const storedApiKey = this.store.get("apiKey", DEFAULT_SETTINGS.apiKey);
     this.settings = {
-      apiKey: this.store.get("apiKey", DEFAULT_SETTINGS.apiKey),
+      apiKey: this.readStoredApiKey(storedApiKey),
       baseUrl: this.store.get("baseUrl", DEFAULT_SETTINGS.baseUrl),
       defaultModel: this.store.get("defaultModel", DEFAULT_SETTINGS.defaultModel),
       routerPort: this.store.get("routerPort", DEFAULT_SETTINGS.routerPort),
@@ -69,11 +75,25 @@ export class SettingsStore {
       ollamaEnabled: this.store.get("ollamaEnabled", DEFAULT_SETTINGS.ollamaEnabled),
       ollamaBaseUrl: this.store.get("ollamaBaseUrl", DEFAULT_SETTINGS.ollamaBaseUrl),
       ollamaModels: this.store.get("ollamaModels", DEFAULT_SETTINGS.ollamaModels),
+      localVoiceEnabled: false,
+      localVoiceModel: this.store.get("localVoiceModel", DEFAULT_SETTINGS.localVoiceModel),
       mcpServers: this.store.get("mcpServers", DEFAULT_SETTINGS.mcpServers),
       routing: this.store.get("routing", DEFAULT_SETTINGS.routing)
     };
 
-    if (!this.settings.apiKey) {
+    const shouldImportLegacy = !this.settings.apiKey
+      && this.settings.baseUrl === DEFAULT_SETTINGS.baseUrl
+      && this.settings.defaultModel === DEFAULT_SETTINGS.defaultModel
+      && this.settings.models.join("\n") === DEFAULT_SETTINGS.models.join("\n")
+      && this.settings.ollamaEnabled === DEFAULT_SETTINGS.ollamaEnabled
+      && this.settings.ollamaBaseUrl === DEFAULT_SETTINGS.ollamaBaseUrl
+      && this.settings.ollamaModels.length === 0
+      && this.settings.localVoiceEnabled === DEFAULT_SETTINGS.localVoiceEnabled
+      && this.settings.localVoiceModel === DEFAULT_SETTINGS.localVoiceModel
+      && this.settings.mcpServers.length === 0
+      && this.settings.customTemplates.length === 0;
+
+    if (shouldImportLegacy || !this.settings.apiKey) {
       const legacy = await this.loadLegacySettings();
       if (legacy) {
         this.settings = {
@@ -90,6 +110,8 @@ export class SettingsStore {
     }
 
     this.applyModelIdMigration();
+    this.store.set("apiKey", this.serializeApiKey(this.settings.apiKey));
+    this.store.set("localVoiceEnabled", false);
   }
 
   get(): Settings {
@@ -107,24 +129,53 @@ export class SettingsStore {
   }
 
   async save(partial: Partial<Settings>): Promise<void> {
-    this.settings = { ...this.settings, ...partial };
-    for (const [k, v] of Object.entries(partial)) {
+    const normalizedPartial: Partial<Settings> = Object.prototype.hasOwnProperty.call(partial, "localVoiceEnabled")
+      ? { ...partial, localVoiceEnabled: false }
+      : partial;
+    this.settings = { ...this.settings, ...normalizedPartial };
+    for (const [k, v] of Object.entries(normalizedPartial)) {
+      if (k === "apiKey") {
+        this.store.set("apiKey", this.serializeApiKey(typeof v === "string" ? v : ""));
+        continue;
+      }
       this.store.set(k as keyof Settings, v as Settings[keyof Settings]);
     }
   }
 
+  private readStoredApiKey(value: string): string {
+    const normalized = (value ?? "").trim();
+    if (!normalized) return "";
+    if (!normalized.startsWith(ENCRYPTED_SECRET_PREFIX)) return normalized;
+    if (!isSafeStorageEncryptionAvailable()) return "";
+
+    try {
+      const payload = normalized.slice(ENCRYPTED_SECRET_PREFIX.length);
+      if (!payload) return "";
+      return safeStorage.decryptString(Buffer.from(payload, "base64"));
+    } catch {
+      return "";
+    }
+  }
+
+  private serializeApiKey(value: string): string {
+    const normalized = (value ?? "").trim();
+    if (!normalized) return "";
+    if (!isSafeStorageEncryptionAvailable()) return normalized;
+
+    try {
+      return `${ENCRYPTED_SECRET_PREFIX}${safeStorage.encryptString(normalized).toString("base64")}`;
+    } catch {
+      return normalized;
+    }
+  }
+
   listTemplates(): PromptTemplate[] {
-    const merged = new Map<string, PromptTemplate>();
-    for (const template of BUILT_IN_TEMPLATES) {
-      merged.set(template.name.toLowerCase(), { ...template });
-    }
-    for (const template of this.settings.customTemplates) {
-      const name = (template.name ?? "").trim();
-      const content = template.content ?? "";
-      if (!name || !content) continue;
-      merged.set(name.toLowerCase(), { name, content });
-    }
-    return [...merged.values()];
+    return this.settings.customTemplates
+      .map((template) => ({
+        name: (template.name ?? "").trim(),
+        content: (template.content ?? "").trim()
+      }))
+      .filter((template) => Boolean(template.name) && Boolean(template.content));
   }
 
   async saveTemplate(template: PromptTemplate): Promise<PromptTemplate[]> {
@@ -175,19 +226,23 @@ export class SettingsStore {
   }
 
   private getCurrentSettingsPath(): string {
-    return join(this.userDataPath, "cipher-chat", "cipher-chat-settings.json");
+    return join(this.userDataPath, "cipher-workspace", "cipher-workspace-settings.json");
   }
 
   private getLegacySettingsPaths(): string[] {
     const appDataPath = dirname(this.userDataPath);
-    const appNames = ["Electron", "cipher-chat", "Cipher Chat", "CipherChat"];
+    const appNames = ["Electron", "cipher-ai", "cipher-chat", "Cipher Chat", "CipherChat", "Cipher Workspace"];
     const paths = new Set<string>();
 
     for (const appName of appNames) {
+      paths.add(join(appDataPath, appName, "cipher-workspace", "cipher-workspace-settings.json"));
+      paths.add(join(appDataPath, appName, "cipher-workspace-settings.json"));
       paths.add(join(appDataPath, appName, "cipher-chat", "cipher-chat-settings.json"));
       paths.add(join(appDataPath, appName, "cipher-chat-settings.json"));
     }
 
+    paths.add(join(this.userDataPath, "cipher-workspace-settings.json"));
+    paths.add(join(dirname(this.userDataPath), "cipher-workspace", "cipher-workspace-settings.json"));
     paths.add(join(this.userDataPath, "cipher-chat-settings.json"));
     paths.add(join(dirname(this.userDataPath), "cipher-chat", "cipher-chat-settings.json"));
 

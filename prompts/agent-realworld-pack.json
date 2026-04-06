@@ -1,0 +1,51 @@
+[
+  {
+    "id": "realworld.salon-booking-site",
+    "category": "static-web",
+    "title": "Salon booking marketing site",
+    "expectedArtifactType": "web-app",
+    "prompt": "Build a polished website for a neighborhood salon. I want a hero, stylist cards, service pricing, customer testimonials, and a clear book-appointment call to action."
+  },
+  {
+    "id": "realworld.customer-followups-crm",
+    "category": "interactive-web",
+    "title": "Customer follow-up tracker",
+    "expectedArtifactType": "web-app",
+    "prompt": "Create a small customer follow-up tracker where I can add leads, edit the next follow-up date, update status, and keep a visible saved list of who still needs outreach."
+  },
+  {
+    "id": "realworld.incident-ops-dashboard",
+    "category": "react-web",
+    "title": "Incident operations dashboard",
+    "expectedArtifactType": "web-app",
+    "prompt": "Create a React incident operations dashboard with severity KPI cards, region filters, a recent incidents panel, and a clear escalation summary."
+  },
+  {
+    "id": "realworld.helpdesk-desktop-shell",
+    "category": "desktop-app",
+    "title": "Helpdesk desktop shell",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a desktop helpdesk workspace with a sidebar, ticket queue, priority filters, and a clear new-ticket action."
+  },
+  {
+    "id": "realworld.subscription-api",
+    "category": "api-service",
+    "title": "Subscription management API",
+    "expectedArtifactType": "api-service",
+    "prompt": "Build a small API service for subscription management with endpoints to list subscriptions, create one, pause one, and resume one."
+  },
+  {
+    "id": "realworld.json-audit-cli",
+    "category": "developer-tool",
+    "title": "JSON audit CLI",
+    "expectedArtifactType": "script-tool",
+    "prompt": "Create a command-line tool that reads a JSON file and prints a compact audit summary with key counts, nested object depth, and obvious missing fields."
+  },
+  {
+    "id": "realworld.validation-library",
+    "category": "library",
+    "title": "Input validation helpers",
+    "expectedArtifactType": "library",
+    "prompt": "Create a small reusable TypeScript validation library with email checks, required-string guards, min-length validation, and friendly error formatting helpers."
+  }
+]

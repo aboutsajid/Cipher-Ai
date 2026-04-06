@@ -70,7 +70,7 @@ function registerProcessHooks(): void {
 }
 
 export function initDebugLogger(userDataPath: string): string {
-  const logsDir = join(userDataPath, "cipher-chat", "logs");
+  const logsDir = join(userDataPath, "cipher-workspace", "logs");
   mkdirSync(logsDir, { recursive: true });
   logPath = join(logsDir, "main.log");
 

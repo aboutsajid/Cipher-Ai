@@ -1,18 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Cipher Ai icon">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Cipher Workspace icon">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f1a2d" />
-      <stop offset="100%" stop-color="#17253f" />
+    <linearGradient id="tile" x1="24" y1="18" x2="232" y2="238" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#17315a" />
+      <stop offset="52%" stop-color="#0b1631" />
+      <stop offset="100%" stop-color="#070b1c" />
     </linearGradient>
-    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#00f5c4" />
-      <stop offset="100%" stop-color="rgba(0,245,196,0)" />
+    <radialGradient id="glow" cx="108" cy="82" r="148" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2b5db5" stop-opacity="0.42" />
+      <stop offset="65%" stop-color="#102247" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#091022" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="ring" x1="54" y1="58" x2="196" y2="202" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8cf8e1" />
+      <stop offset="46%" stop-color="#39d8ff" />
+      <stop offset="100%" stop-color="#4b66ff" />
     </linearGradient>
+    <linearGradient id="trace" x1="80" y1="84" x2="181" y2="167" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7bf5dd" />
+      <stop offset="100%" stop-color="#35b8ff" />
+    </linearGradient>
+    <linearGradient id="node" x1="101" y1="88" x2="168" y2="161" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#aafbee" />
+      <stop offset="100%" stop-color="#42b7ff" />
+    </linearGradient>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
   </defs>
 
-  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#bg)" />
-  <rect x="12.5" y="12.5" width="231" height="231" rx="51.5" fill="none" stroke="rgba(0,245,196,0.26)" />
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="url(#tile)" />
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="url(#glow)" />
+  <rect x="10.5" y="10.5" width="235" height="235" rx="55.5" fill="none" stroke="rgba(148,218,255,0.22)" />
 
-  <text x="128" y="146" text-anchor="middle" fill="#00f5c4" font-family="Rajdhani, sans-serif" font-size="126" font-weight="700" letter-spacing="6">C</text>
-  <rect x="58" y="172" width="140" height="2" fill="url(#line)" />
+  <path
+    d="M181 67C163 51 137 43 111 47C71 54 42 88 42 128C42 168 71 202 111 209C138 214 163 206 181 190"
+    fill="none"
+    stroke="url(#ring)"
+    stroke-width="24"
+    stroke-linecap="round"
+    filter="url(#softGlow)"
+  />
+
+  <circle cx="128" cy="128" r="39" fill="#0a1124" stroke="rgba(102,209,255,0.14)" stroke-width="2" />
+
+  <g fill="none" stroke="url(#trace)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)">
+    <path d="M90 96H112L124 84H152" />
+    <path d="M84 121H117L132 106H166" />
+    <path d="M84 145H117L132 160H154" />
+    <path d="M90 169H112L124 181H151" />
+  </g>
+
+  <g fill="url(#node)" filter="url(#softGlow)">
+    <circle cx="88" cy="96" r="6" />
+    <circle cx="82" cy="121" r="6" />
+    <circle cx="82" cy="145" r="6" />
+    <circle cx="88" cy="169" r="6" />
+    <circle cx="156" cy="84" r="8" />
+    <circle cx="170" cy="106" r="8" />
+    <circle cx="158" cy="160" r="8" />
+    <circle cx="155" cy="181" r="8" />
+    <circle cx="128" cy="128" r="14" />
+  </g>
+
+  <path d="M167 154L181 137" fill="none" stroke="#63c8ff" stroke-width="8" stroke-linecap="round" filter="url(#softGlow)" />
 </svg>

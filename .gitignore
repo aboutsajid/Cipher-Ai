@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 release/
+generated-apps/
+tmp/
+.cipher-snapshots/
+relative/
 *.tsbuildinfo
 
 # Logs

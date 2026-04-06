@@ -1,0 +1,79 @@
+[
+  {
+    "id": "messy.pet-grooming-launch",
+    "category": "static-web",
+    "title": "Pet grooming launch page",
+    "expectedArtifactType": "web-app",
+    "prompt": "I need a simple site for a neighborhood pet grooming launch. Make it feel polished, show services, before-and-after style trust points, pricing, and a clear way for people to book."
+  },
+  {
+    "id": "messy.outreach-tracker",
+    "category": "interactive-web",
+    "title": "Outreach tracker",
+    "expectedArtifactType": "web-app",
+    "prompt": "Build me something tiny where I can keep track of people I need to follow up with, change their status, update next contact date, and still see the saved list after I add a few."
+  },
+  {
+    "id": "messy.ops-wallboard",
+    "category": "react-web",
+    "title": "Operations wallboard",
+    "expectedArtifactType": "web-app",
+    "prompt": "Make a React wallboard for operations delays with a few KPI cards, a filter or two, recent incidents, and a quick escalation summary."
+  },
+  {
+    "id": "messy.snippet-desk",
+    "category": "desktop-app",
+    "title": "Snippet desk",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "I want a desktop workspace for saving useful snippets during support calls. Give me a sidebar, a main list, tags or filters, and an obvious add action."
+  },
+  {
+    "id": "messy.orders-api",
+    "category": "api-service",
+    "title": "Orders workflow API",
+    "expectedArtifactType": "api-service",
+    "prompt": "Please make a very small backend for order workflows. I need endpoints to list orders, create one, mark one packed, and mark one shipped."
+  },
+  {
+    "id": "messy.csv-glance-cli",
+    "category": "developer-tool",
+    "title": "CSV glance CLI",
+    "expectedArtifactType": "script-tool",
+    "prompt": "Give me a command line tool I can point at a CSV file so it prints a quick glance summary like row count, columns, and header names."
+  },
+  {
+    "id": "messy.form-guard-library",
+    "category": "library",
+    "title": "Form guard library",
+    "expectedArtifactType": "library",
+    "prompt": "Create a small reusable package with helpers for required strings, email checks, minimum length rules, and friendly validation messages I can show in forms."
+  },
+  {
+    "id": "messy.supplier-disputes-console",
+    "category": "interactive-web",
+    "title": "Supplier disputes console",
+    "expectedArtifactType": "web-app",
+    "prompt": "Create a compact admin console for supplier disputes with a saved dispute list, assignment changes, resolution status, and a quick filter by team."
+  },
+  {
+    "id": "messy.dispatch-followups-workspace",
+    "category": "interactive-web",
+    "title": "Dispatch follow-up workspace",
+    "expectedArtifactType": "web-app",
+    "prompt": "Build a small internal operations workspace for dispatch follow-ups. I need overdue items, owner assignment, status changes, and a visible saved list I can keep updating."
+  },
+  {
+    "id": "messy.shipment-exceptions-api",
+    "category": "api-service",
+    "title": "Shipment exceptions API",
+    "expectedArtifactType": "api-service",
+    "prompt": "Build a tiny backend service for shipment exceptions with endpoints to list exceptions, create one, assign an owner, and mark one resolved."
+  },
+  {
+    "id": "messy.handoff-priority-cli",
+    "category": "developer-tool",
+    "title": "Handoff priority CLI",
+    "expectedArtifactType": "script-tool",
+    "prompt": "Create a tiny command-line tool that reads a markdown handoff file and prints action items grouped by priority."
+  }
+]
