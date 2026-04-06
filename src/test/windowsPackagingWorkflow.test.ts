@@ -30,6 +30,17 @@ test("windows packaging workflow only references npm scripts that exist", () => 
   assert.ok(referencedScripts.includes("smoke:win:summary"));
 });
 
+test("windows packaging npm script disables publish during CI packaging", () => {
+  const packageJson = readProjectJson("package.json");
+  const scripts = (packageJson.scripts ?? {}) as Record<string, string>;
+
+  assert.match(
+    scripts["pack:win"] ?? "",
+    /--publish\s+never/,
+    "pack:win should disable publish so CI packaging does not require GH_TOKEN"
+  );
+});
+
 test("windows packaging workflow publishes smoke summaries to step summary and artifacts", () => {
   const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/windows-packaging.yml"), "utf8");
 

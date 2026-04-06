@@ -15,7 +15,7 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "start": "npm run build && node scripts/launch-electron.mjs",
     "dev": "npm run build && node scripts/launch-electron.mjs",
-    "pack:win": "npm run build && npm run clean:release && electron-builder --win nsis",
+    "pack:win": "npm run build && npm run clean:release && electron-builder --win nsis --publish never",
     "soak:agent:prompts": "node scripts/agent-soak-report.mjs prompts",
     "soak:agent:report": "node scripts/agent-soak-report.mjs report",
     "soak:agent:run": "node scripts/agent-soak-run.mjs",
