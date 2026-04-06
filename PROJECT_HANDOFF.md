@@ -19,7 +19,7 @@ Cipher Workspace should become a Windows desktop app where one prompt can genera
 - Model routing now uses stage-aware planner/generator/repair preferences, persisted reliability stats, semantic failure penalties, and per-task blacklisting after repeated failures
 - Interactive agent routing now filters out oversized or vision-heavy Ollama routes for implementation work when smaller code-oriented local models are configured, which avoids avoidable `gpt-oss`/`qwen3-vl` timeout fallthrough in normal app use
 - New desktop-app prompts now classify as desktop work from the prompt itself and bootstrap into isolated `generated-apps/...` targets instead of accidentally mutating the host Cipher workspace root
-- Recent known test state from the active workstream: `179/179` passing
+- Recent known test state from the active workstream: `182/182` passing
 - A repeatable soak workflow now exists via `npm run soak:agent:prompts`, `npm run soak:agent:report`, and `npm run soak:agent:run`
 - Renderer settings now expose agent route-bias controls and a live strategy preview for implementation, repair, and planning stages
 - Agent panel now exposes runtime route reliability scores plus task-local blacklist and remembered stage-route state while a task is active
@@ -36,6 +36,7 @@ Cipher Workspace should become a Windows desktop app where one prompt can genera
 - A separate manual-freeform prompt pack now exists in `prompts/agent-manual-freeform-pack.json` and has been expanded to `11` scenarios spanning dashboard, CRUD/stateful web, desktop, API, tool, and library prompts proven during hands-on testing
 - The manual-freeform soak baseline is now fully green at `11/11` completed with `0` failed, `0` fallback used, and `0` blacklisted scenarios, covering dashboard, CRUD/stateful web, desktop, API, tool, and library prompts proven during hands-on testing
 - A manual exploratory session guide now exists in `prompts/agent-manual-session.md` so UI/multi-window/freeform prompt testing can be run consistently instead of ad hoc
+- A real-usage prompt logging workflow now exists in `prompts/agent-real-usage-workflow.md`, and `npm run agent:real-usage:init` bootstraps `tmp/agent-real-usage-log.md` with the current report baselines so day-to-day prompts can be triaged and promoted into packs or fixes
 - Simple desktop-shell prompts now prefer the existing heuristic desktop builder first, which removes avoidable local-model blacklist churn for cases like the helpdesk desktop shell while preserving model-driven generation for broader desktop prompts
 - Simple generated-package prompts that already map cleanly to the API, CLI, or library heuristics now prefer those heuristics first inside isolated `generated-apps/...` workspaces, which removes avoidable local-model fallback/blacklist churn for the current manual and messy prompt packs
 - Current biggest gap has shifted from first-batch soak execution to live Windows CI observation, packaged update-smoke validation, and longer-run trend watching rather than current-pack correctness
@@ -173,7 +174,7 @@ Cipher Workspace should become a Windows desktop app where one prompt can genera
 ## Immediate Must-Do Items
 1. Expand the strict generation-stage contract beyond implementation edits if more model-authored stages are introduced.
 2. Keep expanding and re-executing the soak catalog beyond the current baseline and keep category-level telemetry review in the loop.
-3. Observe and keep version-to-version Windows update smoke exercised in live CI so the scheduled baseline/upgrade path stays healthy.
+3. Use the real-usage prompt log workflow during actual day-to-day app generation so recurring failures turn into prompt-pack coverage or verifier/routing fixes instead of staying anecdotal.
 
 ## Files That Matter Most
 - `src/main/services/agentTaskRunner.ts`

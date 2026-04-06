@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run Electron startup smoke
+        run: npm.cmd run smoke:electron:start
+
       - name: Package Windows installer
         run: npm.cmd run pack:win
 
@@ -146,6 +149,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run Electron startup smoke
+        run: npm.cmd run smoke:electron:start
 
       - name: Download current installer artifact
         uses: actions/download-artifact@v4

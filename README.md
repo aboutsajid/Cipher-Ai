@@ -44,3 +44,4 @@ Follow the instructions in the `release/windows/` directory to build the Windows
 *   `npm run build`: Builds the production version of the application.
 *   `npm run start`: Starts the development server.
 *   `npm run start:backend`: Starts the backend server for handling fulfillment steps.
+*   `npm run agent:real-usage:init`: Creates `tmp/agent-real-usage-log.md` for logging real prompts against the current verified baseline.

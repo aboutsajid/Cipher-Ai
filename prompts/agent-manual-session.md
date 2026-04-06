@@ -4,6 +4,8 @@ Use this when testing Cipher Workspace as a user instead of only through soak sc
 
 The prompts that graduate from this session should also be added to `prompts/agent-manual-freeform-pack.json` so successful exploratory cases become repeatable automated regressions.
 
+For day-to-day real prompts outside the curated session sets, use `prompts/agent-real-usage-workflow.md` and initialize a fresh log with `npm.cmd run agent:real-usage:init`.
+
 ## Session Goal
 
 Validate three things at the same time:

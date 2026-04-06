@@ -25,6 +25,7 @@ test("windows packaging workflow only references npm scripts that exist", () => 
     );
   }
 
+  assert.ok(referencedScripts.includes("smoke:electron:start"));
   assert.ok(referencedScripts.includes("smoke:win:install"));
   assert.ok(referencedScripts.includes("smoke:win:update"));
   assert.ok(referencedScripts.includes("smoke:win:summary"));
@@ -44,6 +45,8 @@ test("windows packaging npm script disables publish during CI packaging", () => 
 test("windows packaging workflow publishes smoke summaries to step summary and artifacts", () => {
   const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/windows-packaging.yml"), "utf8");
 
+  assert.match(workflow, /Run Electron startup smoke/);
+  assert.match(workflow, /npm\.cmd run smoke:electron:start/);
   assert.match(workflow, /Render install smoke summary/);
   assert.match(workflow, /windows-install-smoke-summary/);
   assert.match(workflow, /GITHUB_STEP_SUMMARY/);

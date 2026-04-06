@@ -710,6 +710,20 @@ test("AgentTaskRunner provides a heuristic CRUD fallback for vendor-payments int
   });
 });
 
+test("AgentTaskRunner keeps dashboard reminder prompts out of CRUD mode", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      detectBuilderMode: (prompt: string) => string | null;
+    };
+
+    const mode = runner.detectBuilderMode(
+      "Build a small internal dashboard for unpaid invoices, recent collections, and follow-up reminders."
+    );
+
+    assert.equal(mode, "dashboard");
+  });
+});
+
 test("AgentTaskRunner provides a heuristic dashboard fallback for wallboard prompts", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
@@ -1661,6 +1675,69 @@ test("AgentTaskRunner normalizes malformed package.json edits before writing", a
     const packageJson = await runner.tryReadPackageJson("generated-apps/pkg-write");
     assert.equal(packageJson?.scripts?.start, "node src/server.js");
     assert.match(packageJson?.scripts?.build ?? "", /ready/);
+  });
+});
+
+test("AgentTaskRunner wires unused resolve handlers into admin table row actions", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tryHeuristicFix: (
+        taskId: string,
+        buildResult: { combinedOutput: string },
+        contextFiles: Array<{ path: string; content: string }>
+      ) => Promise<{ summary: string; edits: Array<{ path: string; content: string }> } | null>;
+    };
+
+    const fix = await runner.tryHeuristicFix(
+      "task-1",
+      {
+        combinedOutput: "generated-apps/create-tiny-admin/src/App.tsx(35,9): error TS6133: 'handleResolve' is declared but its value is never read."
+      },
+      [{
+        path: "generated-apps/create-tiny-admin/src/App.tsx",
+        content: `import { useState } from 'react';
+
+function App() {
+  const [returns, setReturns] = useState([{ id: 1, status: "Pending", receivedDate: new Date("2023-10-01") }]);
+
+  const handleResolve = (id: number) => {
+    setReturns((current) => current.map((returnItem) => returnItem.id === id ? { ...returnItem, status: "Resolved" } : returnItem));
+  };
+
+  return (
+    <div>
+      <h1>Warehouse Returns</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Status</th>
+            <th>Received Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {returns.map((returnItem) => (
+            <tr key={returnItem.id}>
+              <td>{returnItem.id}</td>
+              <td>{returnItem.status}</td>
+              <td>{returnItem.receivedDate.toLocaleDateString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default App;
+`
+      }]
+    );
+
+    assert.match(fix?.summary ?? "", /Wired the unused action handler handleResolve/i);
+    assert.match(fix?.edits[0]?.content ?? "", /<th>Action<\/th>/);
+    assert.match(fix?.edits[0]?.content ?? "", /onClick=\{\(\) => handleResolve\(returnItem\.id\)\}/);
+    assert.match(fix?.edits[0]?.content ?? "", />Resolve<\/button>/);
   });
 });
 

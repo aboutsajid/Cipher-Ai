@@ -16,6 +16,35 @@ let ccrService: CcrService | null = null;
 let agentTaskRunner: AgentTaskRunner | null = null;
 const APP_NAME = "Cipher Workspace";
 const APP_USER_MODEL_ID = "com.cipher.ai";
+const STARTUP_SMOKE_ENABLED = (process.env["CIPHER_SMOKE_STARTUP"] ?? "").trim() === "1";
+const STARTUP_SMOKE_EXIT_DELAY_MS = Number.parseInt(process.env["CIPHER_SMOKE_EXIT_DELAY_MS"] ?? "2500", 10);
+let startupSmokeCompleted = false;
+let startupSmokeTimer: NodeJS.Timeout | null = null;
+
+if (STARTUP_SMOKE_ENABLED) {
+  app.disableHardwareAcceleration();
+}
+
+function finishStartupSmoke(code: number, message: string, ...details: unknown[]): void {
+  if (!STARTUP_SMOKE_ENABLED || startupSmokeCompleted) return;
+  startupSmokeCompleted = true;
+  if (startupSmokeTimer) {
+    clearTimeout(startupSmokeTimer);
+    startupSmokeTimer = null;
+  }
+
+  const level = code === 0 ? "SMOKE" : "SMOKE_FAIL";
+  writeDebugLog(level, message, ...details);
+  if (code === 0) {
+    console.log(`[smoke] ${message}`);
+  } else {
+    console.error(`[smoke] ${message}`, ...details);
+  }
+
+  setTimeout(() => {
+    app.exit(code);
+  }, 0);
+}
 
 function resolveAgentWorkspaceRoot(): string {
   const configured = (process.env["CIPHER_WORKSPACE_ROOT"] ?? "").trim();
@@ -174,9 +203,30 @@ async function createWindow(): Promise<BrowserWindow> {
         ? "RENDERER_WARN"
         : "RENDERER_INFO";
     writeDebugLog(levelTag, `${event.sourceId}:${event.lineNumber}`, event.message);
+    if (STARTUP_SMOKE_ENABLED && event.level === "error") {
+      finishStartupSmoke(
+        1,
+        `Renderer reported a console error during startup at ${event.sourceId}:${event.lineNumber}.`,
+        event.message
+      );
+    }
   });
   window.webContents.on("render-process-gone", (_event, details) => {
     writeDebugLog("RENDERER_GONE", details);
+    if (STARTUP_SMOKE_ENABLED) {
+      finishStartupSmoke(1, "Renderer process exited during startup smoke.", details);
+    }
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    writeDebugLog("RENDERER_LOAD_FAIL", { errorCode, errorDescription, validatedURL, isMainFrame });
+    if (STARTUP_SMOKE_ENABLED && isMainFrame) {
+      finishStartupSmoke(
+        1,
+        `Renderer failed to load the main frame during startup smoke (${errorCode}).`,
+        errorDescription,
+        validatedURL
+      );
+    }
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (allowExternalNavigation(url)) {
@@ -193,12 +243,16 @@ async function createWindow(): Promise<BrowserWindow> {
   });
   window.on("unresponsive", () => {
     writeDebugLog("WINDOW", "workspace window became unresponsive");
+    if (STARTUP_SMOKE_ENABLED) {
+      finishStartupSmoke(1, "Workspace window became unresponsive during startup smoke.");
+    }
   });
   window.on("responsive", () => {
     writeDebugLog("WINDOW", "workspace window responsive again");
   });
 
   const showWindow = () => {
+    if (STARTUP_SMOKE_ENABLED) return;
     if (window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();
     if (!window.isMaximized()) window.maximize();
@@ -206,14 +260,28 @@ async function createWindow(): Promise<BrowserWindow> {
     window.focus();
   };
 
-  await window.loadFile(join(__dirname, "..", "renderer", "index.html"));
+  if (STARTUP_SMOKE_ENABLED) {
+    window.webContents.once("did-finish-load", () => {
+      writeDebugLog("SMOKE", `renderer finished loading; waiting ${STARTUP_SMOKE_EXIT_DELAY_MS}ms for stability`);
+      startupSmokeTimer = setTimeout(() => {
+        finishStartupSmoke(0, "Electron startup smoke passed.");
+      }, Number.isFinite(STARTUP_SMOKE_EXIT_DELAY_MS) && STARTUP_SMOKE_EXIT_DELAY_MS > 0
+        ? STARTUP_SMOKE_EXIT_DELAY_MS
+        : 2500);
+    });
+  }
 
   window.once("ready-to-show", showWindow);
   window.webContents.once("did-finish-load", showWindow);
   setTimeout(showWindow, 1500);
 
+  await window.loadFile(join(__dirname, "..", "renderer", "index.html"));
+
   window.on("closed", () => {
     workspaceWindows.delete(window);
+    if (STARTUP_SMOKE_ENABLED && !startupSmokeCompleted) {
+      finishStartupSmoke(1, "Workspace window closed before startup smoke completed.");
+    }
   });
 
   return window;
@@ -276,10 +344,16 @@ async function bootstrap(): Promise<boolean> {
     app.setAppUserModelId(APP_USER_MODEL_ID);
   }
   Menu.setApplicationMenu(null);
-  app.setPath("userData", join(app.getPath("appData"), APP_NAME));
-  const hasSingleInstanceLock = app.requestSingleInstanceLock();
-  if (!hasSingleInstanceLock) {
-    return false;
+  const userDataPath = STARTUP_SMOKE_ENABLED
+    ? join(app.getPath("appData"), APP_NAME, "startup-smoke")
+    : join(app.getPath("appData"), APP_NAME);
+  app.setPath("userData", userDataPath);
+
+  if (!STARTUP_SMOKE_ENABLED) {
+    const hasSingleInstanceLock = app.requestSingleInstanceLock();
+    if (!hasSingleInstanceLock) {
+      return false;
+    }
   }
 
   app.removeAllListeners("second-instance");
@@ -291,13 +365,13 @@ async function bootstrap(): Promise<boolean> {
     });
   });
 
-  const userDataPath = app.getPath("userData");
-  const debugLogPath = initDebugLogger(userDataPath);
+  const resolvedUserDataPath = app.getPath("userData");
+  const debugLogPath = initDebugLogger(resolvedUserDataPath);
   console.log(`[debug] main log: ${debugLogPath}`);
   const workspaceRoot = resolveAgentWorkspaceRoot();
   writeDebugLog("WORKSPACE", `workspace root: ${workspaceRoot}`);
-  settingsStore = new SettingsStore(userDataPath);
-  chatsStore = new ChatsStore(userDataPath);
+  settingsStore = new SettingsStore(resolvedUserDataPath);
+  chatsStore = new ChatsStore(resolvedUserDataPath);
   ccrService = new CcrService(settingsStore);
   agentTaskRunner = new AgentTaskRunner(workspaceRoot, settingsStore, ccrService);
 
@@ -333,5 +407,9 @@ app.on("activate", async () => {
 });
 
 app.on("window-all-closed", () => {
+  if (STARTUP_SMOKE_ENABLED && !startupSmokeCompleted) {
+    finishStartupSmoke(1, "Electron quit before startup smoke completed.");
+    return;
+  }
   if (process.platform !== "darwin") app.quit();
 });

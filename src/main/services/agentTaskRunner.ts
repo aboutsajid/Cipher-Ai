@@ -1472,6 +1472,13 @@ export class AgentTaskRunner {
 
   private looksLikeCrudAppPrompt(normalizedPrompt: string): boolean {
     if (!normalizedPrompt) return false;
+    const mentionsDashboard = /\b(dashboard|admin panel|analytics|wallboard|kpi|incident|escalation)\b/.test(normalizedPrompt);
+    const reminderOnlyFollowups = /\bfollow-?up reminders?\b/.test(normalizedPrompt)
+      && !/\b(add|create|edit|update|saved list|tracker|status|next contact date|owner assignment|mark (?:one )?(?:paid|packed|shipped|approved|resolved))\b/.test(normalizedPrompt);
+    if (mentionsDashboard && reminderOnlyFollowups) {
+      return false;
+    }
+
     const directCrudSignals = [
       "crud",
       "inventory app",
@@ -1480,8 +1487,10 @@ export class AgentTaskRunner {
       "admin console",
       "record manager",
       "tracker",
-      "follow up",
-      "follow-up",
+      "follow-up tracker",
+      "follow up tracker",
+      "customer follow-up",
+      "customer follow up",
       "lead tracker",
       "outreach",
       "field service",
@@ -9901,6 +9910,11 @@ body {
     const targetFile = contextFiles.find((file) => file.path === targetPath);
     if (!targetFile) return null;
 
+    const wireActionFix = this.tryWireUnusedActionHandler(targetFile.path, targetFile.content, symbolName);
+    if (wireActionFix) {
+      return wireActionFix;
+    }
+
     let updated = targetFile.content;
     const arrowBlockPattern = new RegExp(`\\n\\s*(?:const|let|var)\\s+${symbolName}\\s*=\\s*\\([^)]*\\)\\s*=>\\s*\\{[\\s\\S]*?\\n\\s*\\};?\\n`, "m");
     updated = updated.replace(arrowBlockPattern, "\n");
@@ -9918,6 +9932,50 @@ body {
     if (updated === targetFile.content) return null;
     return {
       summary: `Removed unused symbol ${symbolName} from ${targetPath}.`,
+      edits: [{ path: targetPath, content: updated }]
+    };
+  }
+
+  private tryWireUnusedActionHandler(
+    targetPath: string,
+    content: string,
+    symbolName: string
+  ): HeuristicFixResult | null {
+    if (!/^handle[A-Z]/.test(symbolName)) return null;
+    if (!/<table[\s>]/i.test(content) || !/<tbody>/i.test(content)) return null;
+    if (new RegExp(`${symbolName}\\(`).test(content.replace(new RegExp(`const\\s+${symbolName}\\s*=|function\\s+${symbolName}\\s*\\(`), ""))) {
+      return null;
+    }
+
+    const rowMatch = content.match(/\{([A-Za-z0-9_]+)\.map\(\(\s*([A-Za-z0-9_]+)\s*\)\s*=>\s*\(\s*<tr\b/);
+    if (!rowMatch) return null;
+    const rowVar = rowMatch[2];
+    const actionLabel = symbolName.replace(/^handle/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim() || "Act";
+
+    let updated = content;
+    if (!/<th>\s*Action\s*<\/th>/i.test(updated)) {
+      updated = updated.replace(
+        /(<thead>[\s\S]*?<tr>)([\s\S]*?)(\s*<\/tr>\s*<\/thead>)/i,
+        (_match, open, inner, close) => `${open}${inner}\n            <th>Action</th>${close}`
+      );
+    }
+
+    if (updated === content && !/<th>\s*Action\s*<\/th>/i.test(updated)) {
+      return null;
+    }
+
+    const rowPattern = new RegExp(
+      `(\\{[A-Za-z0-9_]+\\.map\\(\\(\\s*${rowVar}\\s*\\)\\s*=>\\s*\\([\\s\\S]*?<tr[^>]*>[\\s\\S]*?)(\\s*</tr>\\s*\\)\\)\\s*\\})`,
+      "m"
+    );
+    updated = updated.replace(
+      rowPattern,
+      (_match, start, end) => `${start}\n              <td><button type="button" onClick={() => ${symbolName}(${rowVar}.id)}>${actionLabel}</button></td>${end}`
+    );
+
+    if (updated === content) return null;
+    return {
+      summary: `Wired the unused action handler ${symbolName} into the table row actions in ${targetPath}.`,
       edits: [{ path: targetPath, content: updated }]
     };
   }
