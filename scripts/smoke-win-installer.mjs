@@ -173,7 +173,7 @@ async function listProcessesByName(imageName) {
     "  Where-Object { $_.Name -eq $name } |",
     "  Select-Object ProcessId, Name, ExecutablePath, CommandLine |",
     "  ConvertTo-Json -Compress"
-  ].join(" ");
+  ].join("\n");
 
   const { stdout } = await run("powershell.exe", ["-NoProfile", "-Command", script]);
   const trimmed = stdout.trim();

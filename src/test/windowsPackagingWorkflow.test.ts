@@ -51,6 +51,16 @@ test("windows packaging workflow publishes smoke summaries to step summary and a
   assert.match(workflow, /windows-update-smoke-summary/);
 });
 
+test("windows installer smoke script uses a multiline PowerShell process query", () => {
+  const script = readFileSync(resolve(process.cwd(), "scripts/smoke-win-installer.mjs"), "utf8");
+
+  assert.match(
+    script,
+    /\$name = \$\{toPowerShellStringLiteral\(imageName\)\}[\s\S]*\]\.join\("\\n"\)/,
+    "process listing should use a real multiline PowerShell script so the assignment and query stay separated"
+  );
+});
+
 test("windows smoke formatter renders markdown from json report", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "cipher-win-smoke-"));
   const reportPath = join(tempDir, "report.json");
