@@ -647,6 +647,37 @@ test("AgentTaskRunner prefers the desktop heuristic over the notes heuristic for
   });
 });
 
+test("AgentTaskRunner prefers the notes heuristic over the generic desktop workspace for desktop notes prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tryHeuristicImplementation: (
+        taskId: string,
+        prompt: string,
+        plan: {
+          workspaceKind: "static" | "react" | "generic";
+          workingDirectory: string;
+          builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+        }
+      ) => Promise<{ summary: string; edits: Array<{ path: string; content: string }> } | null>;
+    };
+
+    const result = await runner.tryHeuristicImplementation(
+      "task-1",
+      "Build a standalone Windows desktop notes app with a clean window, a title field, a large notes editor, a save button, and a small saved-notes list.",
+      {
+        workspaceKind: "react",
+        workingDirectory: "generated-apps/desktop-notes",
+        builderMode: "notes"
+      }
+    );
+
+    assert.ok(result);
+    assert.match(result.summary, /react notes app/i);
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Save note")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("<h2>Notes</h2>")));
+  });
+});
+
 test("AgentTaskRunner omits host workspace dot targets from completed task summaries", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {

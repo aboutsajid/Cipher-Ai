@@ -4687,6 +4687,7 @@ export class AgentTaskRunner {
     const title = this.toDisplayNameFromDirectory(plan.workingDirectory);
     const isSnippetManager = normalized.includes("snippet");
     const isVoiceWorkspace = normalized.includes("voice") || normalized.includes("recording");
+    if (plan.builderMode === "notes" && !isVoiceWorkspace) return null;
 
     const appContent = isSnippetManager
       ? `import { useState } from "react";
