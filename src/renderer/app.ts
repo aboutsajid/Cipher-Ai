@@ -387,6 +387,8 @@ let pendingSnapshotRestoreId: string | null = null;
 let activeAgentRestoreState: AgentSnapshotRestoreResult | null = null;
 const autoOpenedAgentPreviewTasks = new Set<string>();
 let pendingAutoOpenAgentPreviewTaskId: string | null = null;
+const pendingDesktopLaunchPromptTasks = new Set<string>();
+const handledDesktopLaunchPromptTasks = new Set<string>();
 let activePreviewUrl: string | null = null;
 let activePreviewTarget: string | null = null;
 const agentChatMessageMap = new Map<string, { chatId: string; userMessageId: string; assistantMessageId: string }>();
@@ -2987,6 +2989,16 @@ async function loadChatList() {
   renderChatList(cachedChatSummaries);
 }
 
+function getInitialChatIdFromLocation(): string | null {
+  const raw = new URLSearchParams(window.location.search).get("chatId") ?? "";
+  const value = raw.trim();
+  return value || null;
+}
+
+function shouldOpenDraftChatFromLocation(): boolean {
+  return (new URLSearchParams(window.location.search).get("draftChat") ?? "").trim() === "1";
+}
+
 // â”€â”€ Load Chat â”€â”€
 async function loadChat(id: string) {
   currentChatId = id;
@@ -3210,6 +3222,36 @@ function clearMessages() {
   renderComposerAttachments();
   showTemplatesDropdown(false);
   updateScrollBottomButton();
+}
+
+function openDraftChat(showEmptyState = true): void {
+  currentChatId = null;
+  clearRenderedMessages();
+  hideSummaryOverlay();
+  activeStreamingMessageIds.clear();
+  resetClaudeRenderState();
+  renderedMessages = [];
+  virtualItems = [];
+  virtualItemHeights.clear();
+  shouldAutoScroll = true;
+  const messages = $("messages");
+  messages.innerHTML = "";
+  messages.scrollTop = 0;
+  if (showEmptyState) {
+    messages.appendChild(createEmptyStateElement());
+  }
+  $("chat-title-display").textContent = "New Chat";
+  $("rename-btn").style.display = "none";
+  $("export-btn").style.display = "none";
+  $("system-prompt-toggle-btn").style.display = "none";
+  $("system-prompt-panel").style.display = "none";
+  $("system-prompt-toggle-btn").classList.remove("active");
+  ($("system-prompt-input") as HTMLTextAreaElement).value = "";
+  activeAttachments = [];
+  renderComposerAttachments();
+  showTemplatesDropdown(false);
+  updateScrollBottomButton();
+  renderChatList(cachedChatSummaries);
 }
 // Render Message
 function renderMessageBody(contentEl: HTMLElement, content: string, done: boolean): void {
@@ -5765,6 +5807,17 @@ async function refreshAgentTask(forceLogs = false): Promise<void> {
     pendingAutoOpenAgentPreviewTaskId = null;
   }
 
+  if (
+    pendingDesktopLaunchPromptTasks.has(task.id)
+    && !handledDesktopLaunchPromptTasks.has(task.id)
+    && canPromptToLaunchDesktopApp(task)
+    && restoreState?.snapshotKind !== "before-task"
+  ) {
+    void promptToLaunchDesktopApp(task);
+  } else if (task.status !== "running" && !canPromptToLaunchDesktopApp(task)) {
+    pendingDesktopLaunchPromptTasks.delete(task.id);
+  }
+
   const tone = task.status === "completed" ? "ok" : task.status === "failed" ? "err" : "";
   const activity = buildAgentActivityLabel(task);
   setAgentStatus(
@@ -5869,6 +5922,58 @@ function buildAgentLatestUpdateLabel(task: AgentTask): string {
   return latestStep.title.trim();
 }
 
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function canPromptToLaunchDesktopApp(task: AgentTask): boolean {
+  return task.status === "completed"
+    && task.artifactType === "desktop-app"
+    && task.output?.primaryAction === "run-desktop"
+    && Boolean(task.output.runCommand?.trim())
+    && Boolean((task.output.workingDirectory ?? task.targetPath)?.trim());
+}
+
+async function promptToLaunchDesktopApp(task: AgentTask): Promise<void> {
+  if (!canPromptToLaunchDesktopApp(task)) return;
+  handledDesktopLaunchPromptTasks.add(task.id);
+  pendingDesktopLaunchPromptTasks.delete(task.id);
+
+  const workingDirectory = (task.output?.workingDirectory ?? task.targetPath ?? "").trim();
+  const runCommand = (task.output?.runCommand ?? "").trim();
+  if (!workingDirectory || !runCommand) return;
+
+  const packageName = task.output?.packageName?.trim() || "Desktop app";
+  const shouldOpen = window.confirm(
+    `${packageName} build successful. Do you want to open it now?\n\nCommand: ${runCommand}\nFolder: ${workingDirectory}`
+  );
+  if (!shouldOpen) {
+    showToast("Desktop app is ready. You can run it later from the generated folder.", 2600);
+    return;
+  }
+
+  const launchScript = [
+    `$wd = ${quotePowerShellLiteral(workingDirectory)}`,
+    `$cmd = ${quotePowerShellLiteral(runCommand)}`,
+    "Start-Process -FilePath 'cmd.exe' -WorkingDirectory $wd -ArgumentList @('/k', $cmd)"
+  ].join("; ");
+
+  try {
+    const result = await window.api.terminal.run({
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", launchScript],
+      timeoutMs: 10000
+    });
+    if (result.ok) {
+      showToast("Desktop app launch started.", 2200);
+      return;
+    }
+    showToast("Desktop app launch failed. Use the Run command shown in the result card.", 3200);
+  } catch {
+    showToast("Desktop app launch failed. Run it manually from the generated folder.", 3200);
+  }
+}
+
 async function ensureChatForAgentOutput(): Promise<string> {
   if (currentChatId) return currentChatId;
   return createNewChat(false);
@@ -5934,6 +6039,8 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
     activeAgentRestoreState = null;
     activeAgentTaskId = task.id;
     pendingAutoOpenAgentPreviewTaskId = task.id;
+    pendingDesktopLaunchPromptTasks.add(task.id);
+    handledDesktopLaunchPromptTasks.delete(task.id);
     cachedAgentTasks = [task, ...cachedAgentTasks.filter((item) => item.id !== task.id)];
     syncActiveAgentTaskSelectionUi();
     await appendAgentTaskToChat(normalized, task);
@@ -7412,6 +7519,12 @@ async function init() {
       await refreshAgentRouteDiagnostics();
     }
     await loadChatList();
+    const initialChatId = getInitialChatIdFromLocation();
+    if (initialChatId && cachedChatSummaries.some((chat) => chat.id === initialChatId)) {
+      await loadChat(initialChatId);
+    } else if (shouldOpenDraftChatFromLocation()) {
+      openDraftChat();
+    }
     const routerStatus = await window.api.router.status();
     if (!routerStatus.running) {
       showToast("Starting router...", 1800);

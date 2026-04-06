@@ -30,6 +30,8 @@
   --mono: 'JetBrains Mono', 'Fira Code', monospace;
   --sidebar-w: 272px;
   --panel-w: 356px;
+  --chat-message-max: clamp(1080px, 78vw, 1680px);
+  --agent-message-max: clamp(1320px, 88vw, 1840px);
   --surface-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
   --surface-shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.12);
 }
@@ -1438,7 +1440,7 @@ body[data-theme="light"] .msg-wrapper:hover { background: rgba(15, 23, 42, 0.04)
 .msg-meta-side { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
 .msg-role { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; }
 .msg-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
-.msg-content { font-size: 14px; color: var(--text-1); line-height: 1.82; word-break: break-word; max-width: min(100%, 1160px); }
+.msg-content { font-size: 14px; color: var(--text-1); line-height: 1.82; word-break: break-word; max-width: min(100%, var(--chat-message-max)); }
 .msg-content.error { color: var(--red); font-style: italic; }
 .msg-content p { margin-bottom: 10px; }
 .msg-content p:last-child { margin-bottom: 0; }
@@ -1452,7 +1454,7 @@ body[data-theme="light"] .msg-wrapper:hover { background: rgba(15, 23, 42, 0.04)
 
 .msg-wrapper-assistant .msg-content,
 .msg-wrapper-user .msg-content {
-  width: min(100%, 1080px);
+  width: min(100%, var(--chat-message-max));
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -1478,7 +1480,7 @@ body[data-theme="light"] .msg-wrapper-user .msg-content {
 
 .msg-wrapper-agent .msg-content {
   width: 100%;
-  max-width: min(100%, 1320px);
+  max-width: min(100%, var(--agent-message-max));
 }
 
 .agent-card {

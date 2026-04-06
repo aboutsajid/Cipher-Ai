@@ -566,6 +566,59 @@ test("AgentTaskRunner treats desktop snippet-desk prompts as generated desktop p
   });
 });
 
+test("AgentTaskRunner classifies standalone Windows calculator prompts as desktop apps", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      classifyArtifactType: (
+        prompt: string,
+        plan?: { workspaceKind?: "static" | "react" | "generic" } | null,
+        verification?: { previewReady?: boolean } | null,
+        packageManifest?: {
+          name?: string;
+          scripts?: Record<string, string>;
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        } | null
+      ) => string;
+      detectBootstrapPlan: (
+        prompt: string,
+        inspection: { packageName?: string }
+      ) => { template: string; targetDirectory: string } | null;
+    };
+
+    const prompt = "Build a standalone Windows desktop calculator app, not a web page. It should open as its own desktop window and include a calculator display, number pad, addition, subtraction, multiplication, division, equals, and clear.";
+
+    assert.equal(runner.classifyArtifactType(prompt, { workspaceKind: "generic" }, null, null), "desktop-app");
+
+    const plan = runner.detectBootstrapPlan(prompt, { packageName: "cipher-workspace" });
+
+    assert.equal(plan?.template, "react-vite");
+    assert.match(plan?.targetDirectory ?? "", /^generated-apps\//);
+  });
+});
+
+test("AgentTaskRunner treats Windows software prompts as desktop apps without requiring the exact phrase desktop app", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      classifyArtifactType: (
+        prompt: string,
+        plan?: { workspaceKind?: "static" | "react" | "generic" } | null,
+        verification?: { previewReady?: boolean } | null,
+        packageManifest?: {
+          name?: string;
+          scripts?: Record<string, string>;
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        } | null
+      ) => string;
+    };
+
+    const prompt = "Create a Windows calculator software with an installable standalone window, number pad, operator buttons, equals, and clear.";
+
+    assert.equal(runner.classifyArtifactType(prompt, { workspaceKind: "generic" }, null, null), "desktop-app");
+  });
+});
+
 test("AgentTaskRunner prefers the desktop heuristic over the notes heuristic for desktop voice-note prompts", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {

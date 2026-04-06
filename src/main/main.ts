@@ -162,7 +162,7 @@ function allowExternalNavigation(url: string): boolean {
   return /^https?:\/\//i.test(url);
 }
 
-async function createWindow(): Promise<BrowserWindow> {
+async function createWindow(initialChatId?: string, startDraftChat = false): Promise<BrowserWindow> {
   const appIconPath = process.platform === "win32"
     ? (app.isPackaged
       ? join(process.resourcesPath, "assets", "cipher-ai-icon.ico")
@@ -275,7 +275,22 @@ async function createWindow(): Promise<BrowserWindow> {
   window.webContents.once("did-finish-load", showWindow);
   setTimeout(showWindow, 1500);
 
-  await window.loadFile(join(__dirname, "..", "renderer", "index.html"));
+  const rendererEntry = join(__dirname, "..", "renderer", "index.html");
+  if (initialChatId?.trim()) {
+    await window.loadFile(rendererEntry, {
+      query: {
+        chatId: initialChatId.trim()
+      }
+    });
+  } else if (startDraftChat) {
+    await window.loadFile(rendererEntry, {
+      query: {
+        draftChat: "1"
+      }
+    });
+  } else {
+    await window.loadFile(rendererEntry);
+  }
 
   window.on("closed", () => {
     workspaceWindows.delete(window);
@@ -307,6 +322,10 @@ function broadcastToWindows(channel: string, ...args: unknown[]): void {
     if (window.isDestroyed()) continue;
     window.webContents.send(channel, ...args);
   }
+}
+
+async function createFreshChatWindow(): Promise<BrowserWindow> {
+  return createWindow(undefined, true);
 }
 
 function registerIpcHandlersOnce(): void {
@@ -358,7 +377,7 @@ async function bootstrap(): Promise<boolean> {
 
   app.removeAllListeners("second-instance");
   app.on("second-instance", () => {
-    void createWindow().catch((err) => {
+    void createFreshChatWindow().catch((err) => {
       console.error("Failed to open new window:", err);
       writeDebugLog("ERROR", "failed to open new window on second instance", err);
       focusPrimaryWindow();

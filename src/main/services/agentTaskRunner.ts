@@ -1464,6 +1464,24 @@ export class AgentTaskRunner {
     if (/\b(desktop app|desktop shell|desktop tool|desktop workspace|desktop client|desktop manager|snippet desk)\b/.test(normalizedPrompt)) {
       return true;
     }
+    if (/\b(standalone app|standalone application|standalone desktop app|native app|native desktop app)\b/.test(normalizedPrompt)) {
+      return true;
+    }
+    if (
+      /\bwindows\b/.test(normalizedPrompt)
+      && /\b(app|application|software|program|tool|utility|client|workspace|calculator|editor|manager|tracker)\b/.test(normalizedPrompt)
+      && !/\b(website|site|landing page|pricing page|homepage|microsite|marketing page|showcase page|web app|frontend|browser)\b/.test(normalizedPrompt)
+    ) {
+      return true;
+    }
+    if (
+      /\b(pc|computer|laptop)\b/.test(normalizedPrompt)
+      && /\b(app|application|software|program|tool|utility|calculator|editor|manager|tracker)\b/.test(normalizedPrompt)
+      && /\b(standalone|desktop|native|installed|installable)\b/.test(normalizedPrompt)
+      && !/\b(website|site|landing page|pricing page|homepage|microsite|marketing page|showcase page|web app|frontend|browser)\b/.test(normalizedPrompt)
+    ) {
+      return true;
+    }
     if (/\bdesktop\b/.test(normalizedPrompt) && !/\b(website|site|landing page|pricing page|homepage|microsite|marketing page|showcase page|web app|frontend|browser)\b/.test(normalizedPrompt)) {
       return true;
     }

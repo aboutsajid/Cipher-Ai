@@ -31,7 +31,7 @@ interface Deps {
   ccrService: CcrService;
   agentTaskRunner: AgentTaskRunner;
   activeControllers: Map<string, AbortController>;
-  createWindow: () => Promise<BrowserWindow>;
+  createWindow: (initialChatId?: string, startDraftChat?: boolean) => Promise<BrowserWindow>;
   getWindowForSender: (sender: WebContents) => BrowserWindow | null;
   getPrimaryWindow: () => BrowserWindow | null;
   broadcastToWindows: (channel: string, ...args: unknown[]) => void;
@@ -67,8 +67,8 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
 
   ipcMain.removeHandler("app:newWindow");
   ipcMain.handle("app:newWindow", async () => {
-    await createWindow();
-    return { ok: true, message: "Opened a new Cipher Workspace window." };
+    await createWindow(undefined, true);
+    return { ok: true, message: "Opened a new Cipher Workspace window with a fresh draft chat." };
   });
 
   ipcMain.removeHandler("chat:list");

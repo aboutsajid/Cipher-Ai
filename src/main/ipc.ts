@@ -15,7 +15,7 @@ interface Deps {
   chatsStore: ChatsStore;
   ccrService: CcrService;
   agentTaskRunner: AgentTaskRunner;
-  createWindow: () => Promise<BrowserWindow>;
+  createWindow: (initialChatId?: string, startDraftChat?: boolean) => Promise<BrowserWindow>;
   getWindowForSender: (sender: WebContents) => BrowserWindow | null;
   getPrimaryWindow: () => BrowserWindow | null;
   broadcastToWindows: (channel: string, ...args: unknown[]) => void;
