@@ -463,6 +463,20 @@ test("AgentTaskRunner prefers heuristic-first implementation for simple desktop 
       ),
       false
     );
+    assert.equal(
+      runner.shouldPreferHeuristicImplementation(
+        "[SOAK:windows.file-renamer] Create a standalone Windows desktop file renamer with a folder picker, filename preview list, replace-text inputs, and a clear rename action.",
+        { workspaceKind: "react", builderMode: null }
+      ),
+      true
+    );
+    assert.equal(
+      runner.shouldPreferHeuristicImplementation(
+        "[SOAK:windows.pdf-combiner] Create a Windows desktop PDF combiner utility with a file list, move-up and move-down controls, a merge button, and a visible output path field.",
+        { workspaceKind: "react", builderMode: null }
+      ),
+      true
+    );
   });
 });
 
@@ -644,6 +658,57 @@ test("AgentTaskRunner prefers the desktop heuristic over the notes heuristic for
     assert.ok(result);
     assert.match(result.summary, /desktop workspace/i);
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Start recording")));
+  });
+});
+
+test("AgentTaskRunner provides a heuristic desktop file-renamer workspace", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildHeuristicDesktopWorkspace: (
+        prompt: string,
+        plan: { workspaceKind: "static" | "react" | "generic"; workingDirectory: string }
+      ) => { summary: string; edits: Array<{ path: string; content: string }> } | null;
+    };
+
+    const result = runner.buildHeuristicDesktopWorkspace(
+      "[SOAK:windows.file-renamer] Create a standalone Windows desktop file renamer with a folder picker, filename preview list, replace-text inputs, and a clear rename action.",
+      {
+        workspaceKind: "react",
+        workingDirectory: "generated-apps/soak-windows-file-renamer"
+      }
+    );
+
+    assert.ok(result);
+    assert.match(result.summary, /desktop workspace/i);
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Rename files")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Filename preview")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("handlePickFolder")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.css") && edit.content.includes(".desktop-field")));
+  });
+});
+
+test("AgentTaskRunner provides a heuristic desktop PDF-combiner workspace", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildHeuristicDesktopWorkspace: (
+        prompt: string,
+        plan: { workspaceKind: "static" | "react" | "generic"; workingDirectory: string }
+      ) => { summary: string; edits: Array<{ path: string; content: string }> } | null;
+    };
+
+    const result = runner.buildHeuristicDesktopWorkspace(
+      "[SOAK:windows.pdf-combiner] Create a Windows desktop PDF combiner utility with a file list, move-up and move-down controls, a merge button, and a visible output path field.",
+      {
+        workspaceKind: "react",
+        workingDirectory: "generated-apps/soak-windows-pdf-combiner"
+      }
+    );
+
+    assert.ok(result);
+    assert.match(result.summary, /desktop workspace/i);
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Merge PDFs")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Move up")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Output file")));
   });
 });
 

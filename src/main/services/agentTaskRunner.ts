@@ -3807,6 +3807,7 @@ export class AgentTaskRunner {
     const normalized = (prompt ?? "").trim().toLowerCase();
     if (plan.workspaceKind !== "react") return false;
     if (!/\b(electron|desktop|tauri)\b/.test(normalized)) return false;
+    if (this.isSimpleDesktopUtilityPrompt(normalized)) return true;
 
     const layoutSignals = [
       /\bsidebar\b/,
@@ -3816,6 +3817,18 @@ export class AgentTaskRunner {
     ];
     const matchedSignals = layoutSignals.filter((pattern) => pattern.test(normalized)).length;
     return matchedSignals >= 3;
+  }
+
+  private isSimpleDesktopUtilityPrompt(normalizedPrompt: string): boolean {
+    const isFileRenamer = (
+      /\b(file renamer|rename files?|rename action)\b/.test(normalizedPrompt)
+      || (/\brename\b/.test(normalizedPrompt) && /\bfiles?\b/.test(normalizedPrompt))
+    ) && /\b(folder picker|preview list|replace-text|replace text|filename preview)\b/.test(normalizedPrompt);
+
+    const isPdfCombiner = /\bpdf\b/.test(normalizedPrompt)
+      && /\b(combiner|merge|merge button|move-up|move-down|output path)\b/.test(normalizedPrompt);
+
+    return isFileRenamer || isPdfCombiner;
   }
 
   private isSimpleNotesAppPrompt(prompt: string, plan: TaskExecutionPlan): boolean {
@@ -4691,9 +4704,210 @@ export class AgentTaskRunner {
     const title = this.toDisplayNameFromDirectory(plan.workingDirectory);
     const isSnippetManager = normalized.includes("snippet");
     const isVoiceWorkspace = normalized.includes("voice") || normalized.includes("recording");
+    const isFileRenamer = this.isSimpleDesktopUtilityPrompt(normalized)
+      && (/\b(file renamer|rename files?|rename action)\b/.test(normalized)
+        || (/\brename\b/.test(normalized) && /\bfiles?\b/.test(normalized)));
+    const isPdfCombiner = this.isSimpleDesktopUtilityPrompt(normalized)
+      && /\bpdf\b/.test(normalized)
+      && /\b(combiner|merge)\b/.test(normalized);
     if (plan.builderMode === "notes" && !isVoiceWorkspace) return null;
 
-    const appContent = isSnippetManager
+    const appContent = isFileRenamer
+      ? `import { useMemo, useState } from "react";
+import "./App.css";
+
+type FileItem = {
+  id: number;
+  originalName: string;
+  previewName: string;
+  folder: string;
+};
+
+const initialFiles: FileItem[] = [
+  { id: 1, originalName: "invoice-final.pdf", previewName: "invoice-approved.pdf", folder: "D:/Work/Billing" },
+  { id: 2, originalName: "march-notes.txt", previewName: "march-summary.txt", folder: "D:/Work/Notes" },
+  { id: 3, originalName: "client-photo.png", previewName: "client-photo-archive.png", folder: "D:/Work/Assets" }
+];
+
+export default function App() {
+  const [findText, setFindText] = useState("final");
+  const [replaceText, setReplaceText] = useState("approved");
+  const [selectedFolder, setSelectedFolder] = useState("D:/Work");
+
+  const handlePickFolder = () => {
+    setSelectedFolder((current) => current === "D:/Work" ? "D:/Archive" : "D:/Work");
+  };
+
+  const previewFiles = useMemo(() => {
+    const needle = findText.trim().toLowerCase();
+    return initialFiles.map((file) => {
+      if (!needle) return { ...file, previewName: file.originalName };
+      const previewName = file.originalName.toLowerCase().includes(needle)
+        ? file.originalName.replace(new RegExp(findText, "ig"), replaceText || "")
+        : file.originalName;
+      return { ...file, previewName };
+    });
+  }, [findText, replaceText]);
+
+  return (
+    <main className="desktop-shell">
+      <aside className="desktop-sidebar">
+        <p className="desktop-eyebrow">Desktop workspace</p>
+        <h1>${title}</h1>
+        <button type="button" className="desktop-primary" onClick={handlePickFolder}>Pick folder</button>
+        <nav className="desktop-nav" aria-label="Workspace sections">
+          <a href="#preview">Filename preview</a>
+          <a href="#rules">Rename rules</a>
+          <a href="#details">Output details</a>
+        </nav>
+      </aside>
+
+      <section className="desktop-main">
+        <header id="preview" className="desktop-header">
+          <div>
+            <p className="desktop-kicker">Filename preview</p>
+            <h2>Rename files before applying changes</h2>
+            <p>Pick a folder, review renamed filenames, and only then run the batch rename action.</p>
+          </div>
+          <div className="desktop-meta">
+            <span>{previewFiles.length} files</span>
+            <span>{selectedFolder}</span>
+          </div>
+        </header>
+
+        <section className="desktop-grid">
+          <section className="desktop-list" aria-label="Filename preview list">
+            {previewFiles.map((file) => (
+              <article key={file.id} className="snippet-card">
+                <div className="snippet-card-top">
+                  <strong>{file.originalName}</strong>
+                  <span>{file.folder}</span>
+                </div>
+                <p>Preview: {file.previewName}</p>
+              </article>
+            ))}
+          </section>
+
+          <aside id="rules" className="desktop-panel">
+            <p className="desktop-kicker">Rename rules</p>
+            <h3>Replace text</h3>
+            <label className="desktop-field">
+              Find
+              <input value={findText} onChange={(event) => setFindText(event.target.value)} placeholder="Text to replace" />
+            </label>
+            <label className="desktop-field">
+              Replace with
+              <input value={replaceText} onChange={(event) => setReplaceText(event.target.value)} placeholder="Replacement text" />
+            </label>
+            <div className="desktop-stack">
+              <button type="button" className="desktop-primary">Rename files</button>
+              <small>Preview updates before you apply the rename action.</small>
+            </div>
+          </aside>
+        </section>
+
+        <section id="details" className="desktop-panel">
+          <p className="desktop-kicker">Output details</p>
+          <h3>Folder picker</h3>
+          <p>Current folder: {selectedFolder}</p>
+        </section>
+      </section>
+    </main>
+  );
+}
+`
+      : isPdfCombiner
+        ? `import { useState } from "react";
+import "./App.css";
+
+type PdfItem = {
+  id: number;
+  name: string;
+  pages: number;
+};
+
+const initialFiles: PdfItem[] = [
+  { id: 1, name: "invoice-summary.pdf", pages: 3 },
+  { id: 2, name: "receipts-batch.pdf", pages: 9 },
+  { id: 3, name: "approval-sheet.pdf", pages: 2 }
+];
+
+export default function App() {
+  const [files, setFiles] = useState<PdfItem[]>(initialFiles);
+  const [outputPath] = useState("D:/Merged/combined-output.pdf");
+
+  const move = (index: number, direction: -1 | 1) => {
+    setFiles((current) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.length) return current;
+      const copy = [...current];
+      const [item] = copy.splice(index, 1);
+      copy.splice(nextIndex, 0, item);
+      return copy;
+    });
+  };
+
+  return (
+    <main className="desktop-shell">
+      <aside className="desktop-sidebar">
+        <p className="desktop-eyebrow">Desktop workspace</p>
+        <h1>${title}</h1>
+        <button type="button" className="desktop-primary">Add PDFs</button>
+        <nav className="desktop-nav" aria-label="Workspace sections">
+          <a href="#merge-list">PDF list</a>
+          <a href="#output">Output path</a>
+          <a href="#actions">Merge actions</a>
+        </nav>
+      </aside>
+
+      <section className="desktop-main">
+        <header id="merge-list" className="desktop-header">
+          <div>
+            <p className="desktop-kicker">PDF list</p>
+            <h2>Arrange files before merging</h2>
+            <p>Review order, move files up or down, and merge into a single output path when ready.</p>
+          </div>
+          <div className="desktop-meta">
+            <span>{files.length} files</span>
+            <span>{files.reduce((sum, file) => sum + file.pages, 0)} pages</span>
+          </div>
+        </header>
+
+        <section className="desktop-grid">
+          <section className="desktop-list" aria-label="PDF file list">
+            {files.map((file, index) => (
+              <article key={file.id} className="snippet-card">
+                <div className="snippet-card-top">
+                  <strong>{file.name}</strong>
+                  <span>{file.pages} pages</span>
+                </div>
+                <div className="desktop-inline-actions">
+                  <button type="button" onClick={() => move(index, -1)}>Move up</button>
+                  <button type="button" onClick={() => move(index, 1)}>Move down</button>
+                </div>
+              </article>
+            ))}
+          </section>
+
+          <aside id="output" className="desktop-panel">
+            <p className="desktop-kicker">Output path</p>
+            <h3>Merged PDF destination</h3>
+            <label className="desktop-field">
+              Output file
+              <input value={outputPath} readOnly />
+            </label>
+            <div id="actions" className="desktop-stack">
+              <button type="button" className="desktop-primary">Merge PDFs</button>
+              <small>Reorder files before you run the merge button.</small>
+            </div>
+          </aside>
+        </section>
+      </section>
+    </main>
+  );
+}
+`
+      : isSnippetManager
       ? `import { useState } from "react";
 import "./App.css";
 
@@ -5109,6 +5323,50 @@ export default function App() {
   margin: 1rem 0 0;
   padding-left: 1.2rem;
   color: #334155;
+}
+
+.desktop-field {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+  color: #334155;
+  font-size: 0.95rem;
+}
+
+.desktop-field input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255, 255, 255, 0.86);
+  color: #0f172a;
+}
+
+.desktop-stack {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.desktop-stack small {
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.desktop-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.desktop-inline-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  cursor: pointer;
 }
 
 @media (max-width: 920px) {
