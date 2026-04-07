@@ -2915,6 +2915,7 @@ test("AgentTaskRunner requires Electron wrapper files for desktop app entry veri
   await withTempDir(async (workspaceRoot) => {
     await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), "{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "index.html"), "<!doctype html>\n<div id=\"root\"></div>\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {};\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
 
@@ -2937,6 +2938,37 @@ test("AgentTaskRunner requires Electron wrapper files for desktop app entry veri
 
     assert.equal(result.status, "failed");
     assert.match(result.details, /scripts\/desktop-launch\.mjs/);
+  });
+});
+
+test("AgentTaskRunner requires index.html for generated desktop React app entry verification", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), "{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts", "desktop-launch.mjs"), "export {};\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyExpectedEntryFiles: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          requestedPaths: string[];
+        },
+        artifactType: "desktop-app"
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyExpectedEntryFiles({
+      workingDirectory: "generated-apps/desktop-smoke",
+      workspaceKind: "react",
+      requestedPaths: []
+    }, "desktop-app");
+
+    assert.equal(result.status, "failed");
+    assert.match(result.details, /index\.html/);
   });
 });
 
@@ -3008,6 +3040,44 @@ test("AgentTaskRunner accepts built React preview entries with bundled asset scr
     });
 
     assert.equal(result.status, "passed");
+  });
+});
+
+test("AgentTaskRunner restores a missing React preview entry script with a canonical Vite index file", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps/react-preview/src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps/react-preview/index.html"), [
+      "<!doctype html>",
+      "<html lang=\"en\">",
+      "  <head>",
+      "    <meta charset=\"UTF-8\" />",
+      "    <title>Broken Preview</title>",
+      "  </head>",
+      "  <body>",
+      "    <div id=\"root\"></div>",
+      "  </body>",
+      "</html>"
+    ].join("\n"), "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      tryHeuristicPreviewHealthFix: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+        },
+        details: string
+      ) => Promise<{ summary: string; edits: Array<{ path: string; content: string }> } | null>;
+    };
+
+    const result = await runner.tryHeuristicPreviewHealthFix({
+      workingDirectory: "generated-apps/react-preview",
+      workspaceKind: "react"
+    }, "React preview entry does not load the main application entry.");
+
+    assert.ok(result);
+    assert.match(result.summary, /Restored the React preview entry/i);
+    assert.equal(result.edits[0]?.path, "generated-apps/react-preview/index.html");
+    assert.match(result.edits[0]?.content ?? "", /<script type="module" src="\/src\/main\.tsx"><\/script>/);
   });
 });
 

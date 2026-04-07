@@ -1737,6 +1737,7 @@ export class AgentTaskRunner {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "styles.css"));
     } else if (plan.workspaceKind === "react") {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
+      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "index.html"));
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/main.tsx"));
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/App.tsx"));
       if (artifactType === "desktop-app") {
@@ -2682,6 +2683,16 @@ export class AgentTaskRunner {
     details: string
   ): Promise<HeuristicFixResult | null> {
     const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
+    if (plan.workspaceKind === "react" && /missing a #root container|does not load the main application entry/i.test(details)) {
+      return {
+        summary: "Restored the React preview entry so Vite loads the main application script.",
+        edits: [{
+          path: this.joinWorkspacePath(workingDirectory, "index.html"),
+          content: this.buildReactBootstrapHtml(this.toDisplayNameFromDirectory(workingDirectory))
+        }]
+      };
+    }
+
     const missingJsAssets = [...details.matchAll(new RegExp(`${this.escapeRegExp(`${workingDirectory}/dist/`)}([^\\s]+\\.js)`, "gi"))]
       .map((match) => match[1]?.trim())
       .filter((value): value is string => Boolean(value));
@@ -11857,6 +11868,11 @@ body {
       "import { StrictMode } from 'react'\nimport { createRoot } from 'react-dom/client'\nimport './index.css'\nimport App from './App.tsx'\n\ncreateRoot(document.getElementById('root')!).render(\n  <StrictMode>\n    <App />\n  </StrictMode>,\n)\n"
     );
 
+    await this.writeWorkspaceFile(
+      this.joinWorkspacePath(workingDirectory, "index.html"),
+      this.buildReactBootstrapHtml(this.toDisplayNameFromDirectory(workingDirectory))
+    );
+
     if (artifactType !== "desktop-app") return;
 
     await this.writeWorkspaceFile(
@@ -12214,6 +12230,7 @@ body {
           ]
         : [
           this.joinWorkspacePath(plan.targetDirectory, "package.json"),
+          this.joinWorkspacePath(plan.targetDirectory, "index.html"),
           this.joinWorkspacePath(plan.targetDirectory, "src/main.tsx"),
           this.joinWorkspacePath(plan.targetDirectory, "src/App.tsx"),
           this.joinWorkspacePath(plan.targetDirectory, "node_modules/@vitejs/plugin-react/package.json"),
@@ -12391,6 +12408,22 @@ body {
       <p id="status" class="status">Ready.</p>
     </main>
     <script type="module" src="./app.js"></script>
+  </body>
+</html>
+`;
+  }
+
+  private buildReactBootstrapHtml(projectName: string): string {
+    return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${projectName}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
 `;

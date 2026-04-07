@@ -21,6 +21,7 @@ const STARTUP_SMOKE_EXIT_DELAY_MS = Number.parseInt(process.env["CIPHER_SMOKE_EX
 const GENERATED_DESKTOP_URL = (process.env["CIPHER_GENERATED_DESKTOP_URL"] ?? "").trim();
 const GENERATED_DESKTOP_TITLE = (process.env["CIPHER_GENERATED_DESKTOP_TITLE"] ?? "").trim() || "Generated Desktop App";
 const GENERATED_DESKTOP_SHELL_ENABLED = GENERATED_DESKTOP_URL.length > 0;
+const GENERATED_DESKTOP_READY_TIMEOUT_MS = Number.parseInt(process.env["CIPHER_GENERATED_DESKTOP_READY_TIMEOUT_MS"] ?? "8000", 10);
 let startupSmokeCompleted = false;
 let startupSmokeTimer: NodeJS.Timeout | null = null;
 
@@ -165,6 +166,54 @@ function allowExternalNavigation(url: string): boolean {
   return /^https?:\/\//i.test(url);
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
+}
+
+async function waitForGeneratedDesktopPreview(window: BrowserWindow, timeoutMs = GENERATED_DESKTOP_READY_TIMEOUT_MS): Promise<boolean> {
+  const startedAt = Date.now();
+  const script = `(() => {
+    const root = document.getElementById("root");
+    const text = (document.body?.innerText ?? "").trim();
+    const headingCount = document.querySelectorAll("h1, h2, h3, h4, [role='heading']").length;
+    const rootChildren = root?.children?.length ?? 0;
+    return rootChildren > 0 && (text.length > 40 || headingCount > 0);
+  })()`;
+
+  while (!window.isDestroyed() && (Date.now() - startedAt) < timeoutMs) {
+    try {
+      const ready = await window.webContents.executeJavaScript(script, true);
+      if (ready === true) return true;
+    } catch {
+      // Keep polling until the renderer is ready or we time out.
+    }
+    await delay(250);
+  }
+
+  return false;
+}
+
+async function ensureGeneratedDesktopPreviewVisible(window: BrowserWindow, showWindow: () => void): Promise<void> {
+  const ready = await waitForGeneratedDesktopPreview(window);
+  if (window.isDestroyed()) return;
+
+  if (ready) {
+    writeDebugLog("WORKSPACE", "generated desktop preview ready", GENERATED_DESKTOP_URL);
+    showWindow();
+    return;
+  }
+
+  writeDebugLog("WORKSPACE", "generated desktop preview timed out; opening browser fallback", GENERATED_DESKTOP_URL);
+  try {
+    await shell.openExternal(GENERATED_DESKTOP_URL);
+  } catch (error) {
+    writeDebugLog("WORKSPACE", "generated desktop browser fallback failed", error);
+  }
+  showWindow();
+}
+
 async function createWindow(initialChatId?: string, startDraftChat = false): Promise<BrowserWindow> {
   const appIconPath = process.platform === "win32"
     ? (app.isPackaged
@@ -200,6 +249,13 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
   window.setMenuBarVisibility(false);
   attachEditableContextMenu(window);
   if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
+
+  if (GENERATED_DESKTOP_SHELL_ENABLED) {
+    window.on("page-title-updated", (event) => {
+      event.preventDefault();
+      window.setTitle(GENERATED_DESKTOP_TITLE);
+    });
+  }
 
   window.webContents.on("console-message", (event) => {
     const levelTag = event.level === "error"
@@ -276,13 +332,13 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
     });
   }
 
-  window.once("ready-to-show", showWindow);
-  window.webContents.once("did-finish-load", showWindow);
-  setTimeout(showWindow, 1500);
-
   if (GENERATED_DESKTOP_SHELL_ENABLED) {
     await window.loadURL(GENERATED_DESKTOP_URL);
+    void ensureGeneratedDesktopPreviewVisible(window, showWindow);
   } else {
+    window.once("ready-to-show", showWindow);
+    window.webContents.once("did-finish-load", showWindow);
+    setTimeout(showWindow, 1500);
     const rendererEntry = join(__dirname, "..", "renderer", "index.html");
     if (initialChatId?.trim()) {
       await window.loadFile(rendererEntry, {
