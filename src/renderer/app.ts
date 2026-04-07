@@ -5774,18 +5774,22 @@ async function refreshAgentTask(forceLogs = false): Promise<void> {
     renderAgentHistory(tasks);
   }
 
+  const previousTaskStatus = activeAgentTaskId === task.id ? activeAgentTaskStatus : null;
   activeAgentTaskStatus = task.status;
   const shouldFetchLogs =
     forceLogs ||
     task.status === "running" ||
     task.status === "failed" ||
     task.status === "completed";
+  const restoreState = getRestoreStateForTask(task);
+  if (shouldQueueDesktopLaunchPrompt(task, previousTaskStatus, restoreState)) {
+    pendingDesktopLaunchPromptTasks.add(task.id);
+  }
   const logs = shouldFetchLogs ? await window.api.agent.getLogs(task.id) : [];
   renderAgentTask(task, logs);
   await refreshAgentRouteDiagnostics(task.id);
   void updateAgentTaskInChat(task, logs);
 
-  const restoreState = getRestoreStateForTask(task);
   if (
     task.status === "completed" &&
     isTaskPreviewable(task) &&
@@ -5948,6 +5952,25 @@ function canPromptToLaunchDesktopApp(task: AgentTask): boolean {
     && task.output?.primaryAction === "run-desktop"
     && Boolean(task.output.runCommand?.trim())
     && Boolean((task.output.workingDirectory ?? task.targetPath)?.trim());
+}
+
+function completedTaskIsRecent(task: AgentTask, withinMs = 20_000): boolean {
+  const updatedAt = Date.parse(task.updatedAt ?? "");
+  if (!Number.isFinite(updatedAt)) return false;
+  return Math.abs(Date.now() - updatedAt) <= withinMs;
+}
+
+function shouldQueueDesktopLaunchPrompt(
+  task: AgentTask,
+  previousStatus: AgentTask["status"] | null,
+  restoreState: AgentSnapshotRestoreResult | null
+): boolean {
+  if (handledDesktopLaunchPromptTasks.has(task.id)) return false;
+  if (!canPromptToLaunchDesktopApp(task)) return false;
+  if (restoreState?.snapshotKind === "before-task") return false;
+  if (pendingDesktopLaunchPromptTasks.has(task.id)) return true;
+  if (previousStatus === "running") return true;
+  return completedTaskIsRecent(task);
 }
 
 async function promptToLaunchDesktopApp(task: AgentTask): Promise<void> {
