@@ -8,6 +8,7 @@ generated-apps/
 tmp/
 .cipher-snapshots/
 relative/
+cipher-workspace/
 *.tsbuildinfo
 
 # Logs
