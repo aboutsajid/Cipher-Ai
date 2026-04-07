@@ -12,7 +12,7 @@ test("windows desktop prompt pack stays desktop-only and marker-addressable", ()
   const raw = JSON.parse(readProjectFile("prompts/agent-windows-desktop-pack.json")) as Array<Record<string, unknown>>;
   const scenarios = normalizeAgentSoakScenarios(raw);
 
-  assert.equal(scenarios.length, 8);
+  assert.equal(scenarios.length, 9);
 
   for (const scenario of scenarios) {
     assert.equal(scenario.category, "desktop-app");

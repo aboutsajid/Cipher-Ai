@@ -49,6 +49,13 @@
     "prompt": "Build a standalone Windows desktop expense tracker with a sidebar, add-expense form, category filter, saved expense list, and a visible totals summary."
   },
   {
+    "id": "windows.shop-records",
+    "category": "desktop-app",
+    "title": "Shop record reporting desktop app",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Build a standalone Windows desktop shop record software for a small store. I want to enter only daily records, and the app should automatically generate summary views for daily, weekly, monthly, quarterly, and yearly performance. Include a clear daily entry form, a saved records list, totals, and report sections that update from those entries."
+  },
+  {
     "id": "windows.local-crm",
     "category": "desktop-app",
     "title": "Local CRM desktop workspace",

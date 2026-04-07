@@ -477,6 +477,13 @@ test("AgentTaskRunner prefers heuristic-first implementation for simple desktop 
       ),
       true
     );
+    assert.equal(
+      runner.shouldPreferHeuristicImplementation(
+        "Build a standalone Windows desktop shop record software for a small store. I want to enter only daily records, and the app should automatically generate summary views for daily, weekly, monthly, quarterly, and yearly performance. Include a clear daily entry form, a saved records list, totals, and report sections that update from those entries.",
+        { workspaceKind: "react", builderMode: null }
+      ),
+      true
+    );
   });
 });
 
@@ -709,6 +716,33 @@ test("AgentTaskRunner provides a heuristic desktop PDF-combiner workspace", asyn
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Merge PDFs")));
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Move up")));
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Output file")));
+  });
+});
+
+test("AgentTaskRunner provides a heuristic desktop business reporting workspace", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildHeuristicDesktopWorkspace: (
+        prompt: string,
+        plan: { workspaceKind: "static" | "react" | "generic"; workingDirectory: string }
+      ) => { summary: string; edits: Array<{ path: string; content: string }> } | null;
+    };
+
+    const result = runner.buildHeuristicDesktopWorkspace(
+      "Build a standalone Windows desktop shop record software for a small store. I want to enter only daily records, and the app should automatically generate summary views for daily, weekly, monthly, quarterly, and yearly performance. Include a clear daily entry form, a saved records list, totals, and report sections that update from those entries.",
+      {
+        workspaceKind: "react",
+        workingDirectory: "generated-apps/soak-windows-shop-records"
+      }
+    );
+
+    assert.ok(result);
+    assert.match(result.summary, /desktop workspace/i);
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Save daily entry")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Saved records")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Weekly report")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Quarterly report")));
+    assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.css") && edit.content.includes(".desktop-report-grid")));
   });
 });
 
@@ -991,6 +1025,34 @@ test("AgentTaskRunner does not attach dashboard UI requirements to library promp
 
     assert.equal(runner.classifyArtifactType(prompt, { workspaceKind: "generic" }, null, null), "library");
     assert.equal(requirements.some((item) => item.id === "req-dashboard"), false);
+  });
+});
+
+test("AgentTaskRunner attaches reporting requirements to desktop business record prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      extractPromptRequirements: (
+        prompt: string
+      ) => Array<{ id: string; label: string; terms: string[]; mode: "all" | "any" }>;
+      classifyArtifactType: (
+        prompt: string,
+        plan?: { workspaceKind?: "static" | "react" | "generic" } | null,
+        verification?: { previewReady?: boolean } | null,
+        packageManifest?: {
+          name?: string;
+          scripts?: Record<string, string>;
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        } | null
+      ) => string;
+    };
+
+    const prompt = "Build a standalone Windows desktop shop record software for a small store. I want to enter only daily records, and the app should automatically generate summary views for daily, weekly, monthly, quarterly, and yearly performance. Include a clear daily entry form, a saved records list, totals, and report sections that update from those entries.";
+    const requirements = runner.extractPromptRequirements(prompt);
+
+    assert.equal(runner.classifyArtifactType(prompt, { workspaceKind: "generic" }, null, null), "desktop-app");
+    assert.equal(requirements.some((item) => item.id === "req-record-entry"), true);
+    assert.equal(requirements.some((item) => item.id === "req-reporting"), true);
   });
 });
 

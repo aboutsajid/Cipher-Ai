@@ -3767,6 +3767,21 @@ export class AgentTaskRunner {
       });
     }
 
+    if (supportsVisualRequirements && this.isDesktopBusinessReportingPrompt(normalized)) {
+      requirements.push({
+        id: "req-record-entry",
+        label: "Daily entry workflow",
+        terms: ["daily entry", "saved records"],
+        mode: "all"
+      });
+      requirements.push({
+        id: "req-reporting",
+        label: "Reporting views",
+        terms: ["daily summary", "weekly report", "monthly report", "quarterly report", "yearly report"],
+        mode: "all"
+      });
+    }
+
     return requirements;
   }
 
@@ -3807,6 +3822,7 @@ export class AgentTaskRunner {
     const normalized = (prompt ?? "").trim().toLowerCase();
     if (plan.workspaceKind !== "react") return false;
     if (!/\b(electron|desktop|tauri)\b/.test(normalized)) return false;
+    if (this.isDesktopBusinessReportingPrompt(normalized)) return true;
     if (this.isSimpleDesktopUtilityPrompt(normalized)) return true;
 
     const layoutSignals = [
@@ -3817,6 +3833,13 @@ export class AgentTaskRunner {
     ];
     const matchedSignals = layoutSignals.filter((pattern) => pattern.test(normalized)).length;
     return matchedSignals >= 3;
+  }
+
+  private isDesktopBusinessReportingPrompt(normalizedPrompt: string): boolean {
+    const hasEntrySignals = /\b(daily entries?|daily records?|daily entry form|saved records?)\b/.test(normalizedPrompt);
+    const hasBusinessContext = /\b(shop|store|retail|sales|performance|summary views?|reports?|record software)\b/.test(normalizedPrompt);
+    const periods = ["daily", "weekly", "monthly", "quarterly", "yearly"].filter((term) => normalizedPrompt.includes(term));
+    return hasEntrySignals && hasBusinessContext && periods.length >= 4;
   }
 
   private isSimpleDesktopUtilityPrompt(normalizedPrompt: string): boolean {
@@ -4704,6 +4727,7 @@ export class AgentTaskRunner {
     const title = this.toDisplayNameFromDirectory(plan.workingDirectory);
     const isSnippetManager = normalized.includes("snippet");
     const isVoiceWorkspace = normalized.includes("voice") || normalized.includes("recording");
+    const isBusinessReportingWorkspace = this.isDesktopBusinessReportingPrompt(normalized);
     const isFileRenamer = this.isSimpleDesktopUtilityPrompt(normalized)
       && (/\b(file renamer|rename files?|rename action)\b/.test(normalized)
         || (/\brename\b/.test(normalized) && /\bfiles?\b/.test(normalized)));
@@ -4712,7 +4736,246 @@ export class AgentTaskRunner {
       && /\b(combiner|merge)\b/.test(normalized);
     if (plan.builderMode === "notes" && !isVoiceWorkspace) return null;
 
-    const appContent = isFileRenamer
+    const appContent = isBusinessReportingWorkspace
+      ? `import { useMemo, useState } from "react";
+import "./App.css";
+
+type DailyRecord = {
+  id: number;
+  date: string;
+  sales: number;
+  expenses: number;
+  orders: number;
+  note: string;
+};
+
+type RecordDraft = {
+  date: string;
+  sales: string;
+  expenses: string;
+  orders: string;
+  note: string;
+};
+
+const initialRecords: DailyRecord[] = [
+  { id: 1, date: "2026-04-01", sales: 1680, expenses: 540, orders: 21, note: "Promo bundle moved quickly." },
+  { id: 2, date: "2026-04-03", sales: 1540, expenses: 510, orders: 18, note: "Weekend stock refill." },
+  { id: 3, date: "2026-04-05", sales: 1920, expenses: 640, orders: 25, note: "Higher walk-in traffic after noon." },
+  { id: 4, date: "2026-04-06", sales: 1760, expenses: 590, orders: 22, note: "Strong repeat-customer sales." }
+];
+
+const defaultDraft: RecordDraft = {
+  date: "2026-04-07",
+  sales: "1840",
+  expenses: "620",
+  orders: "24",
+  note: "Daily close captured for the evening shift."
+};
+
+function startOfQuarter(date: Date): Date {
+  const month = date.getMonth();
+  const quarterStartMonth = Math.floor(month / 3) * 3;
+  return new Date(date.getFullYear(), quarterStartMonth, 1);
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0
+  }).format(value);
+}
+
+function sameDay(left: Date, right: Date): boolean {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+export default function App() {
+  const [records, setRecords] = useState<DailyRecord[]>(initialRecords);
+  const [draft, setDraft] = useState<RecordDraft>(defaultDraft);
+
+  const latestDate = useMemo(() => {
+    const dates = records.map((record) => new Date(record.date));
+    return new Date(Math.max(...dates.map((date) => date.getTime())));
+  }, [records]);
+
+  const summary = useMemo(() => {
+    const latestWeekStart = new Date(latestDate);
+    latestWeekStart.setDate(latestDate.getDate() - 6);
+    const latestMonthStart = new Date(latestDate.getFullYear(), latestDate.getMonth(), 1);
+    const latestQuarterStart = startOfQuarter(latestDate);
+    const latestYearStart = new Date(latestDate.getFullYear(), 0, 1);
+
+    const filterRange = (start: Date, end: Date) => records.filter((record) => {
+      const date = new Date(record.date);
+      return date >= start && date <= end;
+    });
+
+    const buildTotals = (items: DailyRecord[]) => {
+      const sales = items.reduce((sum, item) => sum + item.sales, 0);
+      const expenses = items.reduce((sum, item) => sum + item.expenses, 0);
+      const orders = items.reduce((sum, item) => sum + item.orders, 0);
+      return { sales, expenses, orders, profit: sales - expenses };
+    };
+
+    const latestDayRecords = records.filter((record) => sameDay(new Date(record.date), latestDate));
+
+    return {
+      daily: buildTotals(latestDayRecords),
+      weekly: buildTotals(filterRange(latestWeekStart, latestDate)),
+      monthly: buildTotals(filterRange(latestMonthStart, latestDate)),
+      quarterly: buildTotals(filterRange(latestQuarterStart, latestDate)),
+      yearly: buildTotals(filterRange(latestYearStart, latestDate))
+    };
+  }, [latestDate, records]);
+
+  const handleDraftChange = (field: keyof RecordDraft, value: string) => {
+    setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleAddRecord = () => {
+    setRecords((current) => [
+      {
+        id: Date.now(),
+        date: draft.date,
+        sales: Number(draft.sales) || 0,
+        expenses: Number(draft.expenses) || 0,
+        orders: Number(draft.orders) || 0,
+        note: draft.note.trim() || "Daily entry captured."
+      },
+      ...current
+    ]);
+    setDraft(defaultDraft);
+  };
+
+  const reportCards = [
+    { title: "Daily summary", totals: summary.daily },
+    { title: "Weekly report", totals: summary.weekly },
+    { title: "Monthly report", totals: summary.monthly },
+    { title: "Quarterly report", totals: summary.quarterly },
+    { title: "Yearly report", totals: summary.yearly }
+  ];
+
+  return (
+    <main className="desktop-shell">
+      <aside className="desktop-sidebar">
+        <p className="desktop-eyebrow">Desktop workspace</p>
+        <h1>${title}</h1>
+        <button type="button" className="desktop-primary" onClick={handleAddRecord}>Add daily entry</button>
+        <nav className="desktop-nav" aria-label="Workspace sections">
+          <a href="#daily-entry">Daily entry</a>
+          <a href="#saved-records">Saved records</a>
+          <a href="#reports">Reporting views</a>
+        </nav>
+      </aside>
+
+      <section className="desktop-main">
+        <header className="desktop-header">
+          <div>
+            <p className="desktop-kicker">Shop record software</p>
+            <h2>Enter daily records and auto-generate reporting views</h2>
+            <p>Capture one daily entry at a time, keep a saved records list, and let the app roll totals into weekly, monthly, quarterly, and yearly performance.</p>
+          </div>
+          <div className="desktop-meta">
+            <span>{records.length} saved records</span>
+            <span>Latest close: {latestDate.toLocaleDateString()}</span>
+          </div>
+        </header>
+
+        <section className="desktop-columns">
+          <section id="daily-entry" className="desktop-panel">
+            <p className="desktop-kicker">Daily entry</p>
+            <h3>Record the day</h3>
+            <div className="desktop-form-grid">
+              <label className="desktop-field">
+                Date
+                <input value={draft.date} onChange={(event) => handleDraftChange("date", event.target.value)} />
+              </label>
+              <label className="desktop-field">
+                Sales
+                <input value={draft.sales} onChange={(event) => handleDraftChange("sales", event.target.value)} />
+              </label>
+              <label className="desktop-field">
+                Expenses
+                <input value={draft.expenses} onChange={(event) => handleDraftChange("expenses", event.target.value)} />
+              </label>
+              <label className="desktop-field">
+                Orders
+                <input value={draft.orders} onChange={(event) => handleDraftChange("orders", event.target.value)} />
+              </label>
+            </div>
+            <label className="desktop-field">
+              Daily note
+              <textarea value={draft.note} onChange={(event) => handleDraftChange("note", event.target.value)} rows={4} />
+            </label>
+            <div className="desktop-stack">
+              <button type="button" className="desktop-primary" onClick={handleAddRecord}>Save daily entry</button>
+              <small>Daily entries feed the summary views below without asking for separate weekly or monthly inputs.</small>
+            </div>
+          </section>
+
+          <section id="saved-records" className="desktop-list" aria-label="Saved records">
+            <div className="snippet-card">
+              <div className="snippet-card-top">
+                <strong>Saved records</strong>
+                <span>{records.length} rows</span>
+              </div>
+              <div className="desktop-record-table">
+                {records.map((record) => (
+                  <article key={record.id} className="desktop-record-row">
+                    <div>
+                      <strong>{new Date(record.date).toLocaleDateString()}</strong>
+                      <p className="desktop-note">{record.note}</p>
+                    </div>
+                    <div className="desktop-stat-line">
+                      <span>{formatCurrency(record.sales)} sales</span>
+                      <span>{formatCurrency(record.expenses)} expenses</span>
+                      <span>{record.orders} orders</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="reports" className="desktop-panel">
+          <p className="desktop-kicker">Reporting views</p>
+          <h3>Performance rolls up from daily records</h3>
+          <div className="desktop-report-grid">
+            {reportCards.map((card) => (
+              <article key={card.title} className="desktop-report-card">
+                <h4>{card.title}</h4>
+                <div className="desktop-metrics">
+                  <div className="desktop-metric">
+                    <span>Sales</span>
+                    <strong>{formatCurrency(card.totals.sales)}</strong>
+                  </div>
+                  <div className="desktop-metric">
+                    <span>Expenses</span>
+                    <strong>{formatCurrency(card.totals.expenses)}</strong>
+                  </div>
+                  <div className="desktop-metric">
+                    <span>Profit</span>
+                    <strong>{formatCurrency(card.totals.profit)}</strong>
+                  </div>
+                  <div className="desktop-metric">
+                    <span>Orders</span>
+                    <strong>{card.totals.orders}</strong>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </section>
+    </main>
+  );
+}
+`
+      : isFileRenamer
       ? `import { useMemo, useState } from "react";
 import "./App.css";
 
@@ -5342,6 +5605,96 @@ export default function App() {
   color: #0f172a;
 }
 
+.desktop-field textarea {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255, 255, 255, 0.86);
+  color: #0f172a;
+  resize: vertical;
+}
+
+.desktop-columns {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 24px;
+}
+
+.desktop-form-grid,
+.desktop-report-grid,
+.desktop-metrics {
+  display: grid;
+  gap: 16px;
+}
+
+.desktop-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.desktop-report-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 1rem;
+}
+
+.desktop-report-card {
+  border-radius: 18px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff, #ecfeff);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.desktop-report-card h4 {
+  margin: 0 0 0.9rem;
+}
+
+.desktop-metric {
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.desktop-metric span {
+  display: block;
+  color: #475569;
+  font-size: 0.85rem;
+}
+
+.desktop-metric strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1rem;
+}
+
+.desktop-record-table {
+  display: grid;
+  gap: 12px;
+}
+
+.desktop-record-row {
+  display: grid;
+  gap: 0.75rem;
+  padding: 14px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.desktop-record-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.desktop-stat-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: #334155;
+  font-size: 0.92rem;
+}
+
+.desktop-note {
+  margin-top: 0.35rem;
+}
+
 .desktop-stack {
   display: grid;
   gap: 0.7rem;
@@ -5375,6 +5728,11 @@ export default function App() {
   }
 
   .desktop-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-columns,
+  .desktop-form-grid {
     grid-template-columns: 1fr;
   }
 
