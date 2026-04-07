@@ -2739,9 +2739,48 @@ test("AgentTaskRunner writes desktop launcher files for generated desktop React 
     const desktopLaunch = await runner.readWorkspaceFile("generated-apps/desktop-smoke/scripts/desktop-launch.mjs");
 
     assert.match(desktopLaunch.content, /findFreePort/);
+    assert.match(desktopLaunch.content, /function formatTitle/);
+    assert.match(desktopLaunch.content, /packageJsonPath/);
     assert.match(desktopLaunch.content, /node_modules', 'vite', 'bin', 'vite\.js/);
     assert.match(desktopLaunch.content, /generated-desktop-shell\.mjs/);
     assert.match(desktopLaunch.content, /--url/);
+  });
+});
+
+test("AgentTaskRunner uses neutral notes workspace branding for heuristic notes apps", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildNotesAppTsx: (
+        title: string,
+        options: { wantsSearch: boolean; wantsDelete: boolean; wantsAdd: boolean }
+      ) => string;
+    };
+
+    const content = runner.buildNotesAppTsx("Standalone Windows Desktop", {
+      wantsSearch: true,
+      wantsDelete: false,
+      wantsAdd: true
+    });
+
+    assert.match(content, /Notes workspace/);
+    assert.doesNotMatch(content, /Cipher Workspace/);
+  });
+});
+
+test("AgentTaskRunner keeps generated starter app status copy product-neutral", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildStaticBootstrapHtml: (projectName: string) => string;
+      buildStaticBootstrapJs: (projectName: string) => string;
+    };
+
+    const html = runner.buildStaticBootstrapHtml("desktop smoke");
+    const js = runner.buildStaticBootstrapJs("desktop smoke");
+
+    assert.match(html, /Starter app/);
+    assert.doesNotMatch(html, /Cipher Workspace/);
+    assert.match(js, /Continue building in this workspace/);
+    assert.doesNotMatch(js, /Cipher Workspace/);
   });
 });
 

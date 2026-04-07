@@ -5926,6 +5926,22 @@ function quotePowerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function toDisplayLabel(value: string, fallback = "Desktop app"): string {
+  const normalized = (value ?? "")
+    .trim()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (!normalized) return fallback;
+
+  const parts = normalized.split(" ").filter(Boolean);
+  if (parts.length === 0) return fallback;
+
+  return parts
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function canPromptToLaunchDesktopApp(task: AgentTask): boolean {
   return task.status === "completed"
     && task.artifactType === "desktop-app"
@@ -5943,7 +5959,7 @@ async function promptToLaunchDesktopApp(task: AgentTask): Promise<void> {
   const runCommand = (task.output?.runCommand ?? "").trim();
   if (!workingDirectory || !runCommand) return;
 
-  const packageName = task.output?.packageName?.trim() || "Desktop app";
+  const packageName = toDisplayLabel(task.output?.packageName?.trim() || "", "Desktop app");
   const shouldOpen = window.confirm(
     `${packageName} build successful. Do you want to open it now?\n\nCommand: ${runCommand}\nFolder: ${workingDirectory}`
   );
