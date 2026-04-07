@@ -18,6 +18,9 @@ const APP_NAME = "Cipher Workspace";
 const APP_USER_MODEL_ID = "com.cipher.ai";
 const STARTUP_SMOKE_ENABLED = (process.env["CIPHER_SMOKE_STARTUP"] ?? "").trim() === "1";
 const STARTUP_SMOKE_EXIT_DELAY_MS = Number.parseInt(process.env["CIPHER_SMOKE_EXIT_DELAY_MS"] ?? "2500", 10);
+const GENERATED_DESKTOP_URL = (process.env["CIPHER_GENERATED_DESKTOP_URL"] ?? "").trim();
+const GENERATED_DESKTOP_TITLE = (process.env["CIPHER_GENERATED_DESKTOP_TITLE"] ?? "").trim() || "Generated Desktop App";
+const GENERATED_DESKTOP_SHELL_ENABLED = GENERATED_DESKTOP_URL.length > 0;
 let startupSmokeCompleted = false;
 let startupSmokeTimer: NodeJS.Timeout | null = null;
 
@@ -170,19 +173,21 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
     : join(__dirname, "..", "renderer", "assets", "cipher-ai-icon.png");
 
   const window = new BrowserWindow({
-    width: 1680,
-    height: 1040,
-    minWidth: 1280,
-    minHeight: 780,
+    width: GENERATED_DESKTOP_SHELL_ENABLED ? 1280 : 1680,
+    height: GENERATED_DESKTOP_SHELL_ENABLED ? 860 : 1040,
+    minWidth: GENERATED_DESKTOP_SHELL_ENABLED ? 980 : 1280,
+    minHeight: GENERATED_DESKTOP_SHELL_ENABLED ? 720 : 780,
     show: false,
     center: true,
     autoHideMenuBar: true,
-    title: "Cipher Workspace",
+    title: GENERATED_DESKTOP_SHELL_ENABLED ? GENERATED_DESKTOP_TITLE : "Cipher Workspace",
     icon: appIconPath,
-    backgroundColor: "#0a0e17",
-    titleBarStyle: "hiddenInset",
+    backgroundColor: GENERATED_DESKTOP_SHELL_ENABLED ? "#f4f6fb" : "#0a0e17",
+    titleBarStyle: GENERATED_DESKTOP_SHELL_ENABLED ? "default" : "hiddenInset",
     webPreferences: {
-      preload: join(__dirname, "..", "preload", "preload.js"),
+      ...(GENERATED_DESKTOP_SHELL_ENABLED
+        ? {}
+        : { preload: join(__dirname, "..", "preload", "preload.js") }),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -255,7 +260,7 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
     if (STARTUP_SMOKE_ENABLED) return;
     if (window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();
-    if (!window.isMaximized()) window.maximize();
+    if (!GENERATED_DESKTOP_SHELL_ENABLED && !window.isMaximized()) window.maximize();
     if (!window.isVisible()) window.show();
     window.focus();
   };
@@ -275,21 +280,25 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
   window.webContents.once("did-finish-load", showWindow);
   setTimeout(showWindow, 1500);
 
-  const rendererEntry = join(__dirname, "..", "renderer", "index.html");
-  if (initialChatId?.trim()) {
-    await window.loadFile(rendererEntry, {
-      query: {
-        chatId: initialChatId.trim()
-      }
-    });
-  } else if (startDraftChat) {
-    await window.loadFile(rendererEntry, {
-      query: {
-        draftChat: "1"
-      }
-    });
+  if (GENERATED_DESKTOP_SHELL_ENABLED) {
+    await window.loadURL(GENERATED_DESKTOP_URL);
   } else {
-    await window.loadFile(rendererEntry);
+    const rendererEntry = join(__dirname, "..", "renderer", "index.html");
+    if (initialChatId?.trim()) {
+      await window.loadFile(rendererEntry, {
+        query: {
+          chatId: initialChatId.trim()
+        }
+      });
+    } else if (startDraftChat) {
+      await window.loadFile(rendererEntry, {
+        query: {
+          draftChat: "1"
+        }
+      });
+    } else {
+      await window.loadFile(rendererEntry);
+    }
   }
 
   window.on("closed", () => {
@@ -365,10 +374,12 @@ async function bootstrap(): Promise<boolean> {
   Menu.setApplicationMenu(null);
   const userDataPath = STARTUP_SMOKE_ENABLED
     ? join(app.getPath("appData"), APP_NAME, "startup-smoke")
-    : join(app.getPath("appData"), APP_NAME);
+    : GENERATED_DESKTOP_SHELL_ENABLED
+      ? join(app.getPath("appData"), APP_NAME, "generated-desktop-shell")
+      : join(app.getPath("appData"), APP_NAME);
   app.setPath("userData", userDataPath);
 
-  if (!STARTUP_SMOKE_ENABLED) {
+  if (!STARTUP_SMOKE_ENABLED && !GENERATED_DESKTOP_SHELL_ENABLED) {
     const hasSingleInstanceLock = app.requestSingleInstanceLock();
     if (!hasSingleInstanceLock) {
       return false;
@@ -387,6 +398,11 @@ async function bootstrap(): Promise<boolean> {
   const resolvedUserDataPath = app.getPath("userData");
   const debugLogPath = initDebugLogger(resolvedUserDataPath);
   console.log(`[debug] main log: ${debugLogPath}`);
+  if (GENERATED_DESKTOP_SHELL_ENABLED) {
+    writeDebugLog("WORKSPACE", "starting generated desktop shell", GENERATED_DESKTOP_URL, GENERATED_DESKTOP_TITLE);
+    await createWindow();
+    return true;
+  }
   const workspaceRoot = resolveAgentWorkspaceRoot();
   writeDebugLog("WORKSPACE", `workspace root: ${workspaceRoot}`);
   settingsStore = new SettingsStore(resolvedUserDataPath);

@@ -1739,6 +1739,9 @@ export class AgentTaskRunner {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/main.tsx"));
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/App.tsx"));
+      if (artifactType === "desktop-app") {
+        requiredPaths.add(this.joinWorkspacePath(workingDirectory, "scripts/desktop-launch.mjs"));
+      }
     } else {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
     }
@@ -1909,7 +1912,7 @@ export class AgentTaskRunner {
   private async ensureGeneratedNodePackageDependencies(taskId: string, plan: TaskExecutionPlan): Promise<void> {
     const normalizedWorkingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     if (!normalizedWorkingDirectory.startsWith("generated-apps/")) return;
-    if (plan.workspaceKind !== "generic") return;
+    if (plan.workspaceKind === "static") return;
 
     if (!(await this.generatedNodePackageNeedsInstall(normalizedWorkingDirectory))) return;
 
@@ -2010,8 +2013,9 @@ export class AgentTaskRunner {
   }
 
   private async prepareGeneratedWorkspace(taskId: string, plan: TaskExecutionPlan): Promise<void> {
-    await this.ensureGeneratedAppPackageJson(plan);
-    await this.ensureGeneratedReactProjectFiles(plan);
+    const artifactType = this.tasks.get(taskId)?.artifactType;
+    await this.ensureGeneratedAppPackageJson(plan, artifactType);
+    await this.ensureGeneratedReactProjectFiles(plan, artifactType);
     await this.ensureGeneratedNodePackageDependencies(taskId, plan);
   }
 
@@ -11000,7 +11004,10 @@ body {
     };
   }
 
-  private async ensureGeneratedAppPackageJson(plan: TaskExecutionPlan): Promise<void> {
+  private async ensureGeneratedAppPackageJson(
+    plan: TaskExecutionPlan,
+    artifactType?: AgentArtifactType
+  ): Promise<void> {
     const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     if (!workingDirectory.startsWith("generated-apps/")) return;
 
@@ -11114,17 +11121,27 @@ body {
 
     if (plan.workspaceKind !== "react") return;
 
-    const normalized = {
+    const isDesktopApp = artifactType === "desktop-app";
+    const normalized: Record<string, unknown> = {
       name: packageName,
       private: current.private ?? true,
       version: typeof current.version === "string" && current.version.trim() ? current.version : "0.0.0",
       type: "module",
-      scripts: {
-        dev: "vite",
-        build: "tsc -b && vite build",
-        lint: "eslint .",
-        preview: "vite preview"
-      },
+      scripts: isDesktopApp
+        ? {
+          start: "node scripts/desktop-launch.mjs",
+          dev: "vite",
+          "dev:web": "vite",
+          build: "tsc -b && vite build",
+          lint: "eslint .",
+          preview: "vite preview"
+        }
+        : {
+          dev: "vite",
+          build: "tsc -b && vite build",
+          lint: "eslint .",
+          preview: "vite preview"
+        },
       dependencies: {
         react: "^19.2.4",
         "react-dom": "^19.2.4"
@@ -11174,7 +11191,10 @@ body {
     return null;
   }
 
-  private async ensureGeneratedReactProjectFiles(plan: TaskExecutionPlan): Promise<void> {
+  private async ensureGeneratedReactProjectFiles(
+    plan: TaskExecutionPlan,
+    artifactType?: AgentArtifactType
+  ): Promise<void> {
     const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     if (!workingDirectory.startsWith("generated-apps/")) return;
     if (plan.workspaceKind !== "react") return;
@@ -11207,6 +11227,104 @@ body {
     await this.writeWorkspaceFile(
       this.joinWorkspacePath(workingDirectory, "src/main.tsx"),
       "import { StrictMode } from 'react'\nimport { createRoot } from 'react-dom/client'\nimport './index.css'\nimport App from './App.tsx'\n\ncreateRoot(document.getElementById('root')!).render(\n  <StrictMode>\n    <App />\n  </StrictMode>,\n)\n"
+    );
+
+    if (artifactType !== "desktop-app") return;
+
+    await this.writeWorkspaceFile(
+      this.joinWorkspacePath(workingDirectory, "scripts/desktop-launch.mjs"),
+      [
+        "import { spawn } from 'node:child_process';",
+        "import { createServer } from 'node:net';",
+        "import { dirname, join } from 'node:path';",
+        "import { fileURLToPath } from 'node:url';",
+        "",
+        "const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));",
+        "const workspaceRoot = dirname(dirname(rootDir));",
+        "const viteScript = join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js');",
+        "const desktopShellScript = join(workspaceRoot, 'scripts', 'generated-desktop-shell.mjs');",
+        "const appTitle = rootDir.split(/[/\\\\]/).filter(Boolean).pop() ?? 'Generated Desktop App';",
+        "",
+        "function findFreePort() {",
+        "  return new Promise((resolve, reject) => {",
+        "    const server = createServer();",
+        "    server.unref();",
+        "    server.on('error', reject);",
+        "    server.listen(0, '127.0.0.1', () => {",
+        "      const address = server.address();",
+        "      if (!address || typeof address === 'string') {",
+        "        server.close(() => reject(new Error('Unable to resolve a free localhost port.')));",
+        "        return;",
+        "      }",
+        "      const port = address.port;",
+        "      server.close((error) => {",
+        "        if (error) reject(error);",
+        "        else resolve(port);",
+        "      });",
+        "    });",
+        "  });",
+        "}",
+        "",
+        "let rendererReady = false;",
+        "let shuttingDown = false;",
+        "let desktopProcess = null;",
+        "let renderer = null;",
+        "",
+        "function shutdown(exitCode = 0) {",
+        "  if (shuttingDown) return;",
+        "  shuttingDown = true;",
+        "  if (desktopProcess && !desktopProcess.killed) {",
+        "    desktopProcess.kill();",
+        "  }",
+        "  if (renderer && !renderer.killed) {",
+        "    renderer.kill();",
+        "  }",
+        "  setTimeout(() => process.exit(exitCode), 50);",
+        "}",
+        "",
+        "function handleRendererOutput(chunk, forward) {",
+        "  const text = chunk.toString();",
+        "  forward.write(text);",
+        "  if (!rendererReady && /(?:local:\\s*http:\\/\\/127\\.0\\.0\\.1:\\d+|ready in)/i.test(text)) {",
+        "    rendererReady = true;",
+        "    desktopProcess = spawn(process.execPath, [desktopShellScript, '--url', desktopUrl, '--title', appTitle], {",
+        "      cwd: workspaceRoot,",
+        "      stdio: 'inherit',",
+        "    });",
+        "    desktopProcess.once('exit', (code) => shutdown(code ?? 0));",
+        "    desktopProcess.once('error', (error) => {",
+        "      console.error(error);",
+        "      shutdown(1);",
+        "    });",
+        "  }",
+        "}",
+        "",
+        "let desktopUrl = '';",
+        "",
+        "const port = await findFreePort();",
+        "desktopUrl = `http://127.0.0.1:${port}`;",
+        "renderer = spawn(process.execPath, [viteScript, '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {",
+        "  cwd: rootDir,",
+        "  stdio: ['ignore', 'pipe', 'pipe'],",
+        "});",
+        "",
+        "renderer.stdout.on('data', (chunk) => handleRendererOutput(chunk, process.stdout));",
+        "renderer.stderr.on('data', (chunk) => handleRendererOutput(chunk, process.stderr));",
+        "renderer.once('exit', (code) => {",
+        "  if (!shuttingDown && !rendererReady) {",
+        "    process.exit(code ?? 1);",
+        "  }",
+        "});",
+        "renderer.once('error', (error) => {",
+        "  console.error(error);",
+        "  shutdown(1);",
+        "});",
+        "",
+        "for (const signal of ['SIGINT', 'SIGTERM']) {",
+        "  process.on(signal, () => shutdown(0));",
+        "}",
+        ""
+      ].join("\n")
     );
   }
 

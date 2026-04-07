@@ -2678,6 +2678,102 @@ test("AgentTaskRunner restores canonical build scripts for generated generic pac
   });
 });
 
+test("AgentTaskRunner rewrites generated desktop React apps with Electron start scripts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"),
+      JSON.stringify({
+        name: "desktop-smoke",
+        private: true,
+        version: "0.0.0",
+        scripts: {
+          dev: "vite"
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const runner = createRunner(workspaceRoot) as never as {
+      ensureGeneratedAppPackageJson: (
+        plan: { workingDirectory: string; workspaceKind: "static" | "react" | "generic" },
+        artifactType?: "desktop-app"
+      ) => Promise<void>;
+      tryReadPackageJson: (targetDirectory?: string) => Promise<{
+        main?: string;
+        scripts?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      } | null>;
+    };
+
+    await runner.ensureGeneratedAppPackageJson({
+      workingDirectory: "generated-apps/desktop-smoke",
+      workspaceKind: "react"
+    }, "desktop-app");
+
+    const packageJson = await runner.tryReadPackageJson("generated-apps/desktop-smoke");
+    assert.equal(packageJson?.main, undefined);
+    assert.equal(packageJson?.scripts?.start, "node scripts/desktop-launch.mjs");
+    assert.equal(packageJson?.scripts?.["dev:web"], "vite");
+    assert.equal(packageJson?.devDependencies?.electron, undefined);
+  });
+});
+
+test("AgentTaskRunner writes desktop launcher files for generated desktop React apps", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+
+    const runner = createRunner(workspaceRoot) as never as {
+      ensureGeneratedReactProjectFiles: (
+        plan: { workingDirectory: string; workspaceKind: "static" | "react" | "generic" },
+        artifactType?: "desktop-app"
+      ) => Promise<void>;
+      readWorkspaceFile: (path: string) => Promise<{ content: string }>;
+    };
+
+    await runner.ensureGeneratedReactProjectFiles({
+      workingDirectory: "generated-apps/desktop-smoke",
+      workspaceKind: "react"
+    }, "desktop-app");
+
+    const desktopLaunch = await runner.readWorkspaceFile("generated-apps/desktop-smoke/scripts/desktop-launch.mjs");
+
+    assert.match(desktopLaunch.content, /findFreePort/);
+    assert.match(desktopLaunch.content, /node_modules', 'vite', 'bin', 'vite\.js/);
+    assert.match(desktopLaunch.content, /generated-desktop-shell\.mjs/);
+    assert.match(desktopLaunch.content, /--url/);
+  });
+});
+
+test("AgentTaskRunner requires Electron wrapper files for desktop app entry verification", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), "{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyExpectedEntryFiles: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          requestedPaths: string[];
+        },
+        artifactType: "desktop-app"
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyExpectedEntryFiles({
+      workingDirectory: "generated-apps/desktop-smoke",
+      workspaceKind: "react",
+      requestedPaths: []
+    }, "desktop-app");
+
+    assert.equal(result.status, "failed");
+    assert.match(result.details, /scripts\/desktop-launch\.mjs/);
+  });
+});
+
 test("AgentTaskRunner accepts simple valid stylesheets for preview health", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
