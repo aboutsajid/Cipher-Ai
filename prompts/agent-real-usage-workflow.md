@@ -75,3 +75,4 @@ Do not promote a prompt into a pack when:
   - `prompts/agent-manual-freeform-pack.json`
   - `prompts/agent-messy-pack.json`
   - `prompts/agent-realworld-pack.json`
+  - `prompts/agent-windows-desktop-pack.json`

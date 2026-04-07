@@ -1,0 +1,58 @@
+[
+  {
+    "id": "windows.calculator-desktop",
+    "category": "desktop-app",
+    "title": "Windows calculator desktop app",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Build a standalone Windows desktop calculator app with a clean window, a calculator display, number pad, addition, subtraction, multiplication, division, equals, and clear."
+  },
+  {
+    "id": "windows.notes-desktop",
+    "category": "desktop-app",
+    "title": "Windows notes desktop app",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Build a standalone Windows desktop notes app with a clean window, a title field, a large notes editor, a save button, and a small saved-notes list."
+  },
+  {
+    "id": "windows.invoice-desk",
+    "category": "desktop-app",
+    "title": "Invoice follow-up desktop workspace",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a Windows desktop workspace for invoice follow-ups with a sidebar, overdue invoices list, owner filters, status changes, and a clear add-invoice action."
+  },
+  {
+    "id": "windows.file-renamer",
+    "category": "desktop-app",
+    "title": "Batch file renamer desktop tool",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a standalone Windows desktop file renamer with a folder picker, filename preview list, replace-text inputs, and a clear rename action."
+  },
+  {
+    "id": "windows.inventory-manager",
+    "category": "desktop-app",
+    "title": "Inventory manager desktop app",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Build a standalone Windows desktop inventory manager with a sidebar, product list, stock status filters, quantity updates, and a clear add-item action."
+  },
+  {
+    "id": "windows.pdf-combiner",
+    "category": "desktop-app",
+    "title": "PDF combiner desktop utility",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a Windows desktop PDF combiner utility with a file list, move-up and move-down controls, a merge button, and a visible output path field."
+  },
+  {
+    "id": "windows.expense-tracker",
+    "category": "desktop-app",
+    "title": "Expense tracker desktop app",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Build a standalone Windows desktop expense tracker with a sidebar, add-expense form, category filter, saved expense list, and a visible totals summary."
+  },
+  {
+    "id": "windows.local-crm",
+    "category": "desktop-app",
+    "title": "Local CRM desktop workspace",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a standalone Windows desktop CRM workspace with a sidebar, customer list, follow-up status filters, a details panel, and a clear add-customer action."
+  }
+]
