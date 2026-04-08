@@ -2805,7 +2805,7 @@ test("AgentTaskRunner restores canonical build scripts for generated generic pac
   });
 });
 
-test("AgentTaskRunner rewrites generated desktop React apps with Electron start scripts", async () => {
+test("AgentTaskRunner rewrites generated desktop React apps with installer-ready Electron scripts", async () => {
   await withTempDir(async (workspaceRoot) => {
     await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke"), { recursive: true });
     await writeFile(
@@ -2839,10 +2839,12 @@ test("AgentTaskRunner rewrites generated desktop React apps with Electron start 
     }, "desktop-app");
 
     const packageJson = await runner.tryReadPackageJson("generated-apps/desktop-smoke");
-    assert.equal(packageJson?.main, undefined);
+    assert.equal(packageJson?.main, "electron/main.mjs");
     assert.equal(packageJson?.scripts?.start, "node scripts/desktop-launch.mjs");
     assert.equal(packageJson?.scripts?.["dev:web"], "vite");
-    assert.equal(packageJson?.devDependencies?.electron, undefined);
+    assert.equal(packageJson?.scripts?.["package:win"], "electron-builder --win nsis --publish never");
+    assert.equal(packageJson?.devDependencies?.electron, "^35.0.0");
+    assert.equal(packageJson?.devDependencies?.["electron-builder"], "^26.8.1");
   });
 });
 
@@ -2864,6 +2866,7 @@ test("AgentTaskRunner writes desktop launcher files for generated desktop React 
     }, "desktop-app");
 
     const desktopLaunch = await runner.readWorkspaceFile("generated-apps/desktop-smoke/scripts/desktop-launch.mjs");
+    const electronMain = await runner.readWorkspaceFile("generated-apps/desktop-smoke/electron/main.mjs");
 
     assert.match(desktopLaunch.content, /findFreePort/);
     assert.match(desktopLaunch.content, /function formatTitle/);
@@ -2871,6 +2874,8 @@ test("AgentTaskRunner writes desktop launcher files for generated desktop React 
     assert.match(desktopLaunch.content, /node_modules', 'vite', 'bin', 'vite\.js/);
     assert.match(desktopLaunch.content, /generated-desktop-shell\.mjs/);
     assert.match(desktopLaunch.content, /--url/);
+    assert.match(electronMain.content, /BrowserWindow/);
+    assert.match(electronMain.content, /window\.loadFile\(join\(__dirname, '\.\.', 'dist', 'index\.html'\)\)/);
   });
 });
 
@@ -2914,10 +2919,12 @@ test("AgentTaskRunner keeps generated starter app status copy product-neutral", 
 test("AgentTaskRunner requires Electron wrapper files for desktop app entry verification", async () => {
   await withTempDir(async (workspaceRoot) => {
     await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "electron"), { recursive: true });
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), "{}\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "index.html"), "<!doctype html>\n<div id=\"root\"></div>\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {};\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "electron", "main.mjs"), "export {};\n", "utf8");
 
     const runner = createRunner(workspaceRoot) as never as {
       verifyExpectedEntryFiles: (
@@ -2941,14 +2948,48 @@ test("AgentTaskRunner requires Electron wrapper files for desktop app entry veri
   });
 });
 
+test("AgentTaskRunner requires packaged Electron entry files for desktop app verification", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), "{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "index.html"), "<!doctype html>\n<div id=\"root\"></div>\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts", "desktop-launch.mjs"), "export {};\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyExpectedEntryFiles: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          requestedPaths: string[];
+        },
+        artifactType: "desktop-app"
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyExpectedEntryFiles({
+      workingDirectory: "generated-apps/desktop-smoke",
+      workspaceKind: "react",
+      requestedPaths: []
+    }, "desktop-app");
+
+    assert.equal(result.status, "failed");
+    assert.match(result.details, /electron\/main\.mjs/);
+  });
+});
+
 test("AgentTaskRunner requires index.html for generated desktop React app entry verification", async () => {
   await withTempDir(async (workspaceRoot) => {
     await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "electron"), { recursive: true });
     await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts"), { recursive: true });
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), "{}\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {};\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
     await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts", "desktop-launch.mjs"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "electron", "main.mjs"), "export {};\n", "utf8");
 
     const runner = createRunner(workspaceRoot) as never as {
       verifyExpectedEntryFiles: (

@@ -50,6 +50,7 @@ interface PackageScripts {
   test?: string;
   start?: string;
   dev?: string;
+  [key: string]: string | undefined;
 }
 
 interface PackageManifest {
@@ -964,6 +965,15 @@ export class AgentTaskRunner {
           this.appendLog(task.id, `${runtimeLabel} verification not required for ${verificationArtifactType}.`);
         }
 
+        if (this.shouldVerifyWindowsPackaging(verificationArtifactType, plan.plan)) {
+          const packaging = await this.verifyWindowsDesktopPackaging(task.id, plan.plan, scripts);
+          checks.push(packaging);
+          this.updateTaskVerification(task, checks);
+          if (packaging.status === "failed") {
+            throw new Error(packaging.details || "Windows packaging verification failed.");
+          }
+        }
+
         if (this.shouldVerifyPreviewHealth(verificationArtifactType)) {
           let previewHealth = await this.verifyPreviewHealth(plan.plan, scripts);
           if (previewHealth.status === "failed") {
@@ -1063,6 +1073,15 @@ export class AgentTaskRunner {
                   this.updateTaskVerification(task, checks);
                   throw new Error(servedPage.details || "Served web page failed after prompt-repair attempt.");
                 }
+              }
+            }
+
+            if (this.shouldVerifyWindowsPackaging(verificationArtifactType, plan.plan)) {
+              const packaging = await this.verifyWindowsDesktopPackaging(task.id, plan.plan, scripts);
+              this.upsertVerificationCheck(checks, packaging);
+              if (packaging.status === "failed") {
+                this.updateTaskVerification(task, checks);
+                throw new Error(packaging.details || "Windows packaging failed after requirement repair.");
               }
             }
 
@@ -1410,6 +1429,13 @@ export class AgentTaskRunner {
           }
           break;
         case "desktop-app":
+          if (
+            passedLabels.includes("App build")
+            && passedLabels.includes(runtimeLabel)
+            && passedLabels.includes("Windows packaging")
+          ) {
+            return "App build, start, and Windows packaging passed.";
+          }
           if (passedLabels.includes("App build") && passedLabels.includes(runtimeLabel)) {
             return "App build and start passed.";
           }
@@ -1594,6 +1620,7 @@ export class AgentTaskRunner {
     const workingDirectory = (context?.workingDirectory ?? "").trim() || undefined;
     const packageName = (context?.packageName ?? "").trim() || undefined;
     const runCommand = this.resolvePreferredRunCommand(artifactType, context?.scripts);
+    const packageCommand = context?.scripts?.["package:win"] ? "npm run package:win" : undefined;
     const hasPreview = artifactType === "web-app" && Boolean(context?.verification?.previewReady);
 
     switch (artifactType) {
@@ -1651,7 +1678,7 @@ export class AgentTaskRunner {
           runCommand,
           usageTitle: "Primary action: run the desktop project locally.",
           usageDetail: runCommand
-            ? `Run ${runCommand} from ${workingDirectory ?? "the app folder"} to start the desktop app.`
+            ? `Run ${runCommand} from ${workingDirectory ?? "the app folder"} to start the desktop app.${packageCommand ? ` Use ${packageCommand} there to build a Windows installer.` : ""}`
             : "Open the app folder to inspect and run the desktop project manually."
         };
       case "workspace-change":
@@ -1742,6 +1769,7 @@ export class AgentTaskRunner {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/App.tsx"));
       if (artifactType === "desktop-app") {
         requiredPaths.add(this.joinWorkspacePath(workingDirectory, "scripts/desktop-launch.mjs"));
+        requiredPaths.add(this.joinWorkspacePath(workingDirectory, "electron/main.mjs"));
       }
     } else {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
@@ -1877,10 +1905,83 @@ export class AgentTaskRunner {
     }
   }
 
+  private getPackagingVerificationLabel(artifactType: AgentArtifactType): string {
+    switch (artifactType) {
+      case "desktop-app":
+        return "Windows packaging";
+      default:
+        return "Packaging";
+    }
+  }
+
   private resolveRuntimeVerificationScript(scripts: PackageScripts): "start" | "dev" | null {
     if (scripts.start) return "start";
     if (scripts.dev) return "dev";
     return null;
+  }
+
+  private shouldVerifyWindowsPackaging(artifactType: AgentArtifactType, plan: TaskExecutionPlan): boolean {
+    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
+    return artifactType === "desktop-app"
+      && process.platform === "win32"
+      && workingDirectory.startsWith("generated-apps/");
+  }
+
+  private async findGeneratedDesktopInstaller(workingDirectory: string): Promise<string | null> {
+    const releaseDirectory = this.resolveWorkspacePath(this.joinWorkspacePath(workingDirectory, "release"));
+    try {
+      const entries = await readdir(releaseDirectory, { withFileTypes: true });
+      const installer = entries.find((entry) => entry.isFile() && /\.exe$/i.test(entry.name));
+      return installer ? this.joinWorkspacePath(workingDirectory, "release", installer.name) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async verifyWindowsDesktopPackaging(
+    taskId: string,
+    plan: TaskExecutionPlan,
+    scripts: PackageScripts
+  ): Promise<AgentVerificationCheck> {
+    const scriptName = "package:win";
+    const label = this.getPackagingVerificationLabel("desktop-app");
+    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
+    if (!scripts[scriptName]) {
+      return {
+        id: "packaging",
+        label,
+        status: "failed",
+        details: `Missing required ${scriptName} script for Windows packaging.`
+      };
+    }
+
+    await rm(this.resolveWorkspacePath(this.joinWorkspacePath(workingDirectory, "release")), { recursive: true, force: true }).catch(() => {});
+    const packaging = await this.executeCommand(taskId, this.buildNpmScriptRequest(scriptName, 300_000, workingDirectory));
+    if (!packaging.ok) {
+      return {
+        id: "packaging",
+        label,
+        status: "failed",
+        details: "Windows installer packaging failed."
+      };
+    }
+
+    const installerPath = await this.findGeneratedDesktopInstaller(workingDirectory);
+    if (!installerPath) {
+      return {
+        id: "packaging",
+        label,
+        status: "failed",
+        details: "Windows packaging finished without producing an .exe installer."
+      };
+    }
+
+    return {
+      id: "packaging",
+      label,
+      status: "passed",
+      details: `Built Windows installer: ${installerPath}.`
+    };
   }
 
   private async generatedNodePackageNeedsInstall(workingDirectory: string): Promise<boolean> {
@@ -1914,6 +2015,7 @@ export class AgentTaskRunner {
     const normalizedWorkingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     if (!normalizedWorkingDirectory.startsWith("generated-apps/")) return;
     if (plan.workspaceKind === "static") return;
+    const dependencyInstallTimeoutMs = this.tasks.get(taskId)?.artifactType === "desktop-app" ? 300_000 : 180_000;
 
     if (!(await this.generatedNodePackageNeedsInstall(normalizedWorkingDirectory))) return;
 
@@ -1922,7 +2024,7 @@ export class AgentTaskRunner {
       command: process.platform === "win32" ? "npm.cmd" : "npm",
       args: ["install"],
       cwd: normalizedWorkingDirectory,
-      timeoutMs: 180_000
+      timeoutMs: dependencyInstallTimeoutMs
     });
     if (!install.ok) {
       if (this.isRecoverableGeneratedInstallFailure(install)) {
@@ -1953,6 +2055,7 @@ export class AgentTaskRunner {
   ): Promise<boolean> {
     const task = this.tasks.get(taskId);
     if (!task) return false;
+    const dependencyInstallTimeoutMs = task.artifactType === "desktop-app" ? 300_000 : 180_000;
 
     const contextFiles = await this.collectFixContextFiles(installResult.combinedOutput, plan);
     let fix: FixResponse | null = null;
@@ -2000,7 +2103,7 @@ export class AgentTaskRunner {
       command: process.platform === "win32" ? "npm.cmd" : "npm",
       args: ["install"],
       cwd: normalizedWorkingDirectory,
-      timeoutMs: 180_000
+      timeoutMs: dependencyInstallTimeoutMs
     });
     if (!retryInstall.ok) {
       if (usedModelFix) {
@@ -11624,13 +11727,16 @@ body {
   }
 
   private extractScripts(pkg: { scripts?: PackageScripts } | null): PackageScripts {
-    return {
-      build: pkg?.scripts?.build,
-      lint: pkg?.scripts?.lint,
-      test: pkg?.scripts?.test,
-      start: pkg?.scripts?.start,
-      dev: pkg?.scripts?.dev
-    };
+    const rawScripts = typeof pkg?.scripts === "object" && pkg?.scripts
+      ? pkg.scripts
+      : {};
+    const normalized: PackageScripts = {};
+    for (const [key, value] of Object.entries(rawScripts)) {
+      if (typeof value === "string" && value.trim()) {
+        normalized[key] = value.trim();
+      }
+    }
+    return normalized;
   }
 
   private resolveVerificationScripts(pkg: { scripts?: PackageScripts } | null, plan: TaskExecutionPlan): PackageScripts {
@@ -11761,19 +11867,22 @@ body {
     if (plan.workspaceKind !== "react") return;
 
     const isDesktopApp = artifactType === "desktop-app";
+    const displayName = this.toDisplayNameFromDirectory(workingDirectory);
     const normalized: Record<string, unknown> = {
       name: packageName,
       private: current.private ?? true,
       version: typeof current.version === "string" && current.version.trim() ? current.version : "0.0.0",
       type: "module",
+      ...(isDesktopApp ? { main: "electron/main.mjs" } : {}),
       scripts: isDesktopApp
         ? {
           start: "node scripts/desktop-launch.mjs",
           dev: "vite",
           "dev:web": "vite",
-          build: "tsc -b && vite build",
+          build: "vite build",
           lint: "eslint .",
-          preview: "vite preview"
+          preview: "vite preview",
+          "package:win": "electron-builder --win nsis --publish never"
         }
         : {
           dev: "vite",
@@ -11794,11 +11903,49 @@ body {
         eslint: "^9.39.4",
         "eslint-plugin-react-hooks": "^7.0.1",
         "eslint-plugin-react-refresh": "^0.5.2",
+        ...(isDesktopApp
+          ? {
+            electron: "^35.0.0",
+            "electron-builder": "^26.8.1"
+          }
+          : {}),
         globals: "^17.4.0",
         typescript: "~5.9.3",
         "typescript-eslint": "^8.57.0",
         vite: "^8.0.1"
-      }
+      },
+      ...(isDesktopApp
+        ? {
+          build: {
+            appId: this.buildGeneratedDesktopAppId(packageName),
+            productName: displayName,
+            executableName: displayName,
+            directories: {
+              output: "release"
+            },
+            files: [
+              "dist/**/*",
+              "electron/**/*",
+              "package.json"
+            ],
+            win: {
+              signAndEditExecutable: false,
+              target: [
+                {
+                  target: "nsis",
+                  arch: ["x64"]
+                }
+              ]
+            },
+            nsis: {
+              artifactName: "${productName}-Setup-${version}.exe",
+              oneClick: false,
+              createDesktopShortcut: false,
+              allowToChangeInstallationDirectory: true
+            }
+          }
+        }
+        : {})
     };
 
     await this.writeWorkspaceFile(packageJsonPath, `${JSON.stringify(normalized, null, 2)}\n`);
@@ -11996,6 +12143,11 @@ body {
         "}",
         ""
       ].join("\n")
+    );
+
+    await this.writeWorkspaceFile(
+      this.joinWorkspacePath(workingDirectory, "electron/main.mjs"),
+      this.buildGeneratedDesktopMainProcess(this.toDisplayNameFromDirectory(workingDirectory))
     );
   }
 
@@ -12426,6 +12578,56 @@ body {
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+`;
+  }
+
+  private buildGeneratedDesktopAppId(packageName: string): string {
+    const normalized = (packageName ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ".")
+      .replace(/^\.+|\.+$/g, "");
+    return `com.cipher.generated.${normalized || "desktop.app"}`;
+  }
+
+  private buildGeneratedDesktopMainProcess(projectName: string): string {
+    return `import { app, BrowserWindow } from 'electron'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const windowTitle = ${JSON.stringify(projectName)}
+
+function createWindow() {
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 980,
+    minHeight: 720,
+    autoHideMenuBar: true,
+    backgroundColor: '#f4f6fb',
+    title: windowTitle,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+
+  window.removeMenu()
+  window.loadFile(join(__dirname, '..', 'dist', 'index.html'))
+}
+
+app.whenReady().then(() => {
+  createWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
 `;
   }
 
