@@ -1,4 +1,11 @@
-interface AttachmentPayload { name: string; type: "text" | "image"; content: string; mimeType?: string; sourcePath?: string; }
+interface AttachmentPayload {
+  name: string;
+  type: "text" | "image";
+  content: string;
+  mimeType?: string;
+  sourcePath?: string;
+  writableRoot?: string;
+}
 interface MessageMetadata { attachmentNames?: string[]; compareGroup?: string; compareSlot?: "A" | "B"; }
 interface Message { id: string; role: string; content: string; createdAt: string; model?: string; error?: string; metadata?: MessageMetadata; }
 interface Chat { id: string; title: string; messages: Message[]; createdAt: string; updatedAt: string; systemPrompt?: string; }
@@ -11,6 +18,24 @@ interface ClaudeOutputPayload { text: string; stream: "stdout" | "stderr" | "sys
 interface ClaudeSessionStatus { running: boolean; pid?: number; model: string; }
 interface ClaudeSessionResult extends ClaudeSessionStatus { ok: boolean; message: string; }
 interface ClaudeManagedEdit { path: string; content: string; }
+interface ClaudeManagedEditPermissions { allowedPaths: string[]; allowedRoots: string[]; }
+interface ManagedWriteVerificationFinding { severity: "error" | "warn"; message: string; path?: string; }
+interface ManagedWriteVerificationReport {
+  ok: boolean;
+  status: "passed" | "warning" | "blocked" | "skipped";
+  summary: string;
+  findings: ManagedWriteVerificationFinding[];
+  reviewerModel?: string;
+  rawResponse?: string;
+}
+interface ManagedWriteRepairResult {
+  ok: boolean;
+  summary: string;
+  edits: ClaudeManagedEdit[];
+  reviewerModel?: string;
+  rawResponse?: string;
+  error?: string;
+}
 interface ClaudeApplyEditsResult {
   ok: boolean;
   savedFiles: string[];
@@ -203,7 +228,8 @@ interface ClaudeSaveGuard {
 interface ManagedSavePreviewState {
   msgId: string;
   parsed: { summary: string; edits: ClaudeManagedEdit[] };
-  allowedPaths: string[];
+  permissions: ClaudeManagedEditPermissions;
+  verification: ManagedWriteVerificationReport | null;
 }
 interface ChatStats {
   totalChats: number;
@@ -280,6 +306,7 @@ interface Window {
     };
     attachments: {
       pick: () => Promise<AttachmentPayload[]>;
+      pickWritableRoots: () => Promise<AttachmentPayload[]>;
     };
     templates: {
       list: () => Promise<PromptTemplate[]>;
@@ -302,7 +329,9 @@ interface Window {
       status: () => Promise<ClaudeSessionStatus>;
       start: () => Promise<ClaudeSessionResult>;
       send: (prompt: string, options?: { attachments?: AttachmentPayload[]; enabledTools?: string[] }) => Promise<ClaudeSessionResult>;
-      applyEdits: (edits: ClaudeManagedEdit[], allowedPaths: string[]) => Promise<ClaudeApplyEditsResult>;
+      applyEdits: (edits: ClaudeManagedEdit[], permissions: ClaudeManagedEditPermissions) => Promise<ClaudeApplyEditsResult>;
+      verifyManagedEdits: (edits: ClaudeManagedEdit[]) => Promise<ManagedWriteVerificationReport>;
+      repairManagedEdits: (edits: ClaudeManagedEdit[], verification: ManagedWriteVerificationReport) => Promise<ManagedWriteRepairResult>;
       stop: () => Promise<ClaudeSessionResult>;
       onOutput: (cb: (payload: ClaudeOutputPayload) => void) => void;
       onError: (cb: (message: string) => void) => void;
@@ -416,12 +445,16 @@ let virtualItems: VirtualChatItem[] = [];
 const virtualItemHeights = new Map<string, number>();
 let virtualRenderScheduled = false;
 let shouldAutoScroll = true;
+let workspaceRootPath = "";
 let chunkAutoScrollTimer: ReturnType<typeof setTimeout> | null = null;
 let claudeRenderTimer: ReturnType<typeof setTimeout> | null = null;
 let claudeRenderMessageId: string | null = null;
 const claudeDraftByMessage = new Map<string, string>();
 let pendingClaudeSaveGuard: ClaudeSaveGuard | null = null;
-let pendingClaudeEditablePaths: string[] = [];
+let pendingClaudeManagedPermissions: ClaudeManagedEditPermissions = { allowedPaths: [], allowedRoots: [] };
+let pendingClaudeManagedMode: "none" | "edit" | "chat" = "none";
+let claudeSessionResetting = false;
+let suppressClaudeExitNotice = false;
 let pendingChatSaveGuard: (ClaudeSaveGuard & { chatId: string | null }) | null = null;
 let pendingManagedSavePreview: ManagedSavePreviewState | null = null;
 let managedSaveApplying = false;
@@ -432,6 +465,7 @@ const RECOMMENDED_MODELS = [
   "qwen/qwen3-coder:free",
   "qwen/qwen3-coder-flash",
   "qwen/qwen3-coder-next",
+  "google/gemma-4-31b-it",
   "google/gemini-2.5-flash-lite-preview-09-2025",
   "deepseek/deepseek-v3.2"
 ];
@@ -687,10 +721,10 @@ function shouldVerifyClaudeSave(prompt: string, attachments: AttachmentPayload[]
     || normalizedPrompt.includes("directly edit");
   if (!asksForSave) return null;
 
-  const expectedPaths = attachments
-    .filter((attachment) => attachment.type === "text" && Boolean(attachment.sourcePath))
-    .map((attachment) => (attachment.sourcePath ?? "").trim())
-    .filter(Boolean);
+  const expectedPaths = [
+    ...getEditableSourcePaths(attachments),
+    ...getWritableRootPaths(attachments)
+  ];
   if (expectedPaths.length === 0) return null;
 
   return { requested: true, expectedPaths };
@@ -779,6 +813,8 @@ function resetClaudeRenderState(): void {
   claudeDraftByMessage.clear();
   activeClaudeAssistantMessageId = null;
   pendingClaudeSaveGuard = null;
+  pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+  pendingClaudeManagedMode = "none";
   pendingChatSaveGuard = null;
   const previewModal = document.getElementById("managed-save-preview-modal");
   if (previewModal instanceof HTMLElement) previewModal.style.display = "none";
@@ -821,7 +857,8 @@ function finalizeClaudeAssistantMessage(done: boolean): void {
   const msgId = activeClaudeAssistantMessageId;
   if (!msgId) {
     pendingClaudeSaveGuard = null;
-    pendingClaudeEditablePaths = [];
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedMode = "none";
     return;
   }
   flushClaudeMessageRender(msgId, done);
@@ -908,12 +945,15 @@ function parseClaudeManagedEditResponse(content: string): { summary: string; edi
 function buildManagedSaveResultLines(
   heading: string,
   summary: string,
-  result: ClaudeApplyEditsResult | null
+  result: ClaudeApplyEditsResult | null,
+  verification?: ManagedWriteVerificationReport | null
 ): string[] {
+  const verificationLines = verification ? buildManagedWriteVerificationLines(verification) : [];
   if (!result) {
     return [
       heading,
       summary,
+      ...verificationLines,
       "Saved files:",
       "- none",
       "Backup files:",
@@ -929,6 +969,7 @@ function buildManagedSaveResultLines(
   return [
     heading,
     summary,
+    ...verificationLines,
     "Saved files:",
     ...(result.savedFiles.length > 0 ? result.savedFiles.map((path) => `- ${path}`) : ["- none"]),
     "Backup files:",
@@ -941,6 +982,46 @@ function buildManagedSaveResultLines(
     ...(result.failedFiles.length > 0 ? result.failedFiles.map((item) => `- ${item.path}: ${item.reason}`) : ["- none"]),
     `Result: ${result.message}`
   ];
+}
+
+function buildManagedWriteVerificationLines(report: ManagedWriteVerificationReport): string[] {
+  const reviewer = report.reviewerModel ? ` (${report.reviewerModel})` : "";
+  return [
+    `Verification: ${report.status}${reviewer}`,
+    report.summary || "No verification summary provided.",
+    ...(report.findings.length > 0
+      ? report.findings.map((finding) => `- ${finding.severity.toUpperCase()}${finding.path ? ` ${finding.path}` : ""}: ${finding.message}`)
+      : ["- No findings"])
+  ];
+}
+
+async function verifyManagedEditsWithFallback(edits: ClaudeManagedEdit[]): Promise<ManagedWriteVerificationReport> {
+  try {
+    return await window.api.claude.verifyManagedEdits(edits);
+  } catch (err) {
+    return {
+      ok: true,
+      status: "skipped",
+      summary: `Verification skipped: ${err instanceof Error ? err.message : "unknown error"}`,
+      findings: []
+    };
+  }
+}
+
+async function repairManagedEditsWithFallback(
+  edits: ClaudeManagedEdit[],
+  verification: ManagedWriteVerificationReport
+): Promise<ManagedWriteRepairResult> {
+  try {
+    return await window.api.claude.repairManagedEdits(edits, verification);
+  } catch (err) {
+    return {
+      ok: false,
+      summary: `Auto-repair failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      edits: [],
+      error: err instanceof Error ? err.message : "unknown error"
+    };
+  }
 }
 
 function hideManagedSavePreview(): void {
@@ -958,22 +1039,38 @@ function hideManagedSavePreview(): void {
   $("managed-save-preview-modal").style.display = "none";
 }
 
-function showManagedSavePreview(msgId: string, parsed: { summary: string; edits: ClaudeManagedEdit[] }, allowedPaths: string[]): void {
-  pendingManagedSavePreview = { msgId, parsed, allowedPaths };
+function showManagedSavePreview(
+  msgId: string,
+  parsed: { summary: string; edits: ClaudeManagedEdit[] },
+  permissions: ClaudeManagedEditPermissions,
+  verification: ManagedWriteVerificationReport | null
+): void {
+  pendingManagedSavePreview = { msgId, parsed, permissions, verification };
   $("managed-save-preview-modal").style.display = "flex";
-  $("managed-save-preview-summary").textContent = [
+  const summaryLines = [
     parsed.summary || "Review Claude's proposed file changes before saving.",
-    `${parsed.edits.length} file(s) proposed. Only the paths shown below can be written by the app.`
-  ].join(" ");
+    `${parsed.edits.length} file(s) proposed. The app will only write exact attached files or new/existing files inside selected writable folders.`,
+    ...(verification ? buildManagedWriteVerificationLines(verification) : [])
+  ];
+  $("managed-save-preview-summary").textContent = summaryLines.join(" ");
   $("managed-save-preview-files").textContent = parsed.edits.map((edit) => edit.path).join("\n");
   ($("managed-save-preview-content") as HTMLTextAreaElement).value = parsed.edits
     .map((edit) => `===== ${edit.path} =====\n${edit.content}`)
     .join("\n\n");
+  const applyBtn = document.getElementById("managed-save-apply-btn");
+  if (applyBtn instanceof HTMLButtonElement) {
+    applyBtn.disabled = verification?.status === "blocked";
+    applyBtn.textContent = verification?.status === "blocked" ? "Blocked By Verifier" : "Save Changes";
+  }
 }
 
 async function confirmManagedSavePreview(): Promise<void> {
   const pending = pendingManagedSavePreview;
   if (!pending || managedSaveApplying) return;
+  if (pending.verification?.status === "blocked") {
+    showToast("Managed save is blocked by verifier findings.", 3200);
+    return;
+  }
 
   managedSaveApplying = true;
   const applyBtn = document.getElementById("managed-save-apply-btn");
@@ -987,12 +1084,13 @@ async function confirmManagedSavePreview(): Promise<void> {
   if (closeBtn instanceof HTMLButtonElement) closeBtn.disabled = true;
 
   try {
-    const result = await window.api.claude.applyEdits(pending.parsed.edits, pending.allowedPaths);
+    const result = await window.api.claude.applyEdits(pending.parsed.edits, pending.permissions);
     hideManagedSavePreview();
     const lines = buildManagedSaveResultLines(
       result.ok ? "[Managed save applied]" : "[Managed save partially applied]",
       pending.parsed.summary || "Managed edit completed.",
-      result
+      result,
+      pending.verification
     );
 
     updateMessageContent(pending.msgId, lines.join("\n"), true, false);
@@ -1019,26 +1117,37 @@ function cancelManagedSavePreview(): void {
   const lines = buildManagedSaveResultLines(
     "[Managed save cancelled]",
     pending.parsed.summary || "Claude proposed file changes, but save was cancelled.",
-    null
+    null,
+    pending.verification
   );
   lines[lines.length - 1] = "Result: Save cancelled before any files were written.";
   updateMessageContent(pending.msgId, lines.join("\n"), true, false);
   pendingClaudeSaveGuard = null;
 }
 
-async function applyManagedClaudeEdits(msgId: string, allowedPaths: string[]): Promise<void> {
-  if (allowedPaths.length === 0) return;
+async function applyManagedClaudeEdits(
+  msgId: string,
+  permissions: ClaudeManagedEditPermissions,
+  mode: "edit" | "chat"
+): Promise<void> {
+  if (permissions.allowedPaths.length === 0 && permissions.allowedRoots.length === 0) return;
   const current = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
   const parsed = parseClaudeManagedEditResponse(current);
   if (!parsed) {
-    const lines = [
-      "[Managed save not applied]",
-      "Claude did not return valid JSON for Edit & Save.",
-      "Result: No files were written. Ask for the same change again with a more exact instruction."
-    ];
-    updateMessageContent(msgId, lines.join("\n"), true, false);
+    const lines = mode === "edit"
+      ? [
+          "[Managed save not applied]",
+          "Claude did not return valid JSON for Edit & Save.",
+          "Result: No files were written. Ask for the same change again with a more exact instruction."
+        ]
+      : [
+          "[Managed write not applied]",
+          "Claude replied in normal chat format instead of managed-write JSON.",
+          "Result: No files were written. Ask again with an exact project or file instruction."
+        ];
+    updateMessageContent(msgId, mode === "chat" ? `${current.trim()}\n\n${lines.join("\n")}`.trim() : lines.join("\n"), true, false);
     pendingClaudeSaveGuard = null;
-    showToast("Claude returned invalid Edit & Save JSON.", 3400);
+    showToast(mode === "edit" ? "Claude returned invalid Edit & Save JSON." : "Claude did not return valid managed-write JSON.", 3400);
     return;
   }
 
@@ -1053,7 +1162,56 @@ async function applyManagedClaudeEdits(msgId: string, allowedPaths: string[]): P
     return;
   }
 
-  showManagedSavePreview(msgId, parsed, allowedPaths);
+  let verification: ManagedWriteVerificationReport | null = await verifyManagedEditsWithFallback(parsed.edits);
+
+  if (verification.status === "blocked") {
+    showToast("Verifier blocked the proposal. Attempting auto-repair...", 3200);
+    const repair = await repairManagedEditsWithFallback(parsed.edits, verification);
+    if (repair.ok && repair.edits.length > 0) {
+      const repairedVerification = await verifyManagedEditsWithFallback(repair.edits);
+      if (repairedVerification.status !== "blocked") {
+        const repairedSummary = [
+          parsed.summary || "Claude proposed file changes.",
+          `Auto-repair applied${repair.reviewerModel ? ` by ${repair.reviewerModel}` : ""}: ${repair.summary || "Verifier issues were corrected."}`
+        ].join(" ");
+        showToast("Auto-repair generated a corrected proposal.", 2800);
+        showManagedSavePreview(
+          msgId,
+          { summary: repairedSummary, edits: repair.edits },
+          permissions,
+          repairedVerification
+        );
+        return;
+      }
+
+      verification = repairedVerification;
+      const lines = buildManagedSaveResultLines(
+        "[Managed save blocked]",
+        `${repair.summary || "Auto-repair generated a new proposal."} The repaired proposal is still blocked by verifier findings.`,
+        null,
+        verification
+      );
+      lines[lines.length - 1] = "Result: No files were written because verifier findings still block the repaired proposal.";
+      updateMessageContent(msgId, lines.join("\n"), true, false);
+      pendingClaudeSaveGuard = null;
+      showToast("Auto-repair ran, but verifier still blocked the result.", 3600);
+      return;
+    }
+
+    const lines = buildManagedSaveResultLines(
+      "[Managed save blocked]",
+      `${parsed.summary || "Claude proposed file changes, but verification blocked them."} Auto-repair did not produce a valid fix${repair.reviewerModel ? ` from ${repair.reviewerModel}` : ""}. ${repair.summary || ""}`.trim(),
+      null,
+      verification
+    );
+    lines[lines.length - 1] = "Result: No files were written because verifier findings blocked the proposal and auto-repair failed.";
+    updateMessageContent(msgId, lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    showToast("Managed save blocked. Auto-repair failed.", 3400);
+    return;
+  }
+
+  showManagedSavePreview(msgId, parsed, permissions, verification);
 }
 
 function setClaudeModeActiveVisual(active: boolean): void {
@@ -1062,6 +1220,10 @@ function setClaudeModeActiveVisual(active: boolean): void {
 }
 
 async function ensureClaudeSessionStarted(): Promise<boolean> {
+  if (claudeSessionResetting) {
+    setClaudeStatus("Resetting Claude Code...", "busy");
+    return false;
+  }
   if (claudeSessionRunning) {
     setClaudeStatus("Ready", "ok");
     return true;
@@ -1101,6 +1263,7 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
   const input = $("composer-input") as HTMLTextAreaElement;
   const rawPrompt = input.value.trim();
   const attachmentsToSend = [...activeAttachments];
+  const permissions = getClaudeManagedEditPermissions(attachmentsToSend);
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   if (isVagueEditRequest(rawPrompt)) {
     showToast("Edit & Save ke liye exact change likho. Example: text change karo, button rename karo, ya spacing adjust karo.", 4800);
@@ -1108,8 +1271,7 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
     return;
   }
 
-  const editableAttachments = attachmentsToSend.filter((attachment) => attachment.type === "text" && attachment.sourcePath);
-  if (editableAttachments.length === 0) {
+  if (permissions.allowedPaths.length === 0 && permissions.allowedRoots.length === 0) {
     const status = getDirectSaveStatus();
     showToast(status.detail, 3600);
     updateDirectSaveUi();
@@ -1121,17 +1283,12 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
 
   await ensureActiveChatId();
 
-  pendingClaudeEditablePaths = attachmentsToSend
-    .filter((attachment) => attachment.type === "text" && attachment.sourcePath)
-    .map((attachment) => (attachment.sourcePath ?? "").trim())
-    .filter(Boolean);
+  pendingClaudeManagedPermissions = permissions;
+  pendingClaudeManagedMode = "edit";
   const prompt = buildClaudeEditSavePrompt(rawPrompt, attachmentsToSend);
   pendingClaudeSaveGuard = shouldVerifyClaudeSave(prompt, attachmentsToSend) ?? {
     requested: true,
-    expectedPaths: attachmentsToSend
-      .filter((attachment) => attachment.type === "text" && attachment.sourcePath)
-      .map((attachment) => (attachment.sourcePath ?? "").trim())
-      .filter(Boolean)
+    expectedPaths: [...permissions.allowedPaths, ...permissions.allowedRoots]
   };
 
   const ready = await ensureClaudeSessionStarted();
@@ -1181,11 +1338,23 @@ async function sendClaudePrompt(): Promise<void> {
   const attachmentsToSend = [...activeAttachments];
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   const prompt = rawPrompt || "Please review the attached files.";
-  pendingClaudeSaveGuard = shouldVerifyClaudeSave(rawPrompt || prompt, attachmentsToSend);
+  const workspaceRoot = isClaudeManagedWriteRequest(prompt) ? await ensureWorkspaceRootPath() : "";
+  const managedWritePermissions: ClaudeManagedEditPermissions = isClaudeManagedWriteRequest(prompt) && workspaceRoot
+    ? {
+        allowedPaths: getEditableSourcePaths(attachmentsToSend),
+        allowedRoots: [workspaceRoot]
+      }
+    : { allowedPaths: [], allowedRoots: [] };
+  const managedWriteRequested = managedWritePermissions.allowedRoots.length > 0 || managedWritePermissions.allowedPaths.length > 0;
+  pendingClaudeManagedPermissions = managedWriteRequested ? managedWritePermissions : { allowedPaths: [], allowedRoots: [] };
+  pendingClaudeManagedMode = managedWriteRequested ? "chat" : "none";
+  pendingClaudeSaveGuard = managedWriteRequested ? null : shouldVerifyClaudeSave(rawPrompt || prompt, attachmentsToSend);
 
   const hasImageAttachment = attachmentsToSend.some((attachment) => attachment.type === "image");
   if (hasImageAttachment) {
     pendingClaudeSaveGuard = null;
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedMode = "none";
     await sendChatPromptWithAttachments(rawPrompt, attachmentsToSend, {
       forceVisionModel: true,
       switchFromClaude: true
@@ -1209,13 +1378,18 @@ async function sendClaudePrompt(): Promise<void> {
   input.style.height = "auto";
 
   try {
-    const res = await window.api.claude.send(prompt, {
+    const claudePrompt = managedWriteRequested
+      ? buildClaudeManagedWritePrompt(prompt, attachmentsToSend, managedWritePermissions)
+      : prompt;
+    const res = await window.api.claude.send(claudePrompt, {
       attachments: attachmentsToSend,
       enabledTools: getEnabledToolNames()
     });
     claudeSessionRunning = Boolean(res.running);
     if (!res.ok) {
       pendingClaudeSaveGuard = null;
+      pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+      pendingClaudeManagedMode = "none";
       activeAttachments = attachmentsToSend;
       renderComposerAttachments();
       setClaudeStatus(res.message, "err");
@@ -1230,6 +1404,8 @@ async function sendClaudePrompt(): Promise<void> {
     setStreamingUi(true, "Claude is thinking...");
   } catch (err) {
     pendingClaudeSaveGuard = null;
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedMode = "none";
     activeAttachments = attachmentsToSend;
     renderComposerAttachments();
     const msg = err instanceof Error ? err.message : "Failed to send prompt.";
@@ -1902,10 +2078,60 @@ async function refreshLocalAgentWorkspacePath(): Promise<void> {
   setLocalAgentWorkspacePath("Loading...");
   try {
     const workspacePath = await window.api.app.workspacePath();
+    workspaceRootPath = workspacePath;
     setLocalAgentWorkspacePath(workspacePath);
   } catch (err) {
+    workspaceRootPath = "";
     const message = err instanceof Error ? err.message : "Unavailable";
     setLocalAgentWorkspacePath(`Unavailable: ${message}`);
+  }
+}
+
+async function resetClaudeSessionAfterManagedWrite(): Promise<void> {
+  if (claudeSessionResetting) return;
+
+  claudeSessionResetting = true;
+  suppressClaudeExitNotice = true;
+  claudeSessionRunning = false;
+  setClaudeStatus("Resetting Claude Code...", "busy");
+
+  try {
+    await window.api.claude.stop();
+  } catch {
+    // A failed stop is non-fatal here; the next start attempt will surface a real error if needed.
+  }
+
+  try {
+    const res = await window.api.claude.start();
+    claudeSessionRunning = Boolean(res.running);
+    if (!res.ok) {
+      setClaudeStatus(res.message, "err");
+      showToast(res.message, 3500);
+      appendClaudeLine(res.message, "stderr");
+      return;
+    }
+    setClaudeStatus("Ready", "ok");
+  } catch (err) {
+    claudeSessionRunning = false;
+    const msg = err instanceof Error ? err.message : "Failed to restart Claude Code.";
+    setClaudeStatus(msg, "err");
+    showToast(msg, 3500);
+    appendClaudeLine(msg, "stderr");
+  } finally {
+    claudeSessionResetting = false;
+  }
+}
+
+async function ensureWorkspaceRootPath(): Promise<string> {
+  if (workspaceRootPath.trim()) return workspaceRootPath.trim();
+
+  try {
+    const workspacePath = (await window.api.app.workspacePath()).trim();
+    workspaceRootPath = workspacePath;
+    if (workspacePath) setLocalAgentWorkspacePath(workspacePath);
+    return workspacePath;
+  } catch {
+    return "";
   }
 }
 
@@ -2156,8 +2382,31 @@ function populateSettingsDefaultModelSelect(): void {
   select.value = visibleModels.includes(currentValue) ? currentValue : "";
 }
 
-function hasEditableTextAttachments(items: AttachmentPayload[]): boolean {
-  return items.some((attachment) => attachment.type === "text" && Boolean((attachment.sourcePath ?? "").trim()));
+function getEditableSourcePaths(items: AttachmentPayload[]): string[] {
+  return items
+    .filter((attachment) => attachment.type === "text")
+    .map((attachment) => (attachment.sourcePath ?? "").trim())
+    .filter(Boolean);
+}
+
+function getWritableRootPaths(items: AttachmentPayload[]): string[] {
+  return items
+    .map((attachment) => (attachment.writableRoot ?? "").trim())
+    .filter(Boolean);
+}
+
+function getClaudeManagedEditPermissions(
+  items: AttachmentPayload[],
+): ClaudeManagedEditPermissions {
+  const allowedPaths = getEditableSourcePaths(items);
+  const allowedRoots = getWritableRootPaths(items);
+
+  return { allowedPaths, allowedRoots };
+}
+
+function hasManagedSaveTargets(items: AttachmentPayload[]): boolean {
+  const permissions = getClaudeManagedEditPermissions(items);
+  return permissions.allowedPaths.length > 0 || permissions.allowedRoots.length > 0;
 }
 
 function hasFilesystemToolConfigured(): boolean {
@@ -2196,12 +2445,60 @@ function isVagueEditRequest(prompt: string): boolean {
   return vaguePatterns.includes(normalized);
 }
 
+function isClaudeManagedWriteRequest(prompt: string): boolean {
+  const normalized = (prompt ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  const pathHint = /[a-z0-9._-]+[\\/][a-z0-9._-]+/i.test(prompt ?? "");
+  const createVerb = /\b(create|build|make|scaffold|generate|write|add|set up|setup|implement)\b/.test(normalized);
+  const updateVerb = /\b(edit|modify|update|rewrite|refactor|change|save)\b/.test(normalized);
+  const fileTarget = /\b(project|app|workspace|repo|repository|package|service|api|library|tool|file|files|folder|directory|component|module|script)\b/.test(normalized);
+
+  return (createVerb && (fileTarget || pathHint)) || (updateVerb && (fileTarget || pathHint));
+}
+
+function buildClaudeManagedWritePrompt(
+  prompt: string,
+  attachments: AttachmentPayload[],
+  permissions: ClaudeManagedEditPermissions
+): string {
+  const basePrompt = (prompt ?? "").trim() || "Create or update the requested project files in the workspace.";
+  const editablePaths = permissions.allowedPaths;
+  const writableRoots = permissions.allowedRoots;
+
+  return [
+    "You are in Claude managed write mode.",
+    "The app will apply file writes for you after validating your JSON response.",
+    "Write permission is already granted for every listed writable root.",
+    "Do not ask for permission, approval, confirmation, or access.",
+    "You may create new files and new subfolders anywhere inside each writable root.",
+    "A nested path inside a writable root is allowed even if that subfolder does not exist yet.",
+    "Do not claim that being limited to the writable root prevents creating a project folder inside it.",
+    "Do not narrate your reasoning.",
+    "Do not use markdown.",
+    "Return only valid JSON and nothing else.",
+    'Use this exact shape: {"summary":"short summary","edits":[{"path":"absolute path","content":"full new file content"}]}',
+    "The content field must contain the complete final file contents, not a diff.",
+    "Only include files from the editable paths list or inside the writable roots list.",
+    "Do not propose paths outside the listed roots.",
+    "If the request is unclear, still return valid JSON with a short clarification question in summary and an empty edits array.",
+    "If the request is clear, your full response must start with { and end with }.",
+    editablePaths.length > 0 ? `Editable paths:\n${editablePaths.map((path) => `- ${path}`).join("\n")}` : "Editable paths: none",
+    writableRoots.length > 0 ? `Writable roots:\n${writableRoots.map((path) => `- ${path}`).join("\n")}` : "Writable roots: none",
+    attachments.length > 0 ? "Base changes on the attached file contents when relevant." : "No files are attached.",
+    "",
+    "Valid response example:",
+    '{"summary":"Created the requested starter project files.","edits":[{"path":"D:\\\\project\\\\cipher-agent\\\\README.md","content":"# Cipher Agent\\n"}]}',
+    '{"summary":"Created the requested project under the writable root.","edits":[{"path":"D:\\\\Antigravity\\\\Cipher Ai\\\\generated-apps\\\\Cipher Agent\\\\README.md","content":"# Cipher Agent\\n"}]}',
+    '{"summary":"Which runtime should this project target: Python, Node.js, or both?","edits":[]}',
+    "",
+    `Task: ${basePrompt}`
+  ].join("\n");
+}
+
 function buildClaudeEditSavePrompt(prompt: string, attachments: AttachmentPayload[]): string {
   const basePrompt = (prompt ?? "").trim() || "Review the attached files and save only necessary changes.";
-  const editablePaths = attachments
-    .filter((attachment) => attachment.type === "text" && attachment.sourcePath)
-    .map((attachment) => (attachment.sourcePath ?? "").trim())
-    .filter(Boolean);
+  const editablePaths = getEditableSourcePaths(attachments);
 
   return [
     "You are in Edit & Save mode.",
@@ -2217,7 +2514,7 @@ function buildClaudeEditSavePrompt(prompt: string, attachments: AttachmentPayloa
     "The content field must contain the complete final file contents, not a diff.",
     "Only include files from the editable paths list.",
     "If the requested text or target does not exist in the attached files, return JSON with a short summary and an empty edits array.",
-    "If the request is unclear, return plain text with one short clarification question and no extra explanation.",
+    "If the request is unclear, still return valid JSON with a short clarification question in summary and an empty edits array.",
     "If the request is clear, your full response must start with { and end with }.",
     editablePaths.length > 0 ? `Editable paths:\n${editablePaths.map((path) => `- ${path}`).join("\n")}` : "Editable paths: none",
     "",
@@ -2230,7 +2527,7 @@ function buildClaudeEditSavePrompt(prompt: string, attachments: AttachmentPayloa
 }
 
 function getDirectSaveStatus(): DirectSaveStatus {
-  const hasEditableFiles = hasEditableTextAttachments(activeAttachments);
+  const hasEditableFiles = getClaudeManagedEditPermissions(activeAttachments).allowedPaths.length > 0;
 
   if (currentMode !== "edit") {
     return {
@@ -4557,6 +4854,13 @@ function setupIpcListeners() {
   });
 
   window.api.claude.onOutput((payload) => {
+    if (
+      suppressClaudeExitNotice
+      && payload.stream === "system"
+      && /Claude Code exited/i.test(payload.text)
+    ) {
+      return;
+    }
     claudeSessionRunning = true;
     const stream = payload.stream === "stderr" ? "stderr" : payload.stream === "system" ? "system" : "stdout";
     appendClaudeLine(payload.text, stream);
@@ -4565,7 +4869,8 @@ function setupIpcListeners() {
 
   window.api.claude.onError((message) => {
     claudeSessionRunning = false;
-    pendingClaudeEditablePaths = [];
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedMode = "none";
     appendClaudeLine(message, "stderr");
     finalizeClaudeAssistantMessage(true);
     setClaudeStatus(message, "err");
@@ -4575,20 +4880,33 @@ function setupIpcListeners() {
 
   window.api.claude.onExit((payload) => {
     const normalCompletion = payload.code === 0 && payload.signal === null;
+    const suppressExitNotice = suppressClaudeExitNotice;
+    suppressClaudeExitNotice = false;
     const msgId = activeClaudeAssistantMessageId;
-    const allowedPaths = [...pendingClaudeEditablePaths];
-    pendingClaudeEditablePaths = [];
+    const permissions = {
+      allowedPaths: [...pendingClaudeManagedPermissions.allowedPaths],
+      allowedRoots: [...pendingClaudeManagedPermissions.allowedRoots]
+    };
+    const managedMode = pendingClaudeManagedMode;
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedMode = "none";
     finalizeClaudeAssistantMessage(true);
     setStreamingUi(false);
-    if (msgId) {
-      void applyManagedClaudeEdits(msgId, allowedPaths);
+    if (msgId && managedMode !== "none") {
+      void applyManagedClaudeEdits(msgId, permissions, managedMode);
+    }
+    if (managedMode !== "none") {
+      void resetClaudeSessionAfterManagedWrite();
     }
     if (normalCompletion) {
-      setClaudeStatus("Ready for next prompt", "ok");
-      claudeSessionRunning = true;
+      if (!claudeSessionResetting) {
+        setClaudeStatus("Ready for next prompt", "ok");
+        claudeSessionRunning = true;
+      }
       return;
     }
     claudeSessionRunning = false;
+    if (suppressExitNotice) return;
     const detail = `Claude Code session closed${typeof payload.code === "number" ? ` (code ${payload.code})` : ""}.`;
     appendClaudeLine(detail, "system");
     setClaudeStatus("Stopped", "");

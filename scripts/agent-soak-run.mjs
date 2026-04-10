@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS = {
   models: [
     "qwen/qwen3-coder:free",
     "qwen/qwen-2.5-coder-32b-instruct",
+    "google/gemma-4-31b-it",
     "google/gemini-2.0-flash-001",
     "meta-llama/llama-3.3-70b-instruct:free",
     "qwen/qwen3-14b",

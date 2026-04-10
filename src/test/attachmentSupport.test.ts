@@ -10,8 +10,22 @@ test("normalizeAttachments trims and filters invalid attachment payloads", () =>
   ]);
 
   assert.deepEqual(normalized, [
-    { name: "notes.md", type: "text", content: "hello", sourcePath: "C:\\tmp\\notes.md", mimeType: undefined },
-    { name: "photo.png", type: "image", content: "data:image/png;base64,abc", mimeType: "image/png", sourcePath: undefined }
+    {
+      name: "notes.md",
+      type: "text",
+      content: "hello",
+      sourcePath: "C:\\tmp\\notes.md",
+      mimeType: undefined,
+      writableRoot: undefined
+    },
+    {
+      name: "photo.png",
+      type: "image",
+      content: "data:image/png;base64,abc",
+      mimeType: "image/png",
+      sourcePath: undefined,
+      writableRoot: undefined
+    }
   ]);
 });
 

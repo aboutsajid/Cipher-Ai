@@ -7,6 +7,8 @@ import type { McpServerConfig, PromptTemplate, Settings } from "../../shared/typ
 const MODEL_ID_MIGRATIONS: Record<string, string> = {
   "google/gemini-2.5-flash-lite-": "google/gemini-2.5-flash-lite-preview-09-2025",
   "google/gemini-2.5-flash-lite-preview": "google/gemini-2.5-flash-lite-preview-09-2025",
+  "gemma4:31b-cloud": "google/gemma-4-31b-it",
+  "google/gemma4:31b-cloud": "google/gemma-4-31b-it",
   "qwen/qwen-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct",
   "qwen/qwen2.5-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct"
 };
@@ -36,6 +38,7 @@ const DEFAULT_SETTINGS: Settings = {
   models: [
     "qwen/qwen3-coder:free",
     "qwen/qwen-2.5-coder-32b-instruct",
+    "google/gemma-4-31b-it",
     "google/gemini-2.0-flash-001",
     "meta-llama/llama-3.3-70b-instruct:free",
     "qwen/qwen3-14b",

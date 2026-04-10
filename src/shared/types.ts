@@ -65,6 +65,7 @@ export interface AttachmentPayload {
   content: string;
   mimeType?: string;
   sourcePath?: string;
+  writableRoot?: string;
 }
 
 export interface RouterStatus {
@@ -83,6 +84,11 @@ export interface ClaudeManagedEdit {
   content: string;
 }
 
+export interface ClaudeManagedEditPermissions {
+  allowedPaths: string[];
+  allowedRoots: string[];
+}
+
 export interface ClaudeApplyEditsResult {
   ok: boolean;
   savedFiles: string[];
@@ -90,6 +96,30 @@ export interface ClaudeApplyEditsResult {
   unchangedFiles: string[];
   failedFiles: Array<{ path: string; reason: string }>;
   message: string;
+}
+
+export interface ManagedWriteVerificationFinding {
+  severity: "error" | "warn";
+  message: string;
+  path?: string;
+}
+
+export interface ManagedWriteVerificationReport {
+  ok: boolean;
+  status: "passed" | "warning" | "blocked" | "skipped";
+  summary: string;
+  findings: ManagedWriteVerificationFinding[];
+  reviewerModel?: string;
+  rawResponse?: string;
+}
+
+export interface ManagedWriteRepairResult {
+  ok: boolean;
+  summary: string;
+  edits: ClaudeManagedEdit[];
+  reviewerModel?: string;
+  rawResponse?: string;
+  error?: string;
 }
 
 export type AgentTaskStatus = "running" | "completed" | "failed" | "stopped";
@@ -327,6 +357,7 @@ export type IpcChannel =
   | "settings:get"
   | "settings:save"
   | "attachments:pick"
+  | "attachments:pickWritableRoots"
   | "templates:list"
   | "templates:save"
   | "templates:delete"
@@ -342,6 +373,8 @@ export type IpcChannel =
   | "claude:start"
   | "claude:send"
   | "claude:applyEdits"
+  | "claude:verifyManagedEdits"
+  | "claude:repairManagedEdits"
   | "claude:stop"
   | "agent:listTasks"
   | "agent:getTask"

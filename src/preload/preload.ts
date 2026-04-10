@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AgentRouteDiagnostics, AgentSnapshotRestoreResult } from "../shared/types";
+import type {
+  AgentRouteDiagnostics,
+  AgentSnapshotRestoreResult,
+  ClaudeManagedEditPermissions,
+  ManagedWriteRepairResult,
+  ManagedWriteVerificationReport
+} from "../shared/types";
 
 const api = {
   app: {
@@ -51,7 +57,8 @@ const api = {
     }
   },
   attachments: {
-    pick: () => ipcRenderer.invoke("attachments:pick")
+    pick: () => ipcRenderer.invoke("attachments:pick"),
+    pickWritableRoots: () => ipcRenderer.invoke("attachments:pickWritableRoots")
   },
   templates: {
     list: () => ipcRenderer.invoke("templates:list"),
@@ -80,8 +87,14 @@ const api = {
           enabledTools?: string[];
         }
       ) => ipcRenderer.invoke("claude:send", prompt, options),
-      applyEdits: (edits: Array<{ path: string; content: string }>, allowedPaths: string[]) =>
-        ipcRenderer.invoke("claude:applyEdits", edits, allowedPaths),
+      applyEdits: (edits: Array<{ path: string; content: string }>, permissions: ClaudeManagedEditPermissions) =>
+        ipcRenderer.invoke("claude:applyEdits", edits, permissions),
+      verifyManagedEdits: (edits: Array<{ path: string; content: string }>): Promise<ManagedWriteVerificationReport> =>
+        ipcRenderer.invoke("claude:verifyManagedEdits", edits),
+      repairManagedEdits: (
+        edits: Array<{ path: string; content: string }>,
+        verification: ManagedWriteVerificationReport
+      ): Promise<ManagedWriteRepairResult> => ipcRenderer.invoke("claude:repairManagedEdits", edits, verification),
       stop: () => ipcRenderer.invoke("claude:stop"),
     onOutput: (cb: (payload: { text: string; stream: "stdout" | "stderr" | "system" }) => void) => {
       ipcRenderer.on("claude:output", (_e, payload) => cb(payload));

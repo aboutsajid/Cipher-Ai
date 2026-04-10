@@ -1,7 +1,9 @@
 import { ipcMain, BrowserWindow, WebContents } from "electron";
-import { pickAttachmentPayloads } from "./attachmentSupport";
+import { pickAttachmentPayloads, pickWritableRootPayloads } from "./attachmentSupport";
 import { sendClaudePrompt } from "./claudeIpcSupport";
 import { applyManagedClaudeEdits } from "./managedEditSupport";
+import { repairManagedWriteProposal } from "./managedWriteRepairSupport";
+import { verifyManagedWriteProposal } from "./managedWriteVerificationSupport";
 import { addMcpServer, listMcpServers, removeMcpServer } from "./mcpIpcSupport";
 import type { McpRuntimeManager } from "./mcpSupport";
 import {
@@ -14,7 +16,13 @@ import {
 import { probeOllamaInstalled, ClaudeSessionManager } from "./claudeSupport";
 import type { CcrService } from "./services/ccrService";
 import type { SettingsStore } from "./services/settingsStore";
-import type { AttachmentPayload, ClaudeManagedEdit, McpServerConfig } from "../shared/types";
+import type {
+  AttachmentPayload,
+  ClaudeManagedEdit,
+  ClaudeManagedEditPermissions,
+  ManagedWriteVerificationReport,
+  McpServerConfig
+} from "../shared/types";
 
 interface ClaudeSendOptions {
   attachments?: AttachmentPayload[];
@@ -66,6 +74,9 @@ export function registerToolingIpcHandlers(deps: Deps): void {
 
   ipcMain.removeHandler("attachments:pick");
   ipcMain.handle("attachments:pick", async (event) => pickAttachmentPayloads(resolveDialogWindow(event.sender)));
+
+  ipcMain.removeHandler("attachments:pickWritableRoots");
+  ipcMain.handle("attachments:pickWritableRoots", async (event) => pickWritableRootPayloads(resolveDialogWindow(event.sender)));
 
   ipcMain.removeHandler("templates:list");
   ipcMain.handle("templates:list", () => listTemplates(settingsStore));
@@ -142,8 +153,27 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   });
 
   ipcMain.removeHandler("claude:applyEdits");
-  ipcMain.handle("claude:applyEdits", async (_e, rawEdits: ClaudeManagedEdit[], allowedPaths: string[]) => {
-    return applyManagedClaudeEdits(rawEdits, allowedPaths);
+  ipcMain.handle("claude:applyEdits", async (_e, rawEdits: ClaudeManagedEdit[], permissions: ClaudeManagedEditPermissions) => {
+    return applyManagedClaudeEdits(rawEdits, permissions);
+  });
+
+  ipcMain.removeHandler("claude:verifyManagedEdits");
+  ipcMain.handle("claude:verifyManagedEdits", async (_e, rawEdits: ClaudeManagedEdit[]) => {
+    return verifyManagedWriteProposal(
+      settingsStore.get(),
+      (history, model, onChunk, signal, options) => ccrService.sendMessageAdvanced(history, model, onChunk, signal, options),
+      Array.isArray(rawEdits) ? rawEdits : []
+    );
+  });
+
+  ipcMain.removeHandler("claude:repairManagedEdits");
+  ipcMain.handle("claude:repairManagedEdits", async (_e, rawEdits: ClaudeManagedEdit[], verification: ManagedWriteVerificationReport) => {
+    return repairManagedWriteProposal(
+      settingsStore.get(),
+      (history, model, onChunk, signal, options) => ccrService.sendMessageAdvanced(history, model, onChunk, signal, options),
+      Array.isArray(rawEdits) ? rawEdits : [],
+      verification
+    );
   });
 
   ipcMain.removeHandler("claude:stop");

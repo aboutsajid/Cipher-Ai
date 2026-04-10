@@ -110,6 +110,9 @@ function buildClaudePromptWithAttachments(prompt: string, attachments: Attachmen
     .filter((attachment) => attachment.type === "text" && attachment.sourcePath)
     .map((attachment) => attachment.sourcePath!.trim())
     .filter(Boolean);
+  const writableRoots = limited
+    .map((attachment) => attachment.writableRoot?.trim() ?? "")
+    .filter(Boolean);
 
   for (const attachment of limited) {
     const label = formatPromptPath(attachment.name);
@@ -137,9 +140,12 @@ function buildClaudePromptWithAttachments(prompt: string, attachments: Attachmen
     usedTextChars += body.length;
     included += 1;
 
-    sections.push("", `--- FILE: ${label} ---`, body);
+    sections.push("", attachment.writableRoot ? `--- WRITABLE ROOT: ${label} ---` : `--- FILE: ${label} ---`, body);
     if (attachment.sourcePath) {
       sections.push(`Source path: ${attachment.sourcePath}`);
+    }
+    if (attachment.writableRoot) {
+      sections.push(`Writable root: ${attachment.writableRoot}`);
     }
     if (body.length < attachment.content.length) {
       sections.push("[File truncated for speed.]");
@@ -163,6 +169,15 @@ function buildClaudePromptWithAttachments(prompt: string, attachments: Attachmen
       "[Editable files]",
       "These attached files correspond to exact workspace paths. Reference these exact paths when proposing or describing changes:",
       ...editablePaths.map((path) => `- ${path}`)
+    );
+  }
+
+  if (writableRoots.length > 0) {
+    header.push(
+      "",
+      "[Writable roots]",
+      "New files may be proposed only inside these explicitly selected folder roots:",
+      ...writableRoots.map((path) => `- ${path}`)
     );
   }
 
@@ -495,7 +510,8 @@ export function normalizeAttachments(raw: AttachmentPayload[] | undefined): Atta
       type: item?.type === "image" ? "image" : "text",
       content: item?.content ?? "",
       mimeType: item?.mimeType,
-      sourcePath: typeof item?.sourcePath === "string" ? item.sourcePath.trim() : undefined
+      sourcePath: typeof item?.sourcePath === "string" ? item.sourcePath.trim() : undefined,
+      writableRoot: typeof item?.writableRoot === "string" ? item.writableRoot.trim() : undefined
     }))
     .filter((item) => item.name && item.content);
 }
@@ -606,4 +622,29 @@ export async function pickAttachmentPayloads(mainWindow: BrowserWindow): Promise
   }
 
   return payloads.slice(0, MAX_FOLDER_ATTACHMENTS);
+}
+
+export async function pickWritableRootPayloads(mainWindow: BrowserWindow): Promise<AttachmentPayload[]> {
+  const open = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose writable folder roots",
+    properties: ["openDirectory", "multiSelections"]
+  });
+  if (open.canceled || open.filePaths.length === 0) {
+    return [];
+  }
+
+  return [...new Set(open.filePaths.map((item) => item.trim()).filter(Boolean))]
+    .map((folderPath) => {
+      const folderName = basename(folderPath) || folderPath;
+      return {
+        name: `[Writable folder] ${folderName}`,
+        type: "text" as const,
+        content: [
+          "[Writable folder root]",
+          `Path: ${folderPath}`,
+          "Claude may create new files or update existing text files only inside this folder when Edit & Save is used."
+        ].join("\n"),
+        writableRoot: folderPath
+      };
+    });
 }

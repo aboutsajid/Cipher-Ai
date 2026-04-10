@@ -84,6 +84,7 @@ const IPC_CHANNELS: IpcChannel[] = [
   "chat:stop",
   "stats:get",
   "attachments:pick",
+  "attachments:pickWritableRoots",
   "templates:list",
   "templates:save",
   "templates:delete",
