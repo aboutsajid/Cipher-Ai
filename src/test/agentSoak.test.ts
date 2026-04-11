@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { AGENT_SOAK_SCENARIOS } from "../shared/agentSoakScenarios";
 import {
   appendAgentSoakHistory,
@@ -343,4 +345,53 @@ test("agent soak scenario catalog stays normalized and marker-addressable", () =
     assert.equal(ids.has(scenario.id), false);
     ids.add(scenario.id);
   }
+});
+
+test("critical agent soak pack stays normalized and covers the cross-artifact release lane", () => {
+  const raw = JSON.parse(readFileSync(resolve(process.cwd(), "prompts", "agent-critical-pack.json"), "utf8"));
+  const scenarios = normalizeAgentSoakScenarios(raw);
+
+  assert.equal(scenarios.length, 7);
+  assert.deepEqual(
+    scenarios.map((scenario) => scenario.id),
+    [
+      "critical.ops-landing-page",
+      "critical.inventory-workspace",
+      "critical.revenue-dashboard",
+      "critical.dispatch-desktop",
+      "critical.orders-api",
+      "critical.json-audit-cli",
+      "critical.date-helper-library"
+    ]
+  );
+  assert.deepEqual(
+    [...new Set(scenarios.map((scenario) => scenario.expectedArtifactType))].sort(),
+    ["api-service", "desktop-app", "library", "script-tool", "web-app"]
+  );
+  assert.deepEqual(
+    [...new Set(scenarios.map((scenario) => scenario.category))].sort(),
+    ["api-service", "desktop-app", "developer-tool", "interactive-web", "library", "react-web", "static-web"]
+  );
+
+  for (const scenario of scenarios) {
+    assert.equal(extractAgentSoakId(scenario.prompt), scenario.id);
+  }
+});
+
+test("package scripts expose the critical agent soak lane", () => {
+  const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
+  const scripts = packageJson?.scripts ?? {};
+
+  assert.equal(
+    scripts["soak:agent:critical:prompts"],
+    "node scripts/agent-soak-report.mjs prompts --scenarios-file prompts/agent-critical-pack.json --markdown tmp/agent-critical-prompts.md"
+  );
+  assert.equal(
+    scripts["soak:agent:critical:report"],
+    "node scripts/agent-soak-report.mjs report --scenarios-file prompts/agent-critical-pack.json --markdown tmp/agent-critical-report.md --json tmp/agent-critical-report.json --history tmp/agent-critical-history.json"
+  );
+  assert.equal(
+    scripts["soak:agent:critical:run"],
+    "node scripts/agent-soak-run.mjs --scenarios-file prompts/agent-critical-pack.json --markdown tmp/agent-critical-report.md --json tmp/agent-critical-report.json"
+  );
 });

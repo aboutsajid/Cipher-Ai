@@ -41,7 +41,7 @@ const AGENT_MODEL_TRANSIENT_RETRY_LIMIT = 2;
 const TEXT_FILE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".txt", ".html", ".css", ".scss", ".mjs", ".cjs", ".yml", ".yaml"
 ]);
-const IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "release", "build", "coverage", ".next", ".cache", "tmp", ".cipher-snapshots"]);
+const IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "release", "release-stage", "build", "coverage", ".next", ".cache", "tmp", ".cipher-snapshots"]);
 const SNAPSHOT_PRESERVE_FOLDERS = new Set([".git", "node_modules", ".cipher-snapshots"]);
 
 interface PackageScripts {
@@ -488,31 +488,36 @@ export class AgentTaskRunner {
     }
 
     try {
-      const rootEntries = await readdir(this.workspaceRoot, { withFileTypes: true });
-      for (const entry of rootEntries) {
-        if (SNAPSHOT_PRESERVE_FOLDERS.has(entry.name) || IGNORED_FOLDERS.has(entry.name)) continue;
-        try {
-          await this.withWorkspaceFsRetry(
-            () => rm(join(this.workspaceRoot, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
-          );
-        } catch (error) {
-          const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-          if (code !== "ENOENT") {
-            throw error;
+      const restoreTargetPath = this.resolveSnapshotScopedRestoreTarget(snapshot);
+      if (restoreTargetPath) {
+        await this.restoreSnapshotTarget(snapshotDir, restoreTargetPath);
+      } else {
+        const rootEntries = await readdir(this.workspaceRoot, { withFileTypes: true });
+        for (const entry of rootEntries) {
+          if (SNAPSHOT_PRESERVE_FOLDERS.has(entry.name) || IGNORED_FOLDERS.has(entry.name)) continue;
+          try {
+            await this.withWorkspaceFsRetry(
+              () => rm(join(this.workspaceRoot, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
+            );
+          } catch (error) {
+            const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+            if (code !== "ENOENT") {
+              throw error;
+            }
           }
         }
-      }
 
-      const snapshotEntries = await readdir(snapshotDir, { withFileTypes: true });
-      for (const entry of snapshotEntries) {
-        try {
-          await this.withWorkspaceFsRetry(
-            () => cp(join(snapshotDir, entry.name), join(this.workspaceRoot, entry.name), { recursive: true, force: true })
-          );
-        } catch (error) {
-          const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-          if (code !== "ENOENT") {
-            throw error;
+        const snapshotEntries = await readdir(snapshotDir, { withFileTypes: true });
+        for (const entry of snapshotEntries) {
+          try {
+            await this.withWorkspaceFsRetry(
+              () => cp(join(snapshotDir, entry.name), join(this.workspaceRoot, entry.name), { recursive: true, force: true })
+            );
+          } catch (error) {
+            const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+            if (code !== "ENOENT") {
+              throw error;
+            }
           }
         }
       }
@@ -13148,6 +13153,45 @@ if (statusEl && buttonEl) {
     };
     await writeFile(join(snapshotPath, "meta.json"), JSON.stringify(snapshot, null, 2), "utf8");
     return snapshot;
+  }
+
+  private resolveSnapshotScopedRestoreTarget(snapshot: WorkspaceSnapshot | null | undefined): string | null {
+    const normalizedTarget = (snapshot?.targetPathHint ?? "").trim().replace(/\\/g, "/").replace(/^\.\/+/, "");
+    if (!normalizedTarget || normalizedTarget === ".") return null;
+    if (snapshot?.kind !== "before-task" && snapshot?.kind !== "after-task") return null;
+    return this.toWorkspaceRelative(this.resolveWorkspacePath(normalizedTarget));
+  }
+
+  private async restoreSnapshotTarget(snapshotFilesRoot: string, targetPath: string): Promise<void> {
+    const workspaceTargetPath = this.resolveWorkspacePath(targetPath);
+    const snapshotTargetPath = join(snapshotFilesRoot, targetPath.replace(/\//g, sep));
+
+    try {
+      await this.withWorkspaceFsRetry(
+        () => rm(workspaceTargetPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
+      );
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    let snapshotTargetStat;
+    try {
+      snapshotTargetStat = await stat(snapshotTargetPath);
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+
+    await mkdir(dirname(workspaceTargetPath), { recursive: true });
+    await this.withWorkspaceFsRetry(
+      () => cp(snapshotTargetPath, workspaceTargetPath, { recursive: snapshotTargetStat.isDirectory(), force: true })
+    );
   }
 
   private async collectSnapshotTargetEntries(snapshotFilesRoot: string, targetPathHint?: string): Promise<string[]> {

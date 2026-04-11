@@ -1,0 +1,76 @@
+name: agent-critical-soak
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  critical-soak:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CIPHER_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Require OpenRouter secret
+        shell: pwsh
+        run: |
+          if (-not $env:CIPHER_OPENROUTER_API_KEY) {
+            throw 'OPENROUTER_API_KEY secret is required'
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate critical prompt catalog
+        run: npm.cmd run soak:agent:critical:prompts
+
+      - name: Run critical agent soak
+        run: npm.cmd run soak:agent:critical:run
+
+      - name: Generate critical soak report
+        if: ${{ always() }}
+        run: npm.cmd run soak:agent:critical:report
+
+      - name: Upload critical soak prompt catalog
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-critical-prompts
+          path: tmp/agent-critical-prompts.md
+          if-no-files-found: error
+
+      - name: Upload critical soak markdown report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-critical-report-markdown
+          path: tmp/agent-critical-report.md
+          if-no-files-found: error
+
+      - name: Upload critical soak json report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-critical-report-json
+          path: tmp/agent-critical-report.json
+          if-no-files-found: error
+
+      - name: Upload critical soak history
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-critical-history
+          path: tmp/agent-critical-history.json
+          if-no-files-found: error

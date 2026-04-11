@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
@@ -691,6 +691,86 @@ test("AgentTaskRunner provides a heuristic desktop file-renamer workspace", asyn
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Filename preview")));
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("handlePickFolder")));
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.css") && edit.content.includes(".desktop-field")));
+  });
+});
+
+test("AgentTaskRunner snapshots ignore staged desktop packaging artifacts like app.asar", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
+    };
+
+    await mkdir(join(workspaceRoot, "release-stage", "win-unpacked", "resources"), { recursive: true });
+    await writeFile(join(workspaceRoot, "release-stage", "win-unpacked", "resources", "app.asar"), "fake-asar", "utf8");
+    await writeFile(join(workspaceRoot, "README.md"), "# snapshot ok\n", "utf8");
+
+    const snapshot = await runner.createSnapshot("Before packaging");
+    const snapshotRoot = join(workspaceRoot, ".cipher-snapshots", snapshot.id, "files");
+
+    assert.equal(await readFile(join(snapshotRoot, "README.md"), "utf8"), "# snapshot ok\n");
+    await assert.rejects(
+      () => readFile(join(snapshotRoot, "release-stage", "win-unpacked", "resources", "app.asar"), "utf8"),
+      /ENOENT/
+    );
+  });
+});
+
+test("AgentTaskRunner restores task snapshots without deleting unrelated repo additions", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot);
+
+    await mkdir(join(workspaceRoot, ".github", "workflows"), { recursive: true });
+    await writeFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "name: keep-me\n", "utf8");
+
+    const snapshot = await (runner as never as {
+      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
+    }).createSnapshot("Before task", "task-1", {
+      kind: "before-task",
+      targetPathHint: "generated-apps/demo-app"
+    });
+
+    await mkdir(join(workspaceRoot, "generated-apps", "demo-app"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"demo-app\"}\n", "utf8");
+
+    const restored = await runner.restoreSnapshot(snapshot.id);
+
+    assert.equal(restored.ok, true);
+    assert.equal(await readFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "utf8"), "name: keep-me\n");
+    await assert.rejects(
+      () => readFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "utf8"),
+      /ENOENT/
+    );
+  });
+});
+
+test("AgentTaskRunner restores scoped task targets back to their snapshotted contents", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot);
+
+    await mkdir(join(workspaceRoot, "generated-apps", "demo-app"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"before\"}\n", "utf8");
+
+    const snapshot = await (runner as never as {
+      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
+    }).createSnapshot("Before task", "task-1", {
+      kind: "before-task",
+      targetPathHint: "generated-apps/demo-app"
+    });
+
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"after\"}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "README.md"), "# changed\n", "utf8");
+    await mkdir(join(workspaceRoot, ".github", "workflows"), { recursive: true });
+    await writeFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "name: keep-me\n", "utf8");
+
+    const restored = await runner.restoreSnapshot(snapshot.id);
+
+    assert.equal(restored.ok, true);
+    assert.equal(await readFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "utf8"), "{\"name\":\"before\"}\n");
+    await assert.rejects(
+      () => readFile(join(workspaceRoot, "generated-apps", "demo-app", "README.md"), "utf8"),
+      /ENOENT/
+    );
+    assert.equal(await readFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "utf8"), "name: keep-me\n");
   });
 });
 

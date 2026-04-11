@@ -33,7 +33,7 @@ jobs:
         run: npx electron-builder --mac dmg zip --publish never
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-build
           path: |

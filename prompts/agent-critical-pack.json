@@ -1,0 +1,51 @@
+[
+  {
+    "id": "critical.ops-landing-page",
+    "category": "static-web",
+    "title": "Operations landing page",
+    "expectedArtifactType": "web-app",
+    "prompt": "Build a polished operations software landing page with a strong hero, trust indicators, feature highlights, pricing, and a clear book-demo call to action."
+  },
+  {
+    "id": "critical.inventory-workspace",
+    "category": "interactive-web",
+    "title": "Inventory operations workspace",
+    "expectedArtifactType": "web-app",
+    "prompt": "Create an inventory operations workspace where I can add products, edit stock counts, change status, and keep a visible saved list with clear update actions."
+  },
+  {
+    "id": "critical.revenue-dashboard",
+    "category": "react-web",
+    "title": "Revenue command dashboard",
+    "expectedArtifactType": "web-app",
+    "prompt": "Create a React revenue command dashboard with KPI cards, pipeline summaries, region filters, and a recent deals panel."
+  },
+  {
+    "id": "critical.dispatch-desktop",
+    "category": "desktop-app",
+    "title": "Dispatch desktop workspace",
+    "expectedArtifactType": "desktop-app",
+    "prompt": "Create a desktop dispatch workspace with a sidebar, active jobs list, technician filters, and a clear create-job action."
+  },
+  {
+    "id": "critical.orders-api",
+    "category": "api-service",
+    "title": "Orders workflow API",
+    "expectedArtifactType": "api-service",
+    "prompt": "Build a small API service for order workflows with endpoints to list orders, create one, assign an owner, and mark one fulfilled."
+  },
+  {
+    "id": "critical.json-audit-cli",
+    "category": "developer-tool",
+    "title": "JSON audit CLI",
+    "expectedArtifactType": "script-tool",
+    "prompt": "Create a command-line tool that reads a JSON file and prints a compact audit summary with key counts, nested depth, and obvious missing fields."
+  },
+  {
+    "id": "critical.date-helper-library",
+    "category": "library",
+    "title": "Date helper library",
+    "expectedArtifactType": "library",
+    "prompt": "Create a small reusable TypeScript date helper library with formatting, date range labels, and relative-time helpers."
+  }
+]
