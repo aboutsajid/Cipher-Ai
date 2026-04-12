@@ -395,3 +395,13 @@ test("package scripts expose the critical agent soak lane", () => {
     "node scripts/agent-soak-run.mjs --scenarios-file prompts/agent-critical-pack.json --markdown tmp/agent-critical-report.md --json tmp/agent-critical-report.json"
   );
 });
+
+test("agent soak runner supports env-driven custom endpoints and optional no-auth mode", () => {
+  const runnerScript = readFileSync(resolve(process.cwd(), "scripts", "agent-soak-run.mjs"), "utf8");
+
+  assert.match(runnerScript, /CIPHER_BASE_URL/);
+  assert.match(runnerScript, /CIPHER_API_KEY/);
+  assert.match(runnerScript, /CIPHER_MODEL/);
+  assert.match(runnerScript, /CIPHER_SKIP_AUTH/);
+  assert.match(runnerScript, /SKIP_AUTH_SENTINEL/);
+});

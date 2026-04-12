@@ -54,6 +54,8 @@ const DEFAULT_SETTINGS = {
   }
 };
 
+const SKIP_AUTH_SENTINEL = "__cipher_skip_auth__";
+
 function stripUtf8Bom(value) {
   return typeof value === "string" ? value.replace(/^\uFEFF/, "") : value;
 }
@@ -177,10 +179,21 @@ function normalizeSettings(raw, warnings) {
       : { ...DEFAULT_SETTINGS.routing }
   };
 
-  const envApiKey = (process.env.CIPHER_OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY || "").trim();
+  const envApiKey = (
+    process.env.CIPHER_API_KEY
+    || process.env.CIPHER_OPENROUTER_API_KEY
+    || process.env.OPENROUTER_API_KEY
+    || ""
+  ).trim();
+  const envBaseUrl = (process.env.CIPHER_BASE_URL || "").trim();
+  const envModel = (process.env.CIPHER_MODEL || "").trim();
+  const envSkipAuth = /^(1|true|yes)$/i.test((process.env.CIPHER_SKIP_AUTH || "").trim());
   const fileApiKey = String(settings.apiKey ?? "").trim();
   if (envApiKey) {
     settings.apiKey = envApiKey;
+  } else if (envSkipAuth && envBaseUrl) {
+    settings.apiKey = SKIP_AUTH_SENTINEL;
+    warnings.push("Using custom soak endpoint without Authorization header because CIPHER_SKIP_AUTH is enabled.");
   } else if (fileApiKey.startsWith("cipher-protected:")) {
     settings.apiKey = "";
     warnings.push("Saved API key is encrypted for Electron safeStorage. Set CIPHER_OPENROUTER_API_KEY or OPENROUTER_API_KEY to use cloud routes in the soak runner.");
@@ -188,8 +201,22 @@ function normalizeSettings(raw, warnings) {
     settings.apiKey = fileApiKey;
   }
 
-  settings.baseUrl = String(settings.baseUrl ?? DEFAULT_SETTINGS.baseUrl).trim() || DEFAULT_SETTINGS.baseUrl;
-  settings.defaultModel = String(settings.defaultModel ?? DEFAULT_SETTINGS.defaultModel).trim() || DEFAULT_SETTINGS.defaultModel;
+  if (envBaseUrl) {
+    settings.baseUrl = envBaseUrl;
+  } else {
+    settings.baseUrl = String(settings.baseUrl ?? DEFAULT_SETTINGS.baseUrl).trim() || DEFAULT_SETTINGS.baseUrl;
+  }
+  if (envModel) {
+    settings.defaultModel = envModel;
+    settings.models = [envModel, ...settings.models.filter((item) => item !== envModel)];
+    settings.routing = {
+      default: envModel,
+      think: envModel,
+      longContext: envModel
+    };
+  } else {
+    settings.defaultModel = String(settings.defaultModel ?? DEFAULT_SETTINGS.defaultModel).trim() || DEFAULT_SETTINGS.defaultModel;
+  }
   settings.ollamaEnabled = Boolean(settings.ollamaEnabled);
   settings.ollamaBaseUrl = String(settings.ollamaBaseUrl ?? DEFAULT_SETTINGS.ollamaBaseUrl).trim() || DEFAULT_SETTINGS.ollamaBaseUrl;
   return settings;
@@ -327,12 +354,13 @@ function createCcrShim(settingsStore) {
     async sendMessageAdvanced(messages, model, onChunk, signal, options = {}) {
       const settings = settingsStore.get();
       const baseUrl = String(options.baseUrl ?? settings.baseUrl).replace(/\/+$/, "");
-      const apiKey = String(options.apiKey ?? settings.apiKey ?? "").trim();
-      const skipAuth = Boolean(options.skipAuth);
+      const rawApiKey = String(options.apiKey ?? settings.apiKey ?? "").trim();
+      const skipAuth = Boolean(options.skipAuth) || rawApiKey === SKIP_AUTH_SENTINEL;
+      const apiKey = rawApiKey === SKIP_AUTH_SENTINEL ? "" : rawApiKey;
       const timeoutMs = Math.max(5_000, Number.parseInt(String(options.timeoutMs ?? 120_000), 10) || 120_000);
 
       if (!skipAuth && !apiKey) {
-        throw new Error("No API key set. Set CIPHER_OPENROUTER_API_KEY or configure an ollama route.");
+        throw new Error("No API key set. Set CIPHER_OPENROUTER_API_KEY, CIPHER_API_KEY, or configure an unauthenticated/local route.");
       }
 
       const headers = { "Content-Type": "application/json" };

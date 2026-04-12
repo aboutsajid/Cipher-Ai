@@ -12,6 +12,10 @@ jobs:
     timeout-minutes: 90
     env:
       CIPHER_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CIPHER_API_KEY: ${{ secrets.CIPHER_API_KEY }}
+      CIPHER_BASE_URL: ${{ vars.CIPHER_BASE_URL }}
+      CIPHER_MODEL: ${{ vars.CIPHER_MODEL }}
+      CIPHER_SKIP_AUTH: ${{ vars.CIPHER_SKIP_AUTH }}
 
     steps:
       - name: Checkout
@@ -23,11 +27,25 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Require OpenRouter secret
+      - name: Validate model endpoint configuration
         shell: pwsh
         run: |
-          if (-not $env:CIPHER_OPENROUTER_API_KEY) {
-            throw 'OPENROUTER_API_KEY secret is required'
+          $hasOpenRouterKey = -not [string]::IsNullOrWhiteSpace($env:CIPHER_OPENROUTER_API_KEY)
+          $hasCustomBaseUrl = -not [string]::IsNullOrWhiteSpace($env:CIPHER_BASE_URL)
+          $hasCustomApiKey = -not [string]::IsNullOrWhiteSpace($env:CIPHER_API_KEY)
+          $skipAuth = @('1', 'true', 'yes') -contains (($env:CIPHER_SKIP_AUTH ?? '').Trim().ToLowerInvariant())
+
+          if ($hasOpenRouterKey) {
+            Write-Host 'Using OpenRouter-backed critical soak lane.'
+            exit 0
+          }
+
+          if (-not $hasCustomBaseUrl) {
+            throw 'Set OPENROUTER_API_KEY or configure CIPHER_BASE_URL for the critical soak lane.'
+          }
+
+          if (-not $skipAuth -and -not $hasCustomApiKey) {
+            throw 'CIPHER_API_KEY is required when CIPHER_BASE_URL is set unless CIPHER_SKIP_AUTH=true.'
           }
 
       - name: Install dependencies

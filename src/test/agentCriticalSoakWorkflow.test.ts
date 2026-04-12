@@ -26,11 +26,16 @@ test("agent critical soak workflow only references npm scripts that exist", () =
   assert.ok(referencedScripts.includes("soak:agent:critical:report"));
 });
 
-test("agent critical soak workflow requires the OpenRouter secret and publishes artifacts", () => {
+test("agent critical soak workflow supports OpenRouter or a custom endpoint and publishes artifacts", () => {
   const workflow = readProjectFile(".github/workflows/agent-critical-soak.yml");
 
   assert.match(workflow, /CIPHER_OPENROUTER_API_KEY:\s*\$\{\{\s*secrets\.OPENROUTER_API_KEY\s*\}\}/);
-  assert.match(workflow, /OPENROUTER_API_KEY secret is required/);
+  assert.match(workflow, /CIPHER_API_KEY:\s*\$\{\{\s*secrets\.CIPHER_API_KEY\s*\}\}/);
+  assert.match(workflow, /CIPHER_BASE_URL:\s*\$\{\{\s*vars\.CIPHER_BASE_URL\s*\}\}/);
+  assert.match(workflow, /CIPHER_MODEL:\s*\$\{\{\s*vars\.CIPHER_MODEL\s*\}\}/);
+  assert.match(workflow, /CIPHER_SKIP_AUTH:\s*\$\{\{\s*vars\.CIPHER_SKIP_AUTH\s*\}\}/);
+  assert.match(workflow, /Set OPENROUTER_API_KEY or configure CIPHER_BASE_URL/);
+  assert.match(workflow, /CIPHER_API_KEY is required when CIPHER_BASE_URL is set unless CIPHER_SKIP_AUTH=true/);
   assert.match(workflow, /Run critical agent soak/);
   assert.match(workflow, /Upload critical soak prompt catalog/);
   assert.match(workflow, /agent-critical-prompts/);
