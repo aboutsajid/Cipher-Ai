@@ -49,7 +49,7 @@ export async function importChatFile(
   mainWindow: BrowserWindow,
   showOpenDialog: (window: BrowserWindow, options: OpenDialogOptions) => Promise<DialogOpenResult>,
   readTextFile: (filePath: string) => Promise<string>,
-  importChat: (input: { title: string; messages: Chat["messages"]; systemPrompt?: string }) => Promise<Chat>
+  importChat: (input: { title: string; messages: Chat["messages"]; systemPrompt?: string; context?: Chat["context"] }) => Promise<Chat>
 ): Promise<ChatImportResult> {
   const open = await showOpenDialog(mainWindow, {
     title: "Import Chat",
@@ -64,7 +64,7 @@ export async function importChatFile(
   const filePath = open.filePaths[0];
   const fallbackTitle = basename(filePath, extname(filePath)) || "Imported Chat";
   const raw = await readTextFile(filePath);
-  let imported: { title: string; messages: Chat["messages"]; systemPrompt?: string } | null = null;
+  let imported: { title: string; messages: Chat["messages"]; systemPrompt?: string; context?: Chat["context"] } | null = null;
 
   if (filePath.toLowerCase().endsWith(".json")) {
     try {

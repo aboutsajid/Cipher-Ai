@@ -3,6 +3,7 @@ import type { ChatHistoryEntry } from "./chatSendSupport";
 
 export interface ChatRuntimeRouteOptions {
   baseUrl?: string;
+  cloudProvider?: "openrouter" | "nvidia";
   apiKey?: string;
   skipAuth?: boolean;
 }
@@ -12,6 +13,7 @@ interface StreamAssistantResponsesArgs {
   history: ChatHistoryEntry[];
   chatId: string;
   fallbackModel: string;
+  routeOptions?: ChatRuntimeRouteOptions;
   signal: AbortSignal;
   getSettings: () => Settings;
   sendMessage: (
@@ -31,6 +33,7 @@ export async function streamAssistantResponses(args: StreamAssistantResponsesArg
     history,
     chatId,
     fallbackModel,
+    routeOptions,
     signal,
     getSettings,
     sendMessage,
@@ -41,8 +44,18 @@ export async function streamAssistantResponses(args: StreamAssistantResponsesArg
   await Promise.all(assistantMessages.map(async (assistantMessage) => {
     const selectedModel = assistantMessage.model ?? fallbackModel;
     const appSettings = getSettings();
-    const useOllama = appSettings.ollamaEnabled && selectedModel.startsWith("ollama/");
-    const targetModel = useOllama ? selectedModel.slice("ollama/".length) : selectedModel;
+    const useOllama = routeOptions
+      ? routeOptions.skipAuth === true
+      : appSettings.ollamaEnabled && selectedModel.startsWith("ollama/");
+    const targetModel = useOllama && selectedModel.startsWith("ollama/")
+      ? selectedModel.slice("ollama/".length)
+      : selectedModel;
+    const resolvedRouteOptions: ChatRuntimeRouteOptions = {
+      baseUrl: routeOptions?.baseUrl ?? (useOllama ? appSettings.ollamaBaseUrl : appSettings.baseUrl),
+      cloudProvider: routeOptions?.cloudProvider ?? (useOllama ? undefined : appSettings.cloudProvider),
+      apiKey: routeOptions?.apiKey ?? (useOllama ? "" : appSettings.apiKey),
+      skipAuth: routeOptions?.skipAuth ?? useOllama
+    };
 
     try {
       await sendMessage(
@@ -54,11 +67,7 @@ export async function streamAssistantResponses(args: StreamAssistantResponsesArg
           await updateMessage(chatId, assistantMessage.id, { content: assistantMessage.content });
         },
         signal,
-        {
-          baseUrl: useOllama ? appSettings.ollamaBaseUrl : appSettings.baseUrl,
-          apiKey: useOllama ? "" : appSettings.apiKey,
-          skipAuth: useOllama
-        }
+        resolvedRouteOptions
       );
       emit("chat:done", chatId, assistantMessage.id);
     } catch (err) {

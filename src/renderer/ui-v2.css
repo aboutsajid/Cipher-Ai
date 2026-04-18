@@ -59,6 +59,19 @@
   line-height: 1.45;
 }
 
+.ui-v2 .cipher-logo {
+  font-size: 24px;
+}
+
+.ui-v2 .cipher-logo .tm {
+  font-size: 9px;
+}
+
+.ui-v2 .cipher-logo .tool {
+  margin-left: 5px;
+  padding-top: 0.34em;
+}
+
 .ui-v2 .brand-version,
 .ui-v2 .brand-version-sep {
   font-size: 10px;

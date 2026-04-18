@@ -106,3 +106,40 @@ test("streamAssistantResponses records errors and fallback content", async () =>
   assert.deepEqual(updates, [{ error: "router down", content: "router down" }]);
   assert.deepEqual(emitted, [{ channel: "chat:error", payload: "router down" }]);
 });
+
+test("streamAssistantResponses honors explicit route overrides for persisted chat context", async () => {
+  const assistant: Message = {
+    id: "msg-3",
+    role: "assistant",
+    content: "",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    model: "meta/llama-3.1-70b-instruct"
+  };
+
+  await streamAssistantResponses({
+    assistantMessages: [assistant],
+    history: [{ role: "user", content: "Use the NVIDIA route" }],
+    chatId: "chat-2",
+    fallbackModel: "qwen/qwen3-coder:free",
+    routeOptions: {
+      baseUrl: "https://integrate.api.nvidia.com/v1",
+      cloudProvider: "nvidia",
+      apiKey: "nvidia-key",
+      skipAuth: false
+    },
+    signal: new AbortController().signal,
+    getSettings: () => createSettings(),
+    sendMessage: async (_history, model, onChunk, _signal, options) => {
+      assert.equal(model, "meta/llama-3.1-70b-instruct");
+      assert.equal(options.baseUrl, "https://integrate.api.nvidia.com/v1");
+      assert.equal(options.cloudProvider, "nvidia");
+      assert.equal(options.apiKey, "nvidia-key");
+      assert.equal(options.skipAuth, false);
+      await onChunk("done");
+    },
+    updateMessage: async () => {},
+    emit: () => {}
+  });
+
+  assert.equal(assistant.content, "done");
+});

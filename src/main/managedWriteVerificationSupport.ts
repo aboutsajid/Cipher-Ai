@@ -199,7 +199,7 @@ export async function verifyManagedWriteProposal(
   let summary = "";
 
   try {
-    const route = resolveUtilityRoute(settings);
+    const route = resolveUtilityRoute(settings, "verification");
     reviewerModel = route.model;
     const prompt = buildManagedWriteVerificationPrompt(edits);
     let raw = "";

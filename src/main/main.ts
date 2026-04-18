@@ -6,6 +6,8 @@ import { ChatsStore } from "./services/chatsStore";
 import { SettingsStore } from "./services/settingsStore";
 import { CcrService } from "./services/ccrService";
 import { AgentTaskRunner } from "./services/agentTaskRunner";
+import { ImageGenerationService } from "./services/imageGenerationService";
+import { GeneratedImagesStore } from "./services/generatedImagesStore";
 import { getDebugLogPath, initDebugLogger, writeDebugLog } from "./services/debugLogger";
 import type { IpcChannel } from "../shared/types";
 
@@ -13,6 +15,8 @@ const workspaceWindows = new Set<BrowserWindow>();
 let settingsStore: SettingsStore | null = null;
 let chatsStore: ChatsStore | null = null;
 let ccrService: CcrService | null = null;
+let imageGenerationService: ImageGenerationService | null = null;
+let generatedImagesStore: GeneratedImagesStore | null = null;
 let agentTaskRunner: AgentTaskRunner | null = null;
 const APP_NAME = "Cipher Workspace";
 const APP_USER_MODEL_ID = "com.cipher.ai";
@@ -22,6 +26,8 @@ const GENERATED_DESKTOP_URL = (process.env["CIPHER_GENERATED_DESKTOP_URL"] ?? ""
 const GENERATED_DESKTOP_TITLE = (process.env["CIPHER_GENERATED_DESKTOP_TITLE"] ?? "").trim() || "Generated Desktop App";
 const GENERATED_DESKTOP_SHELL_ENABLED = GENERATED_DESKTOP_URL.length > 0;
 const GENERATED_DESKTOP_READY_TIMEOUT_MS = Number.parseInt(process.env["CIPHER_GENERATED_DESKTOP_READY_TIMEOUT_MS"] ?? "8000", 10);
+const OVERRIDE_USER_DATA_PATH = (process.env["CIPHER_USER_DATA_PATH"] ?? "").trim();
+const SINGLE_INSTANCE_DISABLED = (process.env["CIPHER_DISABLE_SINGLE_INSTANCE"] ?? "").trim() === "1";
 let startupSmokeCompleted = false;
 let startupSmokeTimer: NodeJS.Timeout | null = null;
 
@@ -63,6 +69,7 @@ function resolveAgentWorkspaceRoot(): string {
 
 const IPC_CHANNELS: IpcChannel[] = [
   "app:workspacePath",
+  "app:getInfo",
   "app:newWindow",
   "app:openExternal",
   "app:openPreview",
@@ -76,6 +83,7 @@ const IPC_CHANNELS: IpcChannel[] = [
   "chat:import",
   "chat:appendMessage",
   "chat:updateMessage",
+  "chat:setContext",
   "chat:setSystemPrompt",
   "chat:summarize",
   "chat:generateTitle",
@@ -83,6 +91,10 @@ const IPC_CHANNELS: IpcChannel[] = [
   "chat:send",
   "chat:stop",
   "stats:get",
+  "images:generate",
+  "images:listHistory",
+  "images:save",
+  "images:deleteHistory",
   "attachments:pick",
   "attachments:pickWritableRoots",
   "templates:list",
@@ -105,6 +117,7 @@ const IPC_CHANNELS: IpcChannel[] = [
   "agent:getLogs",
   "agent:getRouteDiagnostics",
   "agent:startTask",
+  "agent:restartTask",
   "agent:stopTask",
   "agent:listSnapshots",
   "agent:getRestoreState",
@@ -132,10 +145,38 @@ function attachEditableContextMenu(window: BrowserWindow): void {
     const selection = (params.selectionText ?? "").trim();
     const hasSelection = selection.length > 0;
     const isEditable = Boolean(params.isEditable);
+    const misspelledWord = (params.misspelledWord ?? "").trim();
+    const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions.filter(Boolean) : [];
 
-    if (!isEditable && !hasSelection) return;
+    if (!isEditable && !hasSelection && !misspelledWord) return;
 
     const template: Electron.MenuItemConstructorOptions[] = [];
+    if (isEditable && misspelledWord) {
+      if (suggestions.length > 0) {
+        template.push(...suggestions.slice(0, 6).map((suggestion) => ({
+          label: suggestion,
+          click: () => {
+            window.webContents.replaceMisspelling(suggestion);
+          }
+        })));
+      } else {
+        template.push({
+          label: "No spelling suggestions",
+          enabled: false
+        });
+      }
+
+      template.push(
+        {
+          label: "Add to Dictionary",
+          click: () => {
+            window.webContents.session.addWordToSpellCheckerDictionary(misspelledWord);
+          }
+        },
+        { type: "separator" }
+      );
+    }
+
     if (isEditable) {
       template.push(
         { role: "undo" },
@@ -395,7 +436,7 @@ async function createFreshChatWindow(): Promise<BrowserWindow> {
 }
 
 function registerIpcHandlersOnce(): void {
-  if (!settingsStore || !chatsStore || !ccrService || !agentTaskRunner) {
+  if (!settingsStore || !chatsStore || !ccrService || !imageGenerationService || !agentTaskRunner) {
     throw new Error("Services not initialized.");
   }
 
@@ -407,6 +448,7 @@ function registerIpcHandlersOnce(): void {
     settingsStore,
     chatsStore,
     ccrService,
+    imageGenerationService,
     agentTaskRunner,
     createWindow,
     getWindowForSender,
@@ -434,9 +476,9 @@ async function bootstrap(): Promise<boolean> {
     : GENERATED_DESKTOP_SHELL_ENABLED
       ? join(app.getPath("appData"), APP_NAME, "generated-desktop-shell")
       : join(app.getPath("appData"), APP_NAME);
-  app.setPath("userData", userDataPath);
+  app.setPath("userData", OVERRIDE_USER_DATA_PATH || userDataPath);
 
-  if (!STARTUP_SMOKE_ENABLED && !GENERATED_DESKTOP_SHELL_ENABLED) {
+  if (!STARTUP_SMOKE_ENABLED && !GENERATED_DESKTOP_SHELL_ENABLED && !SINGLE_INSTANCE_DISABLED) {
     const hasSingleInstanceLock = app.requestSingleInstanceLock();
     if (!hasSingleInstanceLock) {
       return false;
@@ -464,11 +506,14 @@ async function bootstrap(): Promise<boolean> {
   writeDebugLog("WORKSPACE", `workspace root: ${workspaceRoot}`);
   settingsStore = new SettingsStore(resolvedUserDataPath);
   chatsStore = new ChatsStore(resolvedUserDataPath);
+  generatedImagesStore = new GeneratedImagesStore(resolvedUserDataPath);
   ccrService = new CcrService(settingsStore);
+  imageGenerationService = new ImageGenerationService(settingsStore, generatedImagesStore);
   agentTaskRunner = new AgentTaskRunner(workspaceRoot, settingsStore, ccrService);
 
   await settingsStore.init();
   await chatsStore.init();
+  await generatedImagesStore.init();
 
   registerIpcHandlersOnce();
   await createWindow();

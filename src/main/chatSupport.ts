@@ -5,6 +5,7 @@ export interface ImportedChatPayload {
   title: string;
   messages: Message[];
   systemPrompt?: string;
+  context?: Chat["context"];
 }
 
 export interface ChatStatsSummary {
@@ -90,7 +91,8 @@ export function normalizeImportedChat(raw: unknown, fallbackTitle: string): Impo
   return {
     title: (candidate.title ?? "").trim() || fallbackTitle,
     messages,
-    systemPrompt: candidate.systemPrompt ?? ""
+    systemPrompt: candidate.systemPrompt ?? "",
+    context: candidate.context
   };
 }
 

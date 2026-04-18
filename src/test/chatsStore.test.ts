@@ -66,3 +66,40 @@ test("ChatsStore keeps imported chats sorted by most recent update time", async 
     assert.equal(listed[0]?.title, "Older renamed");
   });
 });
+
+test("ChatsStore persists chat context updates", async () => {
+  await withTempDir(async (userDataPath) => {
+    const store = new ChatsStore(userDataPath);
+    await store.init();
+
+    const chat = await store.create({
+      provider: "openrouter",
+      selectedModel: "qwen/qwen3-coder:free"
+    });
+    const updated = await store.setContext(chat.id, {
+      provider: "nvidia",
+      selectedModel: "meta/llama-3.1-70b-instruct",
+      compareEnabled: true,
+      compareModel: "deepseek/deepseek-r1"
+    });
+
+    assert.equal(updated, true);
+    assert.deepEqual(store.get(chat.id)?.context, {
+      provider: "nvidia",
+      selectedModel: "meta/llama-3.1-70b-instruct",
+      compareEnabled: true,
+      compareModel: "deepseek/deepseek-r1"
+    });
+
+    const persistedPath = join(userDataPath, "cipher-workspace", "chats.json");
+    const persisted = JSON.parse(await readFile(persistedPath, "utf8")) as {
+      chats: Array<{ id: string; context?: { provider?: string; selectedModel?: string; compareEnabled?: boolean; compareModel?: string } }>;
+    };
+    assert.deepEqual(persisted.chats[0]?.context, {
+      provider: "nvidia",
+      selectedModel: "meta/llama-3.1-70b-instruct",
+      compareEnabled: true,
+      compareModel: "deepseek/deepseek-r1"
+    });
+  });
+});

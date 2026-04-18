@@ -92,14 +92,30 @@ test("agent soak report uses the latest task per scenario and aggregates telemet
         finalVerificationResult: "passed",
         routeDiagnostics: {
           blacklistedModels: ["primary-model"],
-          failureCounts: [{ model: "primary-model", count: 2 }],
+          failureCounts: [{
+            model: "primary-model",
+            count: 2,
+            blacklisted: true,
+            hardFailuresUntilBlacklist: 0,
+            transientFailuresUntilBlacklist: 1
+          }],
+          visionRequested: false,
           activeStageRoutes: [{
             stage: "Build recovery",
             model: "repair-model",
             baseUrl: "https://example.com",
             provider: "remote",
             routeIndex: 1,
-            attempt: 2
+            attempt: 2,
+            score: 0,
+            scoreFactors: [{ label: "No reliability history", delta: 0 }],
+            failureCount: 0,
+            blacklisted: false,
+            hardFailuresUntilBlacklist: 2,
+            transientFailuresUntilBlacklist: 3,
+            visionRequested: false,
+            visionCapable: false,
+            selectionReason: "Repair stages favor coder and reasoning models. Saved soak fixture route."
           }]
         }
       }
@@ -152,14 +168,30 @@ test("agent soak report uses the latest task per scenario and aggregates telemet
   assert.equal(landingScenario?.fallbackUsed, true);
   assert.deepEqual(landingScenario?.routeDiagnostics, {
     blacklistedModels: ["primary-model"],
-    failureCounts: [{ model: "primary-model", count: 2 }],
+    failureCounts: [{
+      model: "primary-model",
+      count: 2,
+      blacklisted: true,
+      hardFailuresUntilBlacklist: 0,
+      transientFailuresUntilBlacklist: 1
+    }],
+    visionRequested: false,
     activeStageRoutes: [{
       stage: "Build recovery",
       model: "repair-model",
       baseUrl: "https://example.com",
       provider: "remote",
       routeIndex: 1,
-      attempt: 2
+      attempt: 2,
+      score: 0,
+      scoreFactors: [{ label: "No reliability history", delta: 0 }],
+      failureCount: 0,
+      blacklisted: false,
+      hardFailuresUntilBlacklist: 2,
+      transientFailuresUntilBlacklist: 3,
+      visionRequested: false,
+      visionCapable: false,
+      selectionReason: "Repair stages favor coder and reasoning models. Saved soak fixture route."
     }]
   });
 
@@ -187,14 +219,30 @@ test("agent soak markdown includes fallback and failure summaries", () => {
         failureCategory: "preview-error",
         routeDiagnostics: {
           blacklistedModels: ["repair-model"],
-          failureCounts: [{ model: "repair-model", count: 2 }],
+          failureCounts: [{
+            model: "repair-model",
+            count: 2,
+            blacklisted: true,
+            hardFailuresUntilBlacklist: 0,
+            transientFailuresUntilBlacklist: 1
+          }],
+          visionRequested: false,
           activeStageRoutes: [{
             stage: "Preview recovery",
             model: "repair-model",
             baseUrl: "https://example.com",
             provider: "remote",
             routeIndex: 0,
-            attempt: 2
+            attempt: 2,
+            score: 0,
+            scoreFactors: [{ label: "No reliability history", delta: 0 }],
+            failureCount: 2,
+            blacklisted: true,
+            hardFailuresUntilBlacklist: 0,
+            transientFailuresUntilBlacklist: 1,
+            visionRequested: false,
+            visionCapable: false,
+            selectionReason: "Repair stages favor coder and reasoning models. Saved soak fixture route."
           }]
         }
       }
@@ -261,7 +309,14 @@ test("agent soak history appends runs and summarizes instability trends", () => 
         failureCategory: "preview-error",
         routeDiagnostics: {
           blacklistedModels: ["repair-model"],
-          failureCounts: [{ model: "repair-model", count: 2 }],
+          failureCounts: [{
+            model: "repair-model",
+            count: 2,
+            blacklisted: true,
+            hardFailuresUntilBlacklist: 0,
+            transientFailuresUntilBlacklist: 1
+          }],
+          visionRequested: false,
           activeStageRoutes: []
         }
       }

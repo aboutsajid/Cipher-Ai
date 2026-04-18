@@ -33,3 +33,16 @@ jobs:
 
       - name: Run Electron startup smoke
         run: npm.cmd run smoke:electron:start
+
+      - name: Run chat isolation smoke
+        run: npm.cmd run smoke:chat:isolation
+
+      - name: Upload chat isolation smoke artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-isolation-smoke
+          path: |
+            tmp/chat-isolation-result.json
+            tmp/chat-isolation-error.txt
+          if-no-files-found: ignore

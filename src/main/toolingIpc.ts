@@ -15,11 +15,13 @@ import {
 } from "./settingsSupport";
 import { probeOllamaInstalled, ClaudeSessionManager } from "./claudeSupport";
 import type { CcrService } from "./services/ccrService";
+import type { ImageGenerationService } from "./services/imageGenerationService";
 import type { SettingsStore } from "./services/settingsStore";
 import type {
   AttachmentPayload,
   ClaudeManagedEdit,
   ClaudeManagedEditPermissions,
+  ImageGenerationRequest,
   ManagedWriteVerificationReport,
   McpServerConfig
 } from "../shared/types";
@@ -32,6 +34,7 @@ interface ClaudeSendOptions {
 interface Deps {
   settingsStore: SettingsStore;
   ccrService: CcrService;
+  imageGenerationService: ImageGenerationService;
   mcpRuntimeManager: McpRuntimeManager;
   claudeSessionManager: ClaudeSessionManager;
   getWindowForSender: (sender: WebContents) => BrowserWindow | null;
@@ -43,6 +46,7 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   const {
     settingsStore,
     ccrService,
+    imageGenerationService,
     mcpRuntimeManager,
     claudeSessionManager,
     getWindowForSender,
@@ -104,6 +108,26 @@ export function registerToolingIpcHandlers(deps: Deps): void {
 
   ipcMain.removeHandler("ollama:check");
   ipcMain.handle("ollama:check", async () => probeOllamaInstalled());
+
+  ipcMain.removeHandler("images:generate");
+  ipcMain.handle("images:generate", async (_e, request: ImageGenerationRequest) => {
+    return imageGenerationService.generate(request);
+  });
+
+  ipcMain.removeHandler("images:listHistory");
+  ipcMain.handle("images:listHistory", async () => {
+    return imageGenerationService.listHistory();
+  });
+
+  ipcMain.removeHandler("images:save");
+  ipcMain.handle("images:save", async (event, dataUrl: string, suggestedName?: string, historyId?: string) => {
+    return imageGenerationService.saveImage(resolveDialogWindow(event.sender), dataUrl, suggestedName, historyId);
+  });
+
+  ipcMain.removeHandler("images:deleteHistory");
+  ipcMain.handle("images:deleteHistory", async (_event, historyId: string) => {
+    return imageGenerationService.deleteHistoryItem(historyId);
+  });
 
   ipcMain.removeHandler("mcp:list");
   ipcMain.handle("mcp:list", () => listMcpServers(settingsStore));

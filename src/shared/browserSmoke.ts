@@ -14,6 +14,21 @@ export interface BrowserSmokeSnapshot {
   htmlLength: number;
   localStorageKeys?: number;
   sessionStorageKeys?: number;
+  textareaCount?: number;
+  selectCount?: number;
+  urlInputCount?: number;
+  searchInputCount?: number;
+  fileInputCount?: number;
+  passwordInputCount?: number;
+  summaryMarkerCount?: number;
+  transcriptMarkerCount?: number;
+  videoSourceMarkerCount?: number;
+  searchMarkerCount?: number;
+  persistenceMarkerCount?: number;
+  exportActionCount?: number;
+  ingestMarkerCount?: number;
+  authMarkerCount?: number;
+  settingsMarkerCount?: number;
 }
 
 export interface BrowserSmokeInteractionProbe {
@@ -25,6 +40,7 @@ export interface BrowserSmokeInteractionProbe {
   textDelta?: number;
   localStorageDelta?: number;
   sessionStorageDelta?: number;
+  summaryMarkerDelta?: number;
 }
 
 export interface BrowserSmokeEvaluationResult {
@@ -53,8 +69,60 @@ export function summarizeBrowserSmokeSnapshot(snapshot: BrowserSmokeSnapshot | n
   ].join(", ");
 }
 
+function normalizePromptRequirements(promptRequirements: readonly string[] | null | undefined): Set<string> {
+  return new Set((promptRequirements ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean));
+}
+
+function hasPromptRequirement(promptRequirements: Set<string>, id: string): boolean {
+  return promptRequirements.has(id.toLowerCase());
+}
+
 export function requiresStatefulInteractionProbe(builderMode: string): boolean {
   return builderMode === "notes" || builderMode === "crud" || builderMode === "kanban";
+}
+
+export function requiresCapabilityInteractionProbe(
+  builderMode: string,
+  promptRequirements: readonly string[] | null | undefined = []
+): boolean {
+  const normalized = normalizePromptRequirements(promptRequirements);
+  return requiresStatefulInteractionProbe(builderMode)
+    || hasPromptRequirement(normalized, "req-summary")
+    || hasPromptRequirement(normalized, "req-persistence");
+}
+
+function hasMeaningfulStatefulInteraction(
+  builderMode: string,
+  interactionProbe: BrowserSmokeInteractionProbe | null | undefined,
+  promptRequirements: readonly string[] | null | undefined = []
+): boolean {
+  if (!interactionProbe?.attempted) return false;
+  const normalizedRequirements = normalizePromptRequirements(promptRequirements);
+  const typedValueVisible = Boolean(interactionProbe.typedValueVisible);
+  const collectionDelta = Number(interactionProbe.collectionDelta ?? 0);
+  const textDelta = Number(interactionProbe.textDelta ?? 0);
+  const localStorageDelta = Number(interactionProbe.localStorageDelta ?? 0);
+  const sessionStorageDelta = Number(interactionProbe.sessionStorageDelta ?? 0);
+  const summaryMarkerDelta = Number(interactionProbe.summaryMarkerDelta ?? 0);
+
+  if (builderMode === "notes" || builderMode === "crud" || builderMode === "kanban") {
+    return typedValueVisible || collectionDelta > 0 || localStorageDelta !== 0 || sessionStorageDelta !== 0;
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-summary")) {
+    return typedValueVisible
+      || summaryMarkerDelta > 0
+      || collectionDelta > 0
+      || localStorageDelta !== 0
+      || sessionStorageDelta !== 0
+      || textDelta > 20;
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-persistence")) {
+    return typedValueVisible || collectionDelta > 0 || localStorageDelta !== 0 || sessionStorageDelta !== 0;
+  }
+
+  return Boolean(interactionProbe.changed);
 }
 
 export function evaluateBrowserSmoke(
@@ -62,9 +130,11 @@ export function evaluateBrowserSmoke(
   workspaceKind: string,
   builderMode: string,
   pageErrors: string[],
-  interactionProbe?: BrowserSmokeInteractionProbe | null
+  interactionProbe?: BrowserSmokeInteractionProbe | null,
+  promptRequirements: readonly string[] | null | undefined = []
 ): BrowserSmokeEvaluationResult {
   const failures: string[] = [];
+  const normalizedRequirements = normalizePromptRequirements(promptRequirements);
 
   if (!snapshot?.hasHtml) failures.push("Rendered page did not expose documentElement.");
   if (!snapshot?.hasBody) failures.push("Rendered page did not expose body content.");
@@ -87,19 +157,74 @@ export function evaluateBrowserSmoke(
     }
   }
 
-  if (requiresStatefulInteractionProbe(builderMode)) {
+  if (hasPromptRequirement(normalizedRequirements, "req-video-source")) {
+    if ((snapshot.urlInputCount ?? 0) <= 0 && (snapshot.videoSourceMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose a video source or URL input flow.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-transcript")) {
+    if ((snapshot.textareaCount ?? 0) <= 0 && (snapshot.transcriptMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose a transcript input surface.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-summary")) {
+    if ((snapshot.summaryMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose a summary output surface.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-search-filter")) {
+    if ((snapshot.searchInputCount ?? 0) <= 0 && (snapshot.searchMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose search or filter controls.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-persistence")) {
+    const storageKeys = Number(snapshot.localStorageKeys ?? 0) + Number(snapshot.sessionStorageKeys ?? 0);
+    if (snapshot.collectionCount <= 0 && storageKeys <= 0 && (snapshot.persistenceMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose a saved history, library, or persisted records surface.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-export")) {
+    if ((snapshot.exportActionCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose copy, export, download, or share actions.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-ingest")) {
+    if ((snapshot.fileInputCount ?? 0) <= 0 && (snapshot.textareaCount ?? 0) <= 0 && (snapshot.ingestMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose import, upload, paste, or file ingest controls.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-auth")) {
+    if ((snapshot.passwordInputCount ?? 0) <= 0 && (snapshot.authMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose authentication controls.");
+    }
+  }
+
+  if (hasPromptRequirement(normalizedRequirements, "req-settings")) {
+    if ((snapshot.settingsMarkerCount ?? 0) <= 0) {
+      failures.push("Rendered page did not expose settings or preferences UI.");
+    }
+  }
+
+  if (requiresCapabilityInteractionProbe(builderMode, promptRequirements)) {
     if (snapshot.inputCount <= 0) {
       failures.push("Rendered page did not include an interactive input flow.");
     }
-    if (snapshot.collectionCount <= 0) {
+    if (requiresStatefulInteractionProbe(builderMode) && snapshot.collectionCount <= 0) {
       failures.push("Rendered page did not include a rendered collection view.");
     }
     if (!interactionProbe) {
       failures.push("Rendered page did not run a stateful interaction probe.");
     } else if (!interactionProbe.attempted) {
       failures.push(`Rendered page could not identify a usable stateful interaction. ${interactionProbe.details}`.trim());
-    } else if (!interactionProbe.changed) {
-      failures.push(`Rendered page did not react to a basic stateful interaction. ${interactionProbe.details}`.trim());
+    } else if (!hasMeaningfulStatefulInteraction(builderMode, interactionProbe, promptRequirements)) {
+      failures.push(`Rendered page did not produce a meaningful stateful interaction signal. ${interactionProbe.details}`.trim());
     }
   }
 

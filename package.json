@@ -14,6 +14,7 @@
     "build": "npm run clean && npm run build:ts && npm run build:assets",
     "test": "npm run build && node scripts/run-tests.mjs",
     "smoke:electron:start": "npm run build && node scripts/electron-startup-smoke.mjs",
+    "smoke:chat:isolation": "npm run build && node scripts/chat-isolation-smoke.mjs",
     "start": "npm run build && node scripts/launch-electron.mjs",
     "dev": "npm run build && node scripts/launch-electron.mjs",
     "pack:win": "npm run build && npm run clean:release && electron-builder --win nsis --publish never",

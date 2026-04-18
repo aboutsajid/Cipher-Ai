@@ -39,4 +39,8 @@ test("renderer index html provides every id referenced by renderer app bindings"
     `renderer app references missing HTML ids: ${missingIds.join(", ")}`
   );
   assert.ok(referencedIds.includes("agent-refresh-route-health-btn"));
+  assert.ok(referencedIds.includes("generate-image-btn"));
+  assert.ok(referencedIds.includes("image-history-btn"));
+  assert.ok(referencedIds.includes("sidebar-resize-handle"));
+  assert.ok(referencedIds.includes("panel-resize-handle"));
 });

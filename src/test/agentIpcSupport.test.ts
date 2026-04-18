@@ -15,7 +15,7 @@ function createRunner() {
     getTask: (taskId: string) => ({ id: taskId, prompt: "demo", status: "running" }),
     getTaskLogs: (taskId: string) => [`log:${taskId}`],
     getRouteDiagnostics: (taskId?: string) => ({ routes: [], task: taskId ? { taskId, blacklistedModels: [], failureCounts: [], activeStageRoutes: [] } : undefined }),
-    startTask: async (prompt: string) => ({ id: "task-1", prompt, status: "running" }),
+    startTask: async (prompt: string, attachments?: Array<{ name: string }>) => ({ id: "task-1", prompt, attachments, status: "running" }),
     stopTask: async (taskId: string) => taskId === "task-1",
     listSnapshots: () => [],
     getLastRestoreState: async () => null,
@@ -52,6 +52,16 @@ test("agent ipc helpers trim ids and validate prompts", async () => {
   assert.deepEqual(await startAgentTask(runner as never, "  build app  "), {
     id: "task-1",
     prompt: "build app",
+    attachments: [],
+    status: "running"
+  });
+  assert.deepEqual(await startAgentTask(runner as never, {
+    prompt: "  inspect screenshot  ",
+    attachments: [{ name: "screen.png", type: "image", content: "data:image/png;base64,YWJj", mimeType: "image/png" }]
+  }), {
+    id: "task-1",
+    prompt: "inspect screenshot",
+    attachments: [{ name: "screen.png", type: "image", content: "data:image/png;base64,YWJj", mimeType: "image/png", sourcePath: undefined, writableRoot: undefined }],
     status: "running"
   });
 });

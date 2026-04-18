@@ -141,7 +141,7 @@ export async function repairManagedWriteProposal(
   let reviewerModel: string | undefined;
 
   try {
-    const route = resolveUtilityRoute(settings);
+    const route = resolveUtilityRoute(settings, "repair");
     reviewerModel = route.model;
     const prompt = buildManagedWriteRepairPrompt(edits, verification);
     let raw = "";

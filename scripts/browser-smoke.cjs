@@ -1,7 +1,8 @@
 const { app, BrowserWindow } = require("electron");
 const {
   createBrowserSmokeResult,
-  evaluateBrowserSmoke
+  evaluateBrowserSmoke,
+  requiresCapabilityInteractionProbe
 } = require("../dist/shared/browserSmoke.js");
 
 function parseArgs(argv) {
@@ -9,6 +10,7 @@ function parseArgs(argv) {
     url: "",
     workspaceKind: "generic",
     builderMode: "",
+    promptRequirements: [],
     timeoutMs: 15000
   };
 
@@ -26,6 +28,14 @@ function parseArgs(argv) {
     }
     if (value === "--builder-mode") {
       parsed.builderMode = argv[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+    if (value === "--prompt-requirement") {
+      const requirement = (argv[index + 1] ?? "").trim();
+      if (requirement) {
+        parsed.promptRequirements.push(requirement);
+      }
       index += 1;
       continue;
     }
@@ -51,9 +61,17 @@ async function collectSnapshot(windowRef) {
           return 0;
         }
       };
+      const countMatches = (value, patterns) => patterns.reduce((total, pattern) => {
+        const matches = value.match(pattern);
+        return total + (matches ? matches.length : 0);
+      }, 0);
+      const inputElements = () => Array.from(document.querySelectorAll("input"));
+      const hasAttrValue = (element, name, fragment) => String(element?.getAttribute?.(name) ?? "").toLowerCase().includes(fragment);
+      const countInputs = (predicate) => inputElements().filter((element) => predicate(element)).length;
       const collect = () => {
         const html = document.documentElement?.outerHTML ?? "";
         const text = document.body?.innerText?.trim() ?? "";
+        const normalizedText = text.toLowerCase();
         const selectors = (query) => document.querySelectorAll(query).length;
         return {
           readyState: document.readyState,
@@ -70,7 +88,47 @@ async function collectSnapshot(windowRef) {
           textLength: text.length,
           htmlLength: html.length,
           localStorageKeys: getStorageKeyCount(window.localStorage),
-          sessionStorageKeys: getStorageKeyCount(window.sessionStorage)
+          sessionStorageKeys: getStorageKeyCount(window.sessionStorage),
+          textareaCount: selectors("textarea"),
+          selectCount: selectors("select"),
+          urlInputCount: countInputs((element) => {
+            const type = String(element.type ?? "").toLowerCase();
+            return type === "url"
+              || hasAttrValue(element, "name", "url")
+              || hasAttrValue(element, "placeholder", "url")
+              || hasAttrValue(element, "name", "youtube")
+              || hasAttrValue(element, "placeholder", "youtube");
+          }),
+          searchInputCount: countInputs((element) => {
+            const type = String(element.type ?? "").toLowerCase();
+            return type === "search"
+              || hasAttrValue(element, "name", "search")
+              || hasAttrValue(element, "placeholder", "search")
+              || hasAttrValue(element, "name", "filter")
+              || hasAttrValue(element, "placeholder", "filter")
+              || hasAttrValue(element, "name", "find")
+              || hasAttrValue(element, "placeholder", "find");
+          }),
+          fileInputCount: countInputs((element) => String(element.type ?? "").toLowerCase() === "file"),
+          passwordInputCount: countInputs((element) => String(element.type ?? "").toLowerCase() === "password"),
+          summaryMarkerCount: countMatches(normalizedText, [/\bsummary\b/g, /\btakeaways?\b/g, /\bchapters?\b/g, /\bkey points?\b/g, /\binsights?\b/g, /\bbrief\b/g, /\baction items?\b/g])
+            + selectors("[data-summary], [data-generated-summary], .summary, .takeaways, .chapters, .action-items"),
+          transcriptMarkerCount: countMatches(normalizedText, [/\btranscript\b/g, /\bsubtitles?\b/g, /\bcaptions?\b/g])
+            + selectors("[data-transcript], .transcript, .captions"),
+          videoSourceMarkerCount: countMatches(normalizedText, [/\byoutube\b/g, /\bvideo url\b/g, /\bvideo link\b/g, /\byoutu\\.be\b/g, /\byoutube\\.com\b/g])
+            + selectors("[data-video-source], .video-source"),
+          searchMarkerCount: countMatches(normalizedText, [/\bsearch\b/g, /\bfilter\b/g, /\bfind\b/g])
+            + selectors("[role='searchbox'], [data-search], [data-filter], .search, .filters"),
+          persistenceMarkerCount: countMatches(normalizedText, [/\bsaved\b/g, /\bhistory\b/g, /\brecent\b/g, /\blibrary\b/g, /\bstored\b/g, /\bpersist/i])
+            + selectors("[data-history], [data-saved], .history, .saved-list, .library"),
+          exportActionCount: countMatches(normalizedText, [/\bcopy\b/g, /\bexport\b/g, /\bdownload\b/g, /\bshare\b/g])
+            + selectors("[data-copy], [data-export], a[download], .copy-action, .export-action"),
+          ingestMarkerCount: countMatches(normalizedText, [/\bimport\b/g, /\bupload\b/g, /\bpaste\b/g, /\bdrag and drop\b/g, /\bdrop zone\b/g, /\bfile picker\b/g])
+            + selectors("[data-upload], [data-import], .dropzone, .drop-zone"),
+          authMarkerCount: countMatches(normalizedText, [/\blogin\b/g, /\bsign in\b/g, /\bauth\b/g, /\bpassword\b/g, /\baccount\b/g])
+            + selectors("[data-auth], .login, .signin, .auth"),
+          settingsMarkerCount: countMatches(normalizedText, [/\bsettings\b/g, /\bpreferences\b/g, /\bconfiguration\b/g, /\bconfig\b/g])
+            + selectors("[data-settings], .settings, .preferences")
         };
       };
 
@@ -87,8 +145,8 @@ async function collectSnapshot(windowRef) {
   `, true);
 }
 
-async function runInteractionProbe(windowRef, builderMode) {
-  if (!["notes", "crud", "kanban"].includes(builderMode)) {
+async function runInteractionProbe(windowRef, builderMode, promptRequirements) {
+  if (!requiresCapabilityInteractionProbe(builderMode, promptRequirements)) {
     return {
       attempted: false,
       changed: false,
@@ -112,13 +170,19 @@ async function runInteractionProbe(windowRef, builderMode) {
           return 0;
         }
       };
+      const countMatches = (value, patterns) => patterns.reduce((total, pattern) => {
+        const matches = value.match(pattern);
+        return total + (matches ? matches.length : 0);
+      }, 0);
       const collect = () => {
         const text = document.body?.innerText?.trim() ?? "";
+        const normalizedText = text.toLowerCase();
         return {
           textLength: text.length,
           collectionCount: document.querySelectorAll("ul, ol, table, tbody, [role=\\"list\\"], .notes-list, .records-list, .note-card, .record-row, .kanban-grid, .kanban-lane, .kanban-card, .board-column, .task-card").length,
           localStorageKeys: storageCount(window.localStorage),
           sessionStorageKeys: storageCount(window.sessionStorage),
+          summaryMarkerCount: countMatches(normalizedText, [/\\bsummary\\b/g, /\\btakeaways?\\b/g, /\\bchapters?\\b/g, /\\bkey points?\\b/g, /\\binsights?\\b/g, /\\bbrief\\b/g, /\\baction items?\\b/g]),
           text
         };
       };
@@ -176,7 +240,8 @@ async function runInteractionProbe(windowRef, builderMode) {
       const textDelta = after.textLength - before.textLength;
       const localStorageDelta = after.localStorageKeys - before.localStorageKeys;
       const sessionStorageDelta = after.sessionStorageKeys - before.sessionStorageKeys;
-      const changed = typedValueVisible || collectionDelta > 0 || textDelta > 12 || localStorageDelta !== 0 || sessionStorageDelta !== 0;
+      const summaryMarkerDelta = after.summaryMarkerCount - before.summaryMarkerCount;
+      const changed = typedValueVisible || collectionDelta > 0 || textDelta > 12 || localStorageDelta !== 0 || sessionStorageDelta !== 0 || summaryMarkerDelta > 0;
 
       return {
         attempted: true,
@@ -186,6 +251,7 @@ async function runInteractionProbe(windowRef, builderMode) {
         textDelta,
         localStorageDelta,
         sessionStorageDelta,
+        summaryMarkerDelta,
         details: changed
           ? "Basic stateful interaction changed the rendered page or storage."
           : "Input and submit flow completed, but no collection, text, or storage change was detected."
@@ -249,8 +315,15 @@ async function main() {
   try {
     await windowRef.loadURL(options.url);
     const snapshot = await collectSnapshot(windowRef);
-    const interactionProbe = await runInteractionProbe(windowRef, options.builderMode);
-    const result = evaluateBrowserSmoke(snapshot, options.workspaceKind, options.builderMode, pageErrors, interactionProbe);
+    const interactionProbe = await runInteractionProbe(windowRef, options.builderMode, options.promptRequirements);
+    const result = evaluateBrowserSmoke(
+      snapshot,
+      options.workspaceKind,
+      options.builderMode,
+      pageErrors,
+      interactionProbe,
+      options.promptRequirements
+    );
     await finish(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

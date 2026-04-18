@@ -3,6 +3,7 @@ import {
   getAgentRouteDiagnostics,
   getAgentTask,
   getAgentTaskLogs,
+  restartAgentTask,
   restoreAgentSnapshot,
   startAgentTask,
   stopAgentTask
@@ -10,7 +11,7 @@ import {
 import { getRouterLogs, getRouterStatus, startRouter, stopRouter, testRouter } from "./routerIpcSupport";
 import type { CcrService } from "./services/ccrService";
 import type { AgentTaskRunner } from "./services/agentTaskRunner";
-import type { TerminalCommandRequest } from "../shared/types";
+import type { AgentTaskRequest, AgentTaskRestartMode, TerminalCommandRequest } from "../shared/types";
 
 interface Deps {
   ccrService: CcrService;
@@ -34,7 +35,12 @@ export function registerAgentWorkspaceRouterIpcHandlers(deps: Deps): void {
   ipcMain.handle("agent:getRouteDiagnostics", (_e, taskId?: string) => getAgentRouteDiagnostics(agentTaskRunner, taskId));
 
   ipcMain.removeHandler("agent:startTask");
-  ipcMain.handle("agent:startTask", async (_e, prompt: string) => startAgentTask(agentTaskRunner, prompt));
+  ipcMain.handle("agent:startTask", async (_e, request: string | AgentTaskRequest) => startAgentTask(agentTaskRunner, request));
+
+  ipcMain.removeHandler("agent:restartTask");
+  ipcMain.handle("agent:restartTask", async (_e, taskId: string, mode: AgentTaskRestartMode) => {
+    return restartAgentTask(agentTaskRunner, taskId, mode);
+  });
 
   ipcMain.removeHandler("agent:stopTask");
   ipcMain.handle("agent:stopTask", (_e, taskId: string) => stopAgentTask(agentTaskRunner, taskId));

@@ -154,6 +154,165 @@ test("AgentTaskRunner does not retry non-transient workspace filesystem errors",
   });
 });
 
+test("AgentTaskRunner retries a failed task with the original prompt", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: "failed" | "stopped" | "completed" | "running";
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        rollbackSnapshotId?: string;
+        targetPath?: string;
+        telemetry: { fallbackUsed: boolean; modelAttempts: unknown[] };
+      }>;
+      restartTask: (taskId: string, mode: "retry" | "retry-clean" | "continue-fix") => Promise<{ id: string; prompt: string }>;
+      startTask: (prompt: string) => Promise<{ id: string; prompt: string }>;
+    };
+
+    const now = new Date().toISOString();
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Build a desktop notes app.",
+        status: "failed",
+        createdAt: now,
+        updatedAt: now,
+        summary: "Build failed.",
+        steps: [],
+        targetPath: "generated-apps/notes-desktop",
+        telemetry: { fallbackUsed: false, modelAttempts: [] }
+      }
+    ]]) as never;
+
+    let capturedPrompt = "";
+    runner.startTask = async (prompt) => {
+      capturedPrompt = prompt;
+      return { id: "task-2", prompt };
+    };
+
+    const restarted = await runner.restartTask("task-1", "retry");
+
+    assert.equal(restarted.id, "task-2");
+    assert.match(capturedPrompt, /Build a desktop notes app\./);
+    assert.match(capturedPrompt, /generated-apps\/notes-desktop/);
+  });
+});
+
+test("AgentTaskRunner clean-retries by restoring the rollback snapshot first", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: "failed" | "stopped" | "completed" | "running";
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        rollbackSnapshotId?: string;
+        telemetry: { fallbackUsed: boolean; modelAttempts: unknown[] };
+      }>;
+      restartTask: (taskId: string, mode: "retry" | "retry-clean" | "continue-fix") => Promise<{ id: string; prompt: string }>;
+      startTask: (prompt: string) => Promise<{ id: string; prompt: string }>;
+      restoreSnapshot: (snapshotId: string) => Promise<{ ok: boolean; message: string }>;
+    };
+
+    const now = new Date().toISOString();
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Build a warehouse tool.",
+        status: "failed",
+        createdAt: now,
+        updatedAt: now,
+        summary: "Verification failed.",
+        steps: [],
+        rollbackSnapshotId: "snapshot-before",
+        telemetry: { fallbackUsed: false, modelAttempts: [] }
+      }
+    ]]) as never;
+
+    const calls: string[] = [];
+    runner.restoreSnapshot = async (snapshotId) => {
+      calls.push(`restore:${snapshotId}`);
+      return { ok: true, message: "restored" };
+    };
+    runner.startTask = async (prompt) => {
+      calls.push(`start:${prompt}`);
+      return { id: "task-2", prompt };
+    };
+
+    await runner.restartTask("task-1", "retry-clean");
+
+    assert.equal(calls[0], "restore:snapshot-before");
+    assert.match(calls[1] ?? "", /^start:/);
+    assert.match(calls[1] ?? "", /clean retry/i);
+  });
+});
+
+test("AgentTaskRunner continue-fix prompts include prior failure context", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: "failed" | "stopped" | "completed" | "running";
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        targetPath?: string;
+        verification?: {
+          checks: Array<{ status: "passed" | "failed" | "skipped"; label: string; details: string }>;
+        };
+        telemetry: { fallbackUsed: boolean; modelAttempts: unknown[] };
+      }>;
+      restartTask: (taskId: string, mode: "retry" | "retry-clean" | "continue-fix") => Promise<{ id: string; prompt: string }>;
+      startTask: (prompt: string) => Promise<{ id: string; prompt: string }>;
+    };
+
+    const now = new Date().toISOString();
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Build a YouTube summarizer desktop app.",
+        status: "failed",
+        createdAt: now,
+        updatedAt: now,
+        summary: "Windows packaging failed.",
+        steps: [],
+        targetPath: "generated-apps/youtube-video-summarizer-pro",
+        verification: {
+          checks: [
+            { status: "failed", label: "Packaging", details: "Windows installer packaging failed." }
+          ]
+        },
+        telemetry: { fallbackUsed: false, modelAttempts: [] }
+      }
+    ]]) as never;
+
+    let capturedPrompt = "";
+    runner.startTask = async (prompt) => {
+      capturedPrompt = prompt;
+      return { id: "task-2", prompt };
+    };
+
+    await runner.restartTask("task-1", "continue-fix");
+
+    assert.match(capturedPrompt, /Continue fixing the existing task output/i);
+    assert.match(capturedPrompt, /generated-apps\/youtube-video-summarizer-pro/);
+    assert.match(capturedPrompt, /Windows packaging failed\./);
+    assert.match(capturedPrompt, /Verification failures to fix/i);
+  });
+});
+
 test("AgentTaskRunner classifies desktop packages ahead of web workspace defaults", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
@@ -437,7 +596,7 @@ test("AgentTaskRunner provides a heuristic desktop workspace fallback for snippe
   });
 });
 
-test("AgentTaskRunner prefers heuristic-first implementation for simple desktop shell prompts", async () => {
+test("AgentTaskRunner prefers heuristic-first implementation only for supported desktop heuristic prompts", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
       shouldPreferHeuristicImplementation: (
@@ -454,7 +613,7 @@ test("AgentTaskRunner prefers heuristic-first implementation for simple desktop 
         "[SOAK:realworld.helpdesk-desktop-shell] Create a desktop helpdesk workspace with a sidebar, ticket queue, priority filters, and a clear new-ticket action.",
         { workspaceKind: "react", builderMode: null }
       ),
-      true
+      false
     );
     assert.equal(
       runner.shouldPreferHeuristicImplementation(
@@ -484,6 +643,86 @@ test("AgentTaskRunner prefers heuristic-first implementation for simple desktop 
       ),
       true
     );
+  });
+});
+
+test("AgentTaskRunner snapshots ignore staged desktop packaging artifacts like app.asar", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
+    };
+
+    await mkdir(join(workspaceRoot, "release-stage", "win-unpacked", "resources"), { recursive: true });
+    await writeFile(join(workspaceRoot, "release-stage", "win-unpacked", "resources", "app.asar"), "fake-asar", "utf8");
+    await writeFile(join(workspaceRoot, "README.md"), "# snapshot ok\n", "utf8");
+
+    const snapshot = await runner.createSnapshot("Before packaging");
+    const snapshotRoot = join(workspaceRoot, ".cipher-snapshots", snapshot.id, "files");
+
+    assert.equal(await readFile(join(snapshotRoot, "README.md"), "utf8"), "# snapshot ok\n");
+    await assert.rejects(
+      () => readFile(join(snapshotRoot, "release-stage", "win-unpacked", "resources", "app.asar"), "utf8"),
+      /ENOENT/
+    );
+  });
+});
+
+test("AgentTaskRunner restores task snapshots without deleting unrelated repo additions", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot);
+
+    await mkdir(join(workspaceRoot, ".github", "workflows"), { recursive: true });
+    await writeFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "name: keep-me\n", "utf8");
+
+    const snapshot = await (runner as never as {
+      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
+    }).createSnapshot("Before task", "task-1", {
+      kind: "before-task",
+      targetPathHint: "generated-apps/demo-app"
+    });
+
+    await mkdir(join(workspaceRoot, "generated-apps", "demo-app"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"demo-app\"}\n", "utf8");
+
+    const restored = await runner.restoreSnapshot(snapshot.id);
+
+    assert.equal(restored.ok, true);
+    assert.equal(await readFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "utf8"), "name: keep-me\n");
+    await assert.rejects(
+      () => readFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "utf8"),
+      /ENOENT/
+    );
+  });
+});
+
+test("AgentTaskRunner restores scoped task targets back to their snapshotted contents", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot);
+
+    await mkdir(join(workspaceRoot, "generated-apps", "demo-app"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"before\"}\n", "utf8");
+
+    const snapshot = await (runner as never as {
+      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
+    }).createSnapshot("Before task", "task-1", {
+      kind: "before-task",
+      targetPathHint: "generated-apps/demo-app"
+    });
+
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"after\"}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "README.md"), "# changed\n", "utf8");
+    await mkdir(join(workspaceRoot, ".github", "workflows"), { recursive: true });
+    await writeFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "name: keep-me\n", "utf8");
+
+    const restored = await runner.restoreSnapshot(snapshot.id);
+
+    assert.equal(restored.ok, true);
+    assert.equal(await readFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "utf8"), "{\"name\":\"before\"}\n");
+    await assert.rejects(
+      () => readFile(join(workspaceRoot, "generated-apps", "demo-app", "README.md"), "utf8"),
+      /ENOENT/
+    );
+    assert.equal(await readFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "utf8"), "name: keep-me\n");
   });
 });
 
@@ -691,86 +930,6 @@ test("AgentTaskRunner provides a heuristic desktop file-renamer workspace", asyn
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("Filename preview")));
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.tsx") && edit.content.includes("handlePickFolder")));
     assert.ok(result.edits.some((edit) => edit.path.endsWith("src/App.css") && edit.content.includes(".desktop-field")));
-  });
-});
-
-test("AgentTaskRunner snapshots ignore staged desktop packaging artifacts like app.asar", async () => {
-  await withTempDir(async (workspaceRoot) => {
-    const runner = createRunner(workspaceRoot) as never as {
-      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
-    };
-
-    await mkdir(join(workspaceRoot, "release-stage", "win-unpacked", "resources"), { recursive: true });
-    await writeFile(join(workspaceRoot, "release-stage", "win-unpacked", "resources", "app.asar"), "fake-asar", "utf8");
-    await writeFile(join(workspaceRoot, "README.md"), "# snapshot ok\n", "utf8");
-
-    const snapshot = await runner.createSnapshot("Before packaging");
-    const snapshotRoot = join(workspaceRoot, ".cipher-snapshots", snapshot.id, "files");
-
-    assert.equal(await readFile(join(snapshotRoot, "README.md"), "utf8"), "# snapshot ok\n");
-    await assert.rejects(
-      () => readFile(join(snapshotRoot, "release-stage", "win-unpacked", "resources", "app.asar"), "utf8"),
-      /ENOENT/
-    );
-  });
-});
-
-test("AgentTaskRunner restores task snapshots without deleting unrelated repo additions", async () => {
-  await withTempDir(async (workspaceRoot) => {
-    const runner = createRunner(workspaceRoot);
-
-    await mkdir(join(workspaceRoot, ".github", "workflows"), { recursive: true });
-    await writeFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "name: keep-me\n", "utf8");
-
-    const snapshot = await (runner as never as {
-      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
-    }).createSnapshot("Before task", "task-1", {
-      kind: "before-task",
-      targetPathHint: "generated-apps/demo-app"
-    });
-
-    await mkdir(join(workspaceRoot, "generated-apps", "demo-app"), { recursive: true });
-    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"demo-app\"}\n", "utf8");
-
-    const restored = await runner.restoreSnapshot(snapshot.id);
-
-    assert.equal(restored.ok, true);
-    assert.equal(await readFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "utf8"), "name: keep-me\n");
-    await assert.rejects(
-      () => readFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "utf8"),
-      /ENOENT/
-    );
-  });
-});
-
-test("AgentTaskRunner restores scoped task targets back to their snapshotted contents", async () => {
-  await withTempDir(async (workspaceRoot) => {
-    const runner = createRunner(workspaceRoot);
-
-    await mkdir(join(workspaceRoot, "generated-apps", "demo-app"), { recursive: true });
-    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"before\"}\n", "utf8");
-
-    const snapshot = await (runner as never as {
-      createSnapshot: (label: string, taskId?: string, options?: { kind?: string; targetPathHint?: string }) => Promise<{ id: string }>;
-    }).createSnapshot("Before task", "task-1", {
-      kind: "before-task",
-      targetPathHint: "generated-apps/demo-app"
-    });
-
-    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "{\"name\":\"after\"}\n", "utf8");
-    await writeFile(join(workspaceRoot, "generated-apps", "demo-app", "README.md"), "# changed\n", "utf8");
-    await mkdir(join(workspaceRoot, ".github", "workflows"), { recursive: true });
-    await writeFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "name: keep-me\n", "utf8");
-
-    const restored = await runner.restoreSnapshot(snapshot.id);
-
-    assert.equal(restored.ok, true);
-    assert.equal(await readFile(join(workspaceRoot, "generated-apps", "demo-app", "package.json"), "utf8"), "{\"name\":\"before\"}\n");
-    await assert.rejects(
-      () => readFile(join(workspaceRoot, "generated-apps", "demo-app", "README.md"), "utf8"),
-      /ENOENT/
-    );
-    assert.equal(await readFile(join(workspaceRoot, ".github", "workflows", "desktop-smoke.yml"), "utf8"), "name: keep-me\n");
   });
 });
 
@@ -1136,6 +1295,25 @@ test("AgentTaskRunner attaches reporting requirements to desktop business record
   });
 });
 
+test("AgentTaskRunner attaches product workflow requirements to summarizer prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      extractPromptRequirements: (
+        prompt: string
+      ) => Array<{ id: string; label: string; terms: string[]; mode: "all" | "any" }>;
+    };
+
+    const prompt = "Build a desktop YouTube video summarizer app with a URL input, pasted transcript support, summary output, and saved history.";
+    const requirements = runner.extractPromptRequirements(prompt);
+    const ids = new Set(requirements.map((item) => item.id));
+
+    assert.equal(ids.has("req-summary"), true);
+    assert.equal(ids.has("req-transcript"), true);
+    assert.equal(ids.has("req-video-source"), true);
+    assert.equal(ids.has("req-persistence"), true);
+  });
+});
+
 test("AgentTaskRunner plans library prompts with package-scoped work items even when they mention dashboards as a usage context", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
@@ -1366,6 +1544,363 @@ test("AgentTaskRunner falls back to count-based verification summaries when chec
   });
 });
 
+test("AgentTaskRunner infers a structured execution spec for dashboard prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "generated-apps", "ops-wallboard");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({
+      name: "ops-wallboard",
+      private: true,
+      version: "0.1.0",
+      scripts: {
+        dev: "vite",
+        build: "vite build"
+      }
+    }, null, 2), "utf8");
+    await writeFile(join(appRoot, "index.html"), "<!doctype html><div id=\"root\"></div>\n", "utf8");
+    await writeFile(join(appRoot, "src", "main.tsx"), "console.log('main')\n", "utf8");
+    await writeFile(join(appRoot, "src", "App.tsx"), "export default function App() { return <main>Ops</main>; }\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<{
+        spec: {
+          starterProfile: string;
+          domainFocus: string;
+          acceptanceCriteria: string[];
+        };
+        workItems: Array<{ instruction: string }>;
+      }>;
+    };
+
+    const plan = await runner.buildExecutionPlan(
+      "Build a React wallboard for operations delays with KPI cards, recent incidents, and a quick escalation summary.",
+      "generated-apps/ops-wallboard"
+    );
+
+    assert.equal(plan.spec.starterProfile, "react-dashboard");
+    assert.equal(plan.spec.domainFocus, "operations");
+    assert.equal(plan.spec.acceptanceCriteria.some((item) => /metrics, recent activity/i.test(item)), true);
+    assert.equal(plan.workItems[0].instruction.includes("Deliverables:"), true);
+  });
+});
+
+test("AgentTaskRunner infers finance domain focus for billing dashboards", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "generated-apps", "finance-board");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({
+      name: "finance-board",
+      private: true,
+      version: "0.1.0",
+      scripts: {
+        dev: "vite",
+        build: "vite build"
+      }
+    }, null, 2), "utf8");
+    await writeFile(join(appRoot, "index.html"), "<!doctype html><div id=\"root\"></div>\n", "utf8");
+    await writeFile(join(appRoot, "src", "main.tsx"), "console.log('main')\n", "utf8");
+    await writeFile(join(appRoot, "src", "App.tsx"), "export default function App() { return <main>Finance</main>; }\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<{
+        spec: {
+          starterProfile: string;
+          domainFocus: string;
+          acceptanceCriteria: string[];
+        };
+      }>;
+    };
+
+    const plan = await runner.buildExecutionPlan(
+      "Build a React dashboard for invoice collections, revenue visibility, and budget variance tracking.",
+      "generated-apps/finance-board"
+    );
+
+    assert.equal(plan.spec.starterProfile, "react-dashboard");
+    assert.equal(plan.spec.domainFocus, "finance");
+    assert.equal(plan.spec.acceptanceCriteria.some((item) => /budgets, invoices, revenue, or payment workflows/i.test(item)), true);
+  });
+});
+
+test("AgentTaskRunner infers repository conventions from the workspace", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "apps", "console");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+    await writeFile(join(appRoot, "tsconfig.json"), "{\n  \"compilerOptions\": {}\n}\n", "utf8");
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({
+      name: "console-app",
+      private: true,
+      version: "0.1.0",
+      type: "module",
+      scripts: {
+        dev: "vite",
+        build: "vite build",
+        test: "vitest run",
+        lint: "eslint ."
+      },
+      dependencies: {
+        react: "^19.0.0",
+        "react-dom": "^19.0.0"
+      },
+      devDependencies: {
+        vitest: "^3.0.0",
+        eslint: "^9.0.0",
+        tailwindcss: "^4.0.0"
+      }
+    }, null, 2), "utf8");
+    await writeFile(join(appRoot, "index.html"), "<!doctype html><div id=\"root\"></div>\n", "utf8");
+    await writeFile(join(appRoot, "src", "main.tsx"), "console.log('main')\n", "utf8");
+    await writeFile(join(appRoot, "src", "App.tsx"), "export default function App() { return <main>Console</main>; }\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<{
+        repositoryContext: {
+          packageManager: string;
+          workspaceShape: string;
+          languageStyle: string;
+          moduleFormat: string;
+          uiFramework: string;
+          styling: string;
+          testing: string;
+          linting: string;
+          conventions: string[];
+        };
+      }>;
+    };
+
+    const plan = await runner.buildExecutionPlan("Improve the console app dashboard.", "apps/console");
+
+    assert.equal(plan.repositoryContext.packageManager, "pnpm");
+    assert.equal(plan.repositoryContext.workspaceShape, "single-package");
+    assert.equal(plan.repositoryContext.languageStyle, "typescript");
+    assert.equal(plan.repositoryContext.moduleFormat, "esm");
+    assert.equal(plan.repositoryContext.uiFramework, "react");
+    assert.equal(plan.repositoryContext.styling, "mixed");
+    assert.equal(plan.repositoryContext.testing, "vitest");
+    assert.equal(plan.repositoryContext.linting, "eslint");
+    assert.equal(plan.repositoryContext.conventions.some((item) => /TypeScript/i.test(item)), true);
+  });
+});
+
+test("AgentTaskRunner spec verification catches malformed package manifests and missing readmes", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "generated-apps", "broken-service");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(appRoot, "package.json"), "{ broken json\n", "utf8");
+    await writeFile(join(appRoot, "src", "server.js"), "console.log('service')\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<unknown>;
+      verifyExecutionSpec: (
+        plan: unknown,
+        artifactType: string,
+        scripts: Record<string, string>
+      ) => Promise<Array<{ id: string; status: string; details: string }>>;
+    };
+
+    const plan = await runner.buildExecutionPlan(
+      "Create a new API service in generated-apps/broken-service with README and runnable scripts.",
+      "generated-apps/broken-service"
+    );
+    const checks = await runner.verifyExecutionSpec(plan, "api-service", {});
+    const hygiene = checks.find((check) => check.id === "spec-hygiene");
+
+    assert.equal(hygiene?.status, "failed");
+    assert.match(hygiene?.details ?? "", /Malformed package manifest/);
+    assert.match(hygiene?.details ?? "", /Missing README/);
+    assert.match(hygiene?.details ?? "", /Missing build script/);
+  });
+});
+
+test("AgentTaskRunner writes a generated project README when one is missing", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "generated-apps", "alpha-tool");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({
+      name: "alpha-tool",
+      private: true,
+      version: "0.1.0",
+      scripts: {
+        build: "node -e \"console.log('ok')\"",
+        start: "node src/index.js"
+      }
+    }, null, 2), "utf8");
+    await writeFile(join(appRoot, "src", "index.js"), "console.log('ok')\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<unknown>;
+      ensureGeneratedProjectReadme: (plan: unknown, artifactType?: string) => Promise<void>;
+    };
+
+    const plan = await runner.buildExecutionPlan(
+      "Create a new CLI tool in generated-apps/alpha-tool with docs.",
+      "generated-apps/alpha-tool"
+    );
+    await runner.ensureGeneratedProjectReadme(plan, "script-tool");
+
+    const readme = await readFile(join(appRoot, "README.md"), "utf8");
+    assert.match(readme, /Starter profile:/);
+    assert.match(readme, /## Quality Gates/);
+    assert.match(readme, /npm start/);
+  });
+});
+
+test("AgentTaskRunner repairs execution brief failures with scoped structured edits", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "generated-apps", "repair-service");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({
+      name: "repair-service",
+      private: true,
+      version: "0.1.0",
+      scripts: {
+        build: "node -e \"console.log('ok')\"",
+        start: "node src/server.js"
+      }
+    }, null, 2), "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<unknown>;
+      tryAutoFixExecutionSpec: (
+        task: { id: string; prompt: string; steps: unknown[]; status: "running"; updatedAt: string },
+        plan: unknown,
+        artifactType: string,
+        specChecks: Array<{ id: string; label: string; status: "failed"; details: string }>
+      ) => Promise<boolean>;
+      requestStructuredFix: (...args: unknown[]) => Promise<{ summary: string; edits: Array<{ path: string; content: string }> }>;
+      collectFixContextFiles: () => Promise<Array<{ path: string; content: string }>>;
+      filterValidEdits: (edits: Array<{ path: string; content: string }>, plan?: unknown) => Array<{ path: string; content: string }>;
+      applyStructuredEdits: (taskId: string, attempt: number, edits: Array<{ path: string; content: string }>) => Promise<string[]>;
+      prepareGeneratedWorkspace: (taskId: string, plan: unknown) => Promise<void>;
+      appendLog: (taskId: string, line: string) => void;
+    };
+
+    const plan = await runner.buildExecutionPlan(
+      "Create a new API service in generated-apps/repair-service with README and runnable scripts.",
+      "generated-apps/repair-service"
+    );
+
+    let capturedPrompt = "";
+    let applied: Array<{ path: string; content: string }> = [];
+    runner.collectFixContextFiles = async () => [{ path: "generated-apps/repair-service/package.json", content: "{}" }];
+    runner.requestStructuredFix = async (_taskId, prompt) => {
+      capturedPrompt = String(prompt);
+      return {
+        summary: "Added the missing README and service entry.",
+        edits: [
+          { path: "generated-apps/repair-service/README.md", content: "# Repair Service\n" },
+          { path: "generated-apps/repair-service/src/server.js", content: "console.log('ok')\n" }
+        ]
+      };
+    };
+    runner.filterValidEdits = (edits) => edits;
+    runner.applyStructuredEdits = async (_taskId, _attempt, edits) => {
+      applied = edits;
+      return edits.map((edit) => edit.path);
+    };
+    runner.prepareGeneratedWorkspace = async () => {};
+    runner.appendLog = () => {};
+
+    const repaired = await runner.tryAutoFixExecutionSpec({
+      id: "task-1",
+      prompt: "Create a new API service in generated-apps/repair-service with README and runnable scripts.",
+      steps: [],
+      status: "running",
+      updatedAt: new Date().toISOString()
+    }, plan, "api-service", [
+      { id: "spec-deliverables", label: "Plan deliverables", status: "failed", details: "Missing expected deliverables for node-api-service: generated-apps/repair-service/README.md." }
+    ]);
+
+    assert.equal(repaired, true);
+    assert.equal(capturedPrompt.includes("Required deliverables"), true);
+    assert.equal(applied.some((edit) => edit.path.endsWith("README.md")), true);
+  });
+});
+
+test("AgentTaskRunner includes repository conventions in structured repair prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const appRoot = join(workspaceRoot, "generated-apps", "repo-aware-fix");
+    await mkdir(join(appRoot, "src"), { recursive: true });
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({
+      name: "repo-aware-fix",
+      private: true,
+      version: "0.1.0",
+      type: "module"
+    }, null, 2), "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      buildExecutionPlan: (prompt: string, workingDirectory?: string) => Promise<unknown>;
+      requestStructuredFix: (
+        taskId: string,
+        userPrompt: string,
+        commandResult: {
+          combinedOutput: string;
+          ok: boolean;
+          code: number | null;
+          signal: string | null;
+          stdout: string;
+          stderr: string;
+          durationMs: number;
+          timedOut: boolean;
+          commandLine: string;
+          cwd: string;
+        },
+        contextFiles: Array<{ path: string; content: string }>,
+        attempt: number,
+        stageLabel?: string,
+        plan?: unknown
+      ) => Promise<{ summary: string; edits: Array<{ path: string; content: string }> }>;
+      sendFixModelRequest: (
+        taskId: string,
+        routes: unknown[],
+        messages: Array<{ role: string; content: string }>
+      ) => Promise<string>;
+      resolveModelRoutes: () => Array<{ model: string; baseUrl: string; apiKey: string; skipAuth: boolean }>;
+      appendLog: (taskId: string, line: string) => void;
+      ccrService: { sendMessageAdvanced: () => Promise<void> };
+    };
+
+    const plan = await runner.buildExecutionPlan(
+      "Repair the generated API service in generated-apps/repo-aware-fix.",
+      "generated-apps/repo-aware-fix"
+    );
+
+    let captured = "";
+    runner.resolveModelRoutes = () => [{ model: "test-model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "", skipAuth: false }];
+    runner.appendLog = () => {};
+    runner.sendFixModelRequest = async (_taskId, _routes, messages) => {
+      captured = messages.map((message) => message.content).join("\n");
+      return "{\"summary\":\"ok\",\"edits\":[{\"path\":\"generated-apps/repo-aware-fix/README.md\",\"content\":\"# Repo Aware Fix\\n\"}]}";
+    };
+
+    const result = await runner.requestStructuredFix(
+      "task-1",
+      "Repair the generated API service.",
+      {
+        combinedOutput: "Missing README",
+        ok: false,
+        code: 1,
+        signal: null,
+        stdout: "",
+        stderr: "Missing README",
+        durationMs: 0,
+        timedOut: false,
+        commandLine: "verify",
+        cwd: workspaceRoot
+      },
+      [{ path: "generated-apps/repo-aware-fix/package.json", content: "{}" }],
+      1,
+      "Execution spec",
+      plan
+    );
+
+    assert.equal(result.edits.length, 1);
+    assert.match(captured, /Repository context:/);
+    assert.match(captured, /Keep Node-facing code in ESM format|Repo conventions:/);
+  });
+});
+
 test("AgentTaskRunner startup verification stays passed when terminate triggers a later exit event", async () => {
   await withTempDir(async (workspaceRoot) => {
     class FakeStream extends EventEmitter {
@@ -1417,6 +1952,57 @@ test("AgentTaskRunner startup verification stays passed when terminate triggers 
   });
 });
 
+test("AgentTaskRunner startup verification waits for cleanup before resolving", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    class FakeStream extends EventEmitter {
+      setEncoding(): this { return this; }
+    }
+
+    class FakeProc extends EventEmitter {
+      stdout = new FakeStream();
+      stderr = new FakeStream();
+      pid = 1234;
+      killed = false;
+      exitCode: number | null = null;
+    }
+
+    const runner = createRunner(workspaceRoot) as never as {
+      executeStartupVerification: (
+        taskId: string,
+        request: { command: string; args?: string[]; cwd?: string },
+        verifyMs: number
+      ) => Promise<{ ok: boolean; code: number | null; signal: string | null }>;
+      spawnTaskProcess: (command: string, args: string[], cwd: string) => FakeProc;
+      terminateProcessTree: (proc: FakeProc) => Promise<void>;
+      appendLog: (taskId: string, line: string) => void;
+      appendOutput: (taskId: string, text: string) => void;
+      activeProcesses: Map<string, FakeProc>;
+    };
+
+    const order: string[] = [];
+    const proc = new FakeProc();
+    runner.spawnTaskProcess = () => proc;
+    runner.terminateProcessTree = async () => {
+      order.push("terminate:start");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      order.push("terminate:end");
+    };
+    runner.appendLog = () => {};
+    runner.appendOutput = () => {};
+    runner.activeProcesses = new Map();
+
+    const result = await runner.executeStartupVerification("task-1", {
+      command: "npm.cmd",
+      args: ["start"],
+      cwd: "."
+    }, 10);
+    order.push("resolved");
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(order, ["terminate:start", "terminate:end", "resolved"]);
+  });
+});
+
 test("AgentTaskRunner does not treat package names containing exceptions as startup failures", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
@@ -1430,6 +2016,56 @@ test("AgentTaskRunner does not treat package names containing exceptions as star
     assert.equal(
       runner.hasStartupFailureSignal("Unhandled exception while booting service"),
       true
+    );
+  });
+});
+
+test("AgentTaskRunner recognizes transient generated install lock failures", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      isTransientGeneratedInstallLockFailure: (result: {
+        combinedOutput?: string;
+        stderr?: string;
+        stdout?: string;
+      }) => boolean;
+    };
+
+    assert.equal(
+      runner.isTransientGeneratedInstallLockFailure({
+        combinedOutput: "npm error code EBUSY\nnpm error errno -4082\nnpm error EBUSY: resource busy or locked, rename 'node_modules\\\\electron\\\\dist\\\\resources\\\\default_app.asar'"
+      }),
+      true
+    );
+    assert.equal(
+      runner.isTransientGeneratedInstallLockFailure({
+        combinedOutput: "npm error code ETARGET\nnpm error notarget No matching version found"
+      }),
+      false
+    );
+  });
+});
+
+test("AgentTaskRunner recognizes transient generated packaging lock failures", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      isTransientGeneratedPackagingLockFailure: (result: {
+        combinedOutput?: string;
+        stderr?: string;
+        stdout?: string;
+      }) => boolean;
+    };
+
+    assert.equal(
+      runner.isTransientGeneratedPackagingLockFailure({
+        combinedOutput: "Error: EPERM: operation not permitted, unlink 'D:\\\\tmp\\\\desktop-smoke\\\\release\\\\win-unpacked\\\\resources\\\\app.asar'"
+      }),
+      true
+    );
+    assert.equal(
+      runner.isTransientGeneratedPackagingLockFailure({
+        combinedOutput: "electron-builder could not resolve icon.ico"
+      }),
+      false
     );
   });
 });
@@ -1555,6 +2191,85 @@ test("AgentTaskRunner uses stage-aware route order for implementation, repair, a
     assert.equal(runner.resolveModelRoutes("Implementation")[0]?.model, "generator-model");
     assert.equal(runner.resolveModelRoutes("Build recovery")[0]?.model, "repair-model");
     assert.equal(runner.resolveModelRoutes("Plan task execution")[0]?.model, "planner-model");
+  });
+});
+
+test("AgentTaskRunner prefers coding-focused cloud models for repair stages", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunnerWithServices(workspaceRoot, {
+      apiKey: "sk-or-v1-secret",
+      defaultModel: "deepseek/deepseek-v3.2",
+      models: ["deepseek/deepseek-v3.2", "qwen/qwen3-coder-next", "google/gemini-2.5-flash-lite-preview-09-2025"],
+      routing: {
+        default: "deepseek/deepseek-v3.2",
+        think: "deepseek/deepseek-v3.2",
+        longContext: "google/gemini-2.5-flash-lite-preview-09-2025"
+      }
+    }) as never as {
+      resolveModelRoutes: (stageLabel?: string) => Array<{ model: string }>;
+    };
+
+    assert.equal(runner.resolveModelRoutes("Build recovery")[0]?.model, "qwen/qwen3-coder-next");
+  });
+});
+
+test("AgentTaskRunner prefers long-context cloud models for planner stages even without a dedicated planner route", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunnerWithServices(workspaceRoot, {
+      apiKey: "sk-or-v1-secret",
+      defaultModel: "qwen/qwen3-coder-next",
+      models: ["qwen/qwen3-coder-next", "google/gemini-2.5-flash-lite-preview-09-2025", "anthropic/claude-3.7-sonnet"],
+      routing: {
+        default: "qwen/qwen3-coder-next",
+        think: "qwen/qwen3-coder-next",
+        longContext: "qwen/qwen3-coder-next"
+      }
+    }) as never as {
+      resolveModelRoutes: (stageLabel?: string) => Array<{ model: string }>;
+    };
+
+    assert.equal(runner.resolveModelRoutes("Plan task execution")[0]?.model, "google/gemini-2.5-flash-lite-preview-09-2025");
+  });
+});
+
+test("AgentTaskRunner prefers coding-focused cloud models for implementation stages even when the default route is generic", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunnerWithServices(workspaceRoot, {
+      apiKey: "sk-or-v1-secret",
+      defaultModel: "deepseek/deepseek-v3.2",
+      models: ["deepseek/deepseek-v3.2", "qwen/qwen3-coder-next", "google/gemini-2.5-flash-lite-preview-09-2025"],
+      routing: {
+        default: "deepseek/deepseek-v3.2",
+        think: "deepseek/deepseek-v3.2",
+        longContext: "google/gemini-2.5-flash-lite-preview-09-2025"
+      }
+    }) as never as {
+      resolveModelRoutes: (stageLabel?: string) => Array<{ model: string }>;
+    };
+
+    assert.equal(runner.resolveModelRoutes("Implementation")[0]?.model, "qwen/qwen3-coder-next");
+  });
+});
+
+test("AgentTaskRunner prefers vision-capable cloud models when the task includes image input", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunnerWithServices(workspaceRoot, {
+      apiKey: "sk-or-v1-secret",
+      defaultModel: "qwen/qwen3-coder-next",
+      models: ["qwen/qwen3-coder-next", "google/gemini-2.5-flash-lite-preview-09-2025", "meta/llama-3.1-70b-instruct"],
+      routing: {
+        default: "qwen/qwen3-coder-next",
+        think: "qwen/qwen3-coder-next",
+        longContext: "meta/llama-3.1-70b-instruct"
+      }
+    }) as never as {
+      resolveModelRoutes: (stageLabel?: string, options?: { requiresVision?: boolean }) => Array<{ model: string }>;
+    };
+
+    assert.equal(
+      runner.resolveModelRoutes("Implementation", { requiresVision: true })[0]?.model,
+      "google/gemini-2.5-flash-lite-preview-09-2025"
+    );
   });
 });
 
@@ -1736,7 +2451,7 @@ test("AgentTaskRunner records selected and fallback model telemetry during route
   });
 });
 
-test("AgentTaskRunner blacklists a model for the rest of the task after two failures", async () => {
+test("AgentTaskRunner blacklists a transiently failing model only after repeated failures and then stops retrying it", async () => {
   await withTempDir(async (workspaceRoot) => {
     const seenModels: string[] = [];
     const runner = createRunnerWithServices(workspaceRoot, {}, {
@@ -1802,6 +2517,7 @@ test("AgentTaskRunner blacklists a model for the rest of the task after two fail
       "first-model",
       "first-model",
       "second-model",
+      "first-model",
       "second-model"
     ]);
   });
@@ -2077,6 +2793,105 @@ test("AgentTaskRunner ignores soak markers when extracting explicit prompt file 
   });
 });
 
+test("AgentTaskRunner ignores bare Node.js mentions when extracting explicit prompt file paths", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      extractExplicitPromptFilePaths: (prompt: string, workingDirectory: string) => string[];
+    };
+
+    const requestedPaths = runner.extractExplicitPromptFilePaths(
+      "Build an Electron app with Node.js backend logic, plus main.js and preload.js.",
+      "generated-apps/desktop-smoke"
+    );
+
+    assert.deepEqual(requestedPaths.sort(), [
+      "generated-apps/desktop-smoke/main.js",
+      "generated-apps/desktop-smoke/preload.js"
+    ]);
+  });
+});
+
+test("AgentTaskRunner approval gate blocks desktop outputs missing packaging signals", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildTaskApproval: (
+        plan: {
+          spec: { starterProfile: string };
+        },
+        task: {
+          artifactType?: string;
+          verification?: { checks: Array<{ label: string; status: string }> };
+        },
+        packageManifest: { main?: string } | null,
+        scripts: Record<string, string | undefined>
+      ) => { ok: boolean; summary: string };
+    };
+
+    const approval = runner.buildTaskApproval(
+      {
+        spec: { starterProfile: "electron-desktop" }
+      },
+      {
+        artifactType: "desktop-app",
+        verification: {
+          checks: [{ label: "Build", status: "passed" }]
+        }
+      },
+      {
+        main: "dist/main.js"
+      },
+      {
+        build: "npm run build",
+        start: "electron ."
+      }
+    );
+
+    assert.equal(approval.ok, false);
+    assert.match(approval.summary, /package:win script is missing/i);
+  });
+});
+
+test("AgentTaskRunner approval gate passes healthy desktop outputs", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildTaskApproval: (
+        plan: {
+          spec: { starterProfile: string };
+        },
+        task: {
+          artifactType?: string;
+          verification?: { checks: Array<{ label: string; status: string }> };
+        },
+        packageManifest: { main?: string } | null,
+        scripts: Record<string, string | undefined>
+      ) => { ok: boolean; summary: string };
+    };
+
+    const approval = runner.buildTaskApproval(
+      {
+        spec: { starterProfile: "electron-desktop" }
+      },
+      {
+        artifactType: "desktop-app",
+        verification: {
+          checks: [{ label: "Build", status: "passed" }]
+        }
+      },
+      {
+        main: "dist/main.js"
+      },
+      {
+        build: "npm run build",
+        start: "electron .",
+        "package:win": "electron-builder --win nsis"
+      }
+    );
+
+    assert.equal(approval.ok, true);
+    assert.match(approval.summary, /approval passed for desktop output/i);
+  });
+});
+
 test("AgentTaskRunner uses node-package bootstrap for new script-tool prompts in the Cipher workspace", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
@@ -2128,7 +2943,7 @@ test("AgentTaskRunner bootstraps kanban prompts into generated react projects", 
       detectBootstrapPlan: (
         prompt: string,
         inspection: { packageName?: string }
-      ) => { template: string; targetDirectory: string } | null;
+      ) => { template: string; targetDirectory: string; starterProfile?: string } | null;
     };
 
     const plan = runner.detectBootstrapPlan(
@@ -2137,7 +2952,264 @@ test("AgentTaskRunner bootstraps kanban prompts into generated react projects", 
     );
 
     assert.equal(plan?.template, "react-vite");
+    assert.equal(plan?.starterProfile, "react-kanban");
     assert.match(plan?.targetDirectory ?? "", /^generated-apps\//);
+  });
+});
+
+test("AgentTaskRunner keeps desktop prompts on the desktop scaffold even when a static folder already exists", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      extractExplicitPromptFilePaths: (prompt: string, workingDirectory: string) => string[];
+      resolveWorkspaceKindForPrompt: (
+        prompt: string,
+        detectedKind: "static" | "react" | "generic",
+        requestedPaths: string[]
+      ) => "static" | "react" | "generic";
+      buildBootstrapPlanForTarget: (
+        prompt: string,
+        targetDirectory: string
+      ) => { template: "static" | "react-vite" | "nextjs" | "node-package"; starterProfile: string };
+    };
+
+    const prompt = [
+      "Build a production-ready Electron desktop app in generated-apps/youtube-video-summarizer-pro.",
+      "Required files: main.js, preload.js, renderer.js, index.html, styles.css."
+    ].join(" ");
+
+    const requestedPaths = runner.extractExplicitPromptFilePaths(prompt, "generated-apps/youtube-video-summarizer-pro");
+    const workspaceKind = runner.resolveWorkspaceKindForPrompt(prompt, "static", requestedPaths);
+    const plan = runner.buildBootstrapPlanForTarget(prompt, "generated-apps/youtube-video-summarizer-pro");
+
+    assert.equal(workspaceKind, "react");
+    assert.equal(plan.template, "react-vite");
+    assert.equal(plan.starterProfile, "electron-desktop");
+  });
+});
+
+test("AgentTaskRunner uses richer dashboard starter files for react bootstrap profiles", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildReactBootstrapStarterFiles: (plan: {
+        starterProfile: string;
+        targetDirectory: string;
+        domainFocus?: string;
+      }) => Array<{ path: string; content: string }>;
+    };
+
+    const files = runner.buildReactBootstrapStarterFiles({
+      starterProfile: "react-dashboard",
+      targetDirectory: "generated-apps/ops-board"
+    });
+
+    assert.ok(files.some((file) => file.path === "src/App.tsx" && /KPI|metric|incident/i.test(file.content)));
+    assert.ok(files.some((file) => file.path === "src/App.css"));
+    assert.ok(files.some((file) => file.path === "src/index.css"));
+  });
+});
+
+test("AgentTaskRunner uses a desktop-specific starter shell for electron bootstrap profiles", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildReactBootstrapStarterFiles: (plan: {
+        starterProfile: string;
+        targetDirectory: string;
+        domainFocus?: string;
+      }) => Array<{ path: string; content: string }>;
+    };
+
+    const files = runner.buildReactBootstrapStarterFiles({
+      starterProfile: "electron-desktop",
+      targetDirectory: "generated-apps/desk-ops"
+    });
+
+    assert.ok(files.some((file) => file.path === "src/App.tsx" && /Desktop starter app|Launch checklist|Quick actions/i.test(file.content)));
+    assert.ok(files.some((file) => file.path === "src/App.css" && /desktop-starter-shell/.test(file.content)));
+    assert.ok(files.some((file) => file.path === "src/index.css" && /color-scheme: dark/.test(file.content)));
+  });
+});
+
+test("AgentTaskRunner applies finance-specific dashboard starter copy when domain focus is finance", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildReactBootstrapStarterFiles: (plan: {
+        starterProfile: string;
+        targetDirectory: string;
+        domainFocus?: string;
+      }) => Array<{ path: string; content: string }>;
+    };
+
+    const files = runner.buildReactBootstrapStarterFiles({
+      starterProfile: "react-dashboard",
+      targetDirectory: "generated-apps/finance-board",
+      domainFocus: "finance"
+    });
+
+    assert.ok(files.some((file) => file.path === "src/App.tsx" && /collections|budget|finance/i.test(file.content)));
+  });
+});
+
+test("AgentTaskRunner dashboard starter passes ui smoke for finance filter prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildReactBootstrapStarterFiles: (plan: {
+        starterProfile: string;
+        targetDirectory: string;
+        domainFocus?: string;
+      }) => Array<{ path: string; content: string }>;
+      verifyBasicUiSmoke: (plan: {
+        workingDirectory: string;
+        workspaceKind: "static" | "react" | "generic";
+        builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+        promptRequirements?: Array<{ id: string }>;
+      }) => Promise<{ status: string; details: string }>;
+    };
+
+    const targetDirectory = "generated-apps/finance-board";
+    const files = runner.buildReactBootstrapStarterFiles({
+      starterProfile: "react-dashboard",
+      targetDirectory,
+      domainFocus: "finance"
+    });
+
+    await mkdir(join(workspaceRoot, targetDirectory, "src"), { recursive: true });
+    for (const file of files) {
+      await writeFile(join(workspaceRoot, targetDirectory, file.path), file.content, "utf8");
+    }
+
+    const result = await runner.verifyBasicUiSmoke({
+      workingDirectory: targetDirectory,
+      workspaceKind: "react",
+      builderMode: "dashboard",
+      promptRequirements: [{ id: "req-search-filter" }]
+    });
+
+    assert.equal(result.status, "passed");
+  });
+});
+
+test("AgentTaskRunner applies inventory-specific CRUD starter copy when domain focus is inventory", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildReactBootstrapStarterFiles: (plan: {
+        starterProfile: string;
+        targetDirectory: string;
+        domainFocus?: string;
+      }) => Array<{ path: string; content: string }>;
+    };
+
+    const files = runner.buildReactBootstrapStarterFiles({
+      starterProfile: "react-crud",
+      targetDirectory: "generated-apps/stock-room",
+      domainFocus: "inventory"
+    });
+
+    assert.ok(files.some((file) => file.path === "src/App.tsx" && /Inventory workspace|SKU|supplier/i.test(file.content)));
+  });
+});
+
+test("AgentTaskRunner applies scheduling-specific desktop starter copy when domain focus is scheduling", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildReactBootstrapStarterFiles: (plan: {
+        starterProfile: string;
+        targetDirectory: string;
+        domainFocus?: string;
+      }) => Array<{ path: string; content: string }>;
+    };
+
+    const files = runner.buildReactBootstrapStarterFiles({
+      starterProfile: "electron-desktop",
+      targetDirectory: "generated-apps/dispatch-desk",
+      domainFocus: "scheduling"
+    });
+
+    assert.ok(files.some((file) => file.path === "src/App.tsx" && /dispatch|booking|schedule/i.test(file.content)));
+  });
+});
+
+test("AgentTaskRunner uses marketing sections in the static bootstrap starter", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildStaticBootstrapHtml: (projectName: string, starterProfile?: string) => string;
+      buildStaticBootstrapCss: (starterProfile?: string) => string;
+    };
+
+    const html = runner.buildStaticBootstrapHtml("launch-board", "static-marketing");
+    const css = runner.buildStaticBootstrapCss("static-marketing");
+
+    assert.match(html, /feature-grid/);
+    assert.match(html, /Start trial/);
+    assert.match(css, /marketing-shell/);
+  });
+});
+
+test("AgentTaskRunner uses richer API service starter content for node-package bootstrap", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildNodePackageStarterContent: (projectName: string, artifactType?: string, domainFocus?: string) => Array<{ path: string; content: string }>;
+      buildNodePackageScripts: (artifactType?: string) => Record<string, string>;
+    };
+
+    const files = runner.buildNodePackageStarterContent("service-alpha", "api-service");
+    const scripts = runner.buildNodePackageScripts("api-service");
+
+    assert.ok(files.some((file) => file.path === "src/server.js" && /\/health/.test(file.content)));
+    assert.ok(files.some((file) => file.path === "test/server.test.js"));
+    assert.equal(scripts.test, "node --test");
+  });
+});
+
+test("AgentTaskRunner applies domain-aware API starter resources for finance services", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildNodePackageStarterContent: (projectName: string, artifactType?: string, domainFocus?: string) => Array<{ path: string; content: string }>;
+    };
+
+    const files = runner.buildNodePackageStarterContent("billing-service", "api-service", "finance");
+
+    assert.ok(files.some((file) => file.path === "src/server.js" && /\/invoices/.test(file.content)));
+    assert.ok(files.some((file) => file.path === "src/server.js" && /customer/.test(file.content)));
+  });
+});
+
+test("AgentTaskRunner shapes CLI bootstrap manifests and launcher files", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildNodePackageManifest: (projectName: string, artifactType?: string) => {
+        bin?: Record<string, string>;
+        scripts?: Record<string, string>;
+      };
+      buildNodePackageStarterContent: (projectName: string, artifactType?: string) => Array<{ path: string; content: string }>;
+    };
+
+    const manifest = runner.buildNodePackageManifest("audit-tool", "script-tool");
+    const files = runner.buildNodePackageStarterContent("audit-tool", "script-tool");
+
+    assert.equal(manifest.bin?.["audit-tool"], "./bin/cli.mjs");
+    assert.equal(manifest.scripts?.start, "node src/index.js");
+    assert.ok(files.some((file) => file.path === "bin/cli.mjs" && /import '\.\.\/src\/index\.js';/.test(file.content)));
+  });
+});
+
+test("AgentTaskRunner shapes library bootstrap manifests with exports", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      buildNodePackageManifest: (projectName: string, artifactType?: string) => {
+        main?: string;
+        exports?: Record<string, string> | string;
+        scripts?: Record<string, string>;
+      };
+      buildNodePackageStarterContent: (projectName: string, artifactType?: string) => Array<{ path: string; content: string }>;
+    };
+
+    const manifest = runner.buildNodePackageManifest("metrics-kit", "library");
+    const files = runner.buildNodePackageStarterContent("metrics-kit", "library");
+
+    assert.equal(manifest.main, "./src/index.js");
+    assert.deepEqual(manifest.exports, { ".": "./src/index.js" });
+    assert.equal(manifest.scripts?.test, "node --test");
+    assert.ok(files.some((file) => file.path === "src/index.js" && /formatCompactCount|formatPercentDelta/.test(file.content)));
   });
 });
 
@@ -2234,6 +3306,158 @@ test("AgentTaskRunner verifies explicitly requested files even in react workspac
     assert.equal(result.status, "failed");
     assert.match(result.details, /styles\.css/);
     assert.match(result.details, /app\.js/);
+  });
+});
+
+test("AgentTaskRunner accepts legacy desktop filename requests when the modern electron react scaffold exists", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps/desktop-smoke/src"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps/desktop-smoke/electron"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps/desktop-smoke/scripts"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/package.json"), "{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/index.html"), "<!doctype html>\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/src/main.tsx"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/src/App.tsx"), "export function App() { return null; }\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/src/App.css"), ".app{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/src/index.css"), ":root{}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/electron/main.mjs"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/electron/preload.mjs"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/scripts/desktop-launch.mjs"), "console.log('launch');\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyExpectedEntryFiles: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          requestedPaths: string[];
+        },
+        artifactType: string
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyExpectedEntryFiles({
+      workingDirectory: "generated-apps/desktop-smoke",
+      workspaceKind: "react",
+      requestedPaths: [
+        "generated-apps/desktop-smoke/main.js",
+        "generated-apps/desktop-smoke/preload.js",
+        "generated-apps/desktop-smoke/renderer.js",
+        "generated-apps/desktop-smoke/styles.css"
+      ]
+    }, "desktop-app");
+
+    assert.equal(result.status, "passed");
+    assert.match(result.details, /generated-apps\/desktop-smoke\/main\.js/);
+    assert.match(result.details, /generated-apps\/desktop-smoke\/styles\.css/);
+  });
+});
+
+test("AgentTaskRunner retries Windows desktop packaging after transient app.asar lock failures", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps/desktop-smoke/release/win-unpacked/resources"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/release/win-unpacked/resources/app.asar"), "stale", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyWindowsDesktopPackaging: (
+        taskId: string,
+        plan: { workingDirectory: string },
+        scripts: Record<string, string>
+      ) => Promise<{ status: string; details: string }>;
+      executeCommand: (taskId: string, request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) => Promise<{
+        ok: boolean;
+        combinedOutput: string;
+        stdout: string;
+        stderr: string;
+      }>;
+    };
+
+    let attempts = 0;
+    runner.executeCommand = async (_taskId, request) => {
+      if (!/npm(?:\.cmd)?$/i.test(request.command)) {
+        return {
+          ok: true,
+          combinedOutput: "",
+          stdout: "",
+          stderr: ""
+        };
+      }
+
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          ok: false,
+          combinedOutput: "Error: EPERM: operation not permitted, unlink 'D:\\\\tmp\\\\desktop-smoke\\\\release\\\\win-unpacked\\\\resources\\\\app.asar'",
+          stdout: "",
+          stderr: "EPERM unlink app.asar"
+        };
+      }
+
+      await mkdir(join(workspaceRoot, "generated-apps/desktop-smoke/release"), { recursive: true });
+      await writeFile(join(workspaceRoot, "generated-apps/desktop-smoke/release/desktop-smoke Setup.exe"), "installer", "utf8");
+      return {
+        ok: true,
+        combinedOutput: "packaging complete",
+        stdout: "packaging complete",
+        stderr: ""
+      };
+    };
+
+    const result = await runner.verifyWindowsDesktopPackaging(
+      "task-1",
+      { workingDirectory: "generated-apps/desktop-smoke" },
+      { "package:win": "electron-builder --win" }
+    );
+
+    assert.equal(attempts, 2);
+    assert.equal(result.status, "passed");
+    assert.match(result.details, /desktop-smoke Setup\.exe/);
+    await assert.rejects(
+      () => readFile(join(workspaceRoot, "generated-apps/desktop-smoke/release/win-unpacked/resources/app.asar"), "utf8")
+    );
+  });
+});
+
+test("AgentTaskRunner fails UI smoke for starter placeholder desktop shells", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps/desktop-shell/src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-shell/src/App.tsx"), `
+      export default function App() {
+        return (
+          <main>
+            <h1>Youtube Video Summarizer Pro</h1>
+            <button type="button">Open primary action</button>
+            <section>
+              <h2>Focused desktop shell</h2>
+              <p>Replace this starter shell with the real product workflow.</p>
+            </section>
+          </main>
+        );
+      }
+    `, "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-shell/src/main.tsx"), "export {};\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/desktop-shell/index.html"), "<!doctype html><div id=\"root\"></div>\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyBasicUiSmoke: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+          promptRequirements: Array<{ id: string }>;
+        }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyBasicUiSmoke({
+      workingDirectory: "generated-apps/desktop-shell",
+      workspaceKind: "react",
+      builderMode: null,
+      promptRequirements: [{ id: "req-summary" }]
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.details, /starter placeholder markers/i);
+    assert.match(result.details, /open primary action/i);
   });
 });
 
@@ -2396,6 +3620,106 @@ test("AgentTaskRunner passes UI smoke for static notes apps with heading, action
     assert.equal(result.status, "passed");
     assert.match(result.details, /input flow/i);
     assert.match(result.details, /stateful flow/i);
+    assert.match(result.details, /notes persistence flow/i);
+  });
+});
+
+test("AgentTaskRunner does not reuse desktop bootstrap directories when package:win is missing", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "src"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "electron"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "node_modules", "@vitejs", "plugin-react"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "node_modules", "vite"), { recursive: true });
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-smoke", "node_modules", "react"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "package.json"), JSON.stringify({
+      name: "desktop-smoke",
+      scripts: {
+        start: "node scripts/desktop-launch.mjs",
+        build: "vite build"
+      }
+    }, null, 2) + "\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "index.html"), "<!doctype html><div id=\"root\"></div>\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "main.tsx"), "export {}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "src", "App.tsx"), "export default function App() { return null; }\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "electron", "main.mjs"), "export {}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "scripts", "desktop-launch.mjs"), "console.log('launch');\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "node_modules", "@vitejs", "plugin-react", "package.json"), "{\"name\":\"@vitejs/plugin-react\"}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "node_modules", "vite", "package.json"), "{\"name\":\"vite\"}\n", "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-smoke", "node_modules", "react", "package.json"), "{\"name\":\"react\"}\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      isReusableBootstrapDirectory: (plan: {
+        template: "react-vite" | "static" | "nextjs" | "node-package";
+        targetDirectory: string;
+        artifactType?: string;
+        starterProfile?: string;
+      }) => Promise<boolean>;
+    };
+
+    const reusable = await runner.isReusableBootstrapDirectory({
+      template: "react-vite",
+      targetDirectory: "generated-apps/desktop-smoke",
+      artifactType: "desktop-app",
+      starterProfile: "electron-desktop"
+    });
+
+    assert.equal(reusable, false);
+  });
+});
+
+test("AgentTaskRunner accepts desktop recovery edits for implicit react and electron scaffold files", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      filterValidEdits: (
+        edits: Array<{ path: string; content: string }>,
+        plan?: {
+          workingDirectory: string;
+          workspaceKind: "react" | "static" | "generic";
+          candidateFiles: string[];
+          requestedPaths?: string[];
+          spec?: { starterProfile?: string; requiredFiles?: string[] };
+        }
+      ) => Array<{ path: string; content: string }>;
+    };
+
+    const accepted = runner.filterValidEdits(
+      [
+        { path: "generated-apps/youtube-video-summarizer-pro/src/App.css", content: ".app{}\n" },
+        { path: "generated-apps/youtube-video-summarizer-pro/src/index.css", content: ":root{}\n" },
+        { path: "generated-apps/youtube-video-summarizer-pro/scripts/desktop-launch.mjs", content: "console.log('launch')\n" }
+      ],
+      {
+        workingDirectory: "generated-apps/youtube-video-summarizer-pro",
+        workspaceKind: "react",
+        candidateFiles: [
+          "generated-apps/youtube-video-summarizer-pro/package.json",
+          "generated-apps/youtube-video-summarizer-pro/index.html",
+          "generated-apps/youtube-video-summarizer-pro/src/App.tsx"
+        ],
+        requestedPaths: [],
+        spec: {
+          starterProfile: "electron-desktop",
+          requiredFiles: [
+            "generated-apps/youtube-video-summarizer-pro/package.json",
+            "generated-apps/youtube-video-summarizer-pro/index.html",
+            "generated-apps/youtube-video-summarizer-pro/src/main.tsx",
+            "generated-apps/youtube-video-summarizer-pro/src/App.tsx",
+            "generated-apps/youtube-video-summarizer-pro/electron/main.mjs",
+            "generated-apps/youtube-video-summarizer-pro/scripts/desktop-launch.mjs"
+          ]
+        }
+      }
+    );
+
+    assert.deepEqual(
+      accepted.map((item) => item.path),
+      [
+        "generated-apps/youtube-video-summarizer-pro/src/App.css",
+        "generated-apps/youtube-video-summarizer-pro/src/index.css",
+        "generated-apps/youtube-video-summarizer-pro/scripts/desktop-launch.mjs"
+      ]
+    );
   });
 });
 
@@ -2479,6 +3803,64 @@ test("AgentTaskRunner fails UI smoke when interactive inputs do not show statefu
 
     assert.equal(result.status, "failed");
     assert.match(result.details, /stateful save\/update flow/i);
+  });
+});
+
+test("AgentTaskRunner fails notes UI smoke when note persistence markers are missing", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps/agent-smoke"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps/agent-smoke/index.html"), `
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <h1>Workspace</h1>
+            <form>
+              <input />
+              <textarea></textarea>
+              <button type="submit">Save</button>
+            </form>
+            <ul id="items"></ul>
+          </main>
+        </body>
+      </html>
+    `, "utf8");
+    await writeFile(join(workspaceRoot, "generated-apps/agent-smoke/app.js"), `
+      const items = [];
+      const form = document.querySelector("form");
+      const list = document.getElementById("items");
+      const render = () => {
+        list.replaceChildren(...items.map((item) => {
+          const el = document.createElement("li");
+          el.textContent = item;
+          return el;
+        }));
+      };
+      form?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        items.push("Saved item");
+        render();
+      });
+    `, "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyBasicUiSmoke: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+        }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyBasicUiSmoke({
+      workingDirectory: "generated-apps/agent-smoke",
+      workspaceKind: "static",
+      builderMode: "notes"
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.details, /note persistence markers/i);
   });
 });
 
@@ -2685,6 +4067,61 @@ test("AgentTaskRunner repairs failed CRUD UI smoke with a heuristic app fallback
 
     assert.equal(result.status, "passed");
     assert.match(result.details, /stateful flow/i);
+    assert.match(result.details, /crud mutation flow/i);
+  });
+});
+
+test("AgentTaskRunner fails CRUD UI smoke when record mutation markers are missing", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "crud-smoke", "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "crud-smoke", "src", "App.tsx"), `
+      import { FormEvent, useState } from "react";
+
+      export default function App() {
+        const [records, setRecords] = useState([{ id: 1, name: "Alpha" }]);
+        const [draft, setDraft] = useState("");
+
+        function handleSubmit(event: FormEvent) {
+          event.preventDefault();
+          const value = draft.trim();
+          if (!value) return;
+          setRecords((current) => [{ id: Date.now(), name: value }, ...current]);
+          setDraft("");
+        }
+
+        return (
+          <main>
+            <h1>Record manager</h1>
+            <form onSubmit={handleSubmit}>
+              <input value={draft} onChange={(event) => setDraft(event.target.value)} />
+              <button type="submit">Add record</button>
+            </form>
+            <section>
+              {records.map((record) => <article key={record.id} className="record-row">{record.name}</article>)}
+            </section>
+          </main>
+        );
+      }
+    `, "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyBasicUiSmoke: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "static" | "react" | "generic";
+          builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+        }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyBasicUiSmoke({
+      workingDirectory: "generated-apps/crud-smoke",
+      workspaceKind: "react",
+      builderMode: "crud"
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.details, /crud mutation markers/i);
   });
 });
 
@@ -3437,6 +4874,70 @@ test("AgentTaskRunner accepts JSON-object file content for strict package manife
   });
 });
 
+test("AgentTaskRunner accepts nested strict implementation payloads under summary", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tryParseFixResponse: (
+        raw: string,
+        responseLabel?: string,
+        options?: { strictSchema?: boolean }
+      ) => { fix?: { summary: string; edits: Array<{ path: string; content: string }> }; issue?: string } | null;
+    };
+
+    const parsed = runner.tryParseFixResponse(
+      JSON.stringify({
+        summary: {
+          edits: [{
+            path: "generated-apps/tool/package.json",
+            content: {
+              name: "tool",
+              private: true
+            }
+          }]
+        }
+      }),
+      "Implementation",
+      { strictSchema: true }
+    );
+
+    assert.equal(parsed?.issue, undefined);
+    assert.equal(parsed?.fix?.edits.length, 1);
+    assert.equal(parsed?.fix?.edits[0]?.path, "generated-apps/tool/package.json");
+    assert.match(parsed?.fix?.edits[0]?.content ?? "", /"name": "tool"/);
+    assert.match(parsed?.fix?.summary ?? "", /Recovered strict structured edits/i);
+  });
+});
+
+test("AgentTaskRunner rejects nested strict payloads with extra fields", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      tryParseFixResponse: (
+        raw: string,
+        responseLabel?: string,
+        options?: { strictSchema?: boolean }
+      ) => { fix?: { summary: string; edits: Array<{ path: string; content: string }> }; issue?: string } | null;
+    };
+
+    const parsed = runner.tryParseFixResponse(
+      JSON.stringify({
+        summary: {
+          edits: [{
+            path: "generated-apps/tool/package.json",
+            content: {
+              name: "tool"
+            }
+          }],
+          note: "extra wrapper text"
+        }
+      }),
+      "Implementation",
+      { strictSchema: true }
+    );
+
+    assert.equal(parsed?.issue, "schema-mismatch");
+  });
+});
+
 test("AgentTaskRunner retries implementation when the first reply violates the strict schema contract", async () => {
   await withTempDir(async (workspaceRoot) => {
     const appDir = join(workspaceRoot, "generated-apps", "site");
@@ -3978,6 +5479,292 @@ test("AgentTaskRunner verifies the live served web page for web apps", async () 
   });
 });
 
+test("AgentTaskRunner probes API services through health and collection endpoints", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "api-probe", "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "api-probe", "src", "server.js"), [
+      "if (req.method === 'GET' && pathname === '/health') return sendJson(res, 200, { status: 'ok' });",
+      "if (req.method === 'GET' && pathname === '/records') return sendJson(res, 200, { records: [] });",
+      "const port = Number(process.env.PORT || 3100);"
+    ].join("\n"), "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      probeApiService: (
+        plan: { workingDirectory: string },
+        scripts: { start?: string; dev?: string },
+        runtimeScript: "start" | "dev",
+        launch: { combinedOutput: string }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/health")) {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/records")) {
+        return new Response(JSON.stringify({ records: [{ id: "1" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    try {
+      const result = await runner.probeApiService(
+        {
+          workingDirectory: "generated-apps/api-probe"
+        },
+        { start: "node src/server.js" },
+        "start",
+        { combinedOutput: "" }
+      );
+
+      assert.equal(result.status, "passed");
+      assert.match(result.details, /\/health/);
+      assert.match(result.details, /\/records/);
+      assert.match(result.details, /3100/);
+      assert.doesNotMatch(result.details, /create probes/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AgentTaskRunner probes API create routes when the service exposes a POST collection endpoint", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "api-create-probe", "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "api-create-probe", "src", "server.js"), [
+      "if (req.method === 'GET' && pathname === '/health') return sendJson(res, 200, { status: 'ok' });",
+      "if (req.method === 'GET' && pathname === '/invoices') return sendJson(res, 200, { invoices: [] });",
+      "if (req.method === 'POST' && pathname === '/invoices') {",
+      "  const body = await readJsonBody(req);",
+      "  return sendJson(res, 201, { id: '2', customer: String(body.customer ?? 'Acme Corp'), status: 'active' });",
+      "}",
+      "const port = Number(process.env.PORT || 3200);"
+    ].join("\n"), "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      probeApiService: (
+        plan: {
+          workingDirectory: string;
+          spec: { domainFocus: string };
+        },
+        scripts: { start?: string; dev?: string },
+        runtimeScript: "start" | "dev",
+        launch: { combinedOutput: string }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/health")) {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/invoices") && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify({ invoices: [{ id: "1", customer: "Existing Co" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/invoices") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}"));
+        return new Response(JSON.stringify({ id: "2", customer: body.customer, status: "active" }), {
+          status: 201,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    try {
+      const result = await runner.probeApiService(
+        {
+          workingDirectory: "generated-apps/api-create-probe",
+          spec: { domainFocus: "finance" }
+        },
+        { start: "node src/server.js" },
+        "start",
+        { combinedOutput: "" }
+      );
+
+      assert.equal(result.status, "passed");
+      assert.match(result.details, /create probes/i);
+      assert.match(result.details, /\/invoices/);
+      assert.match(result.details, /3200/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AgentTaskRunner validates JSON output for CLI runtime probes", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "cli-probe", "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "cli-probe", "src", "index.js"), "console.log(JSON.stringify({ ok: true }));\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyCliRuntimeDepth: (
+        plan: { workingDirectory: string; promptTerms: string[] },
+        launch: { combinedOutput: string }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const passed = await runner.verifyCliRuntimeDepth(
+      {
+        workingDirectory: "generated-apps/cli-probe",
+        promptTerms: ["emit", "json", "output", "audit"]
+      },
+      {
+        combinedOutput: "{\n  \"ok\": true,\n  \"count\": 2\n}"
+      }
+    );
+
+    const failed = await runner.verifyCliRuntimeDepth(
+      {
+        workingDirectory: "generated-apps/cli-probe",
+        promptTerms: ["emit", "json", "output", "audit"]
+      },
+      {
+        combinedOutput: "Usage: cli-probe <file>"
+      }
+    );
+
+    assert.equal(passed.status, "passed");
+    assert.match(passed.details, /parseable json/i);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.details, /usage guidance/i);
+  });
+});
+
+test("AgentTaskRunner accepts plain text summaries for CLI probes that only read JSON input", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "cli-text-probe", "src"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "cli-text-probe", "src", "index.js"), "console.log('keys: 4\\nmissing: 1');\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyCliRuntimeDepth: (
+        plan: { workingDirectory: string; promptTerms: string[] },
+        launch: { combinedOutput: string }
+      ) => Promise<{ status: string; details: string }>;
+    };
+
+    const result = await runner.verifyCliRuntimeDepth(
+      {
+        workingDirectory: "generated-apps/cli-text-probe",
+        promptTerms: ["reads", "json", "file", "prints", "compact", "audit", "summary"]
+      },
+      {
+        combinedOutput: "keys: 4\nmissing: 1"
+      }
+    );
+
+    assert.equal(result.status, "passed");
+    assert.match(result.details, /produced \d+ characters of output/i);
+  });
+});
+
+test("AgentTaskRunner passes prompt requirement IDs into browser smoke helper invocations", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "scripts"), { recursive: true });
+    await writeFile(join(workspaceRoot, "scripts", "browser-smoke.cjs"), "module.exports = {};\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      runServedPageBrowserSmoke: (
+        url: string,
+        plan: {
+          workspaceKind: "static" | "react" | "generic";
+          builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+          promptRequirements: Array<{ id: string }>;
+        }
+      ) => Promise<{ status: string; details: string }>;
+      resolveElectronBinary: () => string | null;
+      executeDetachedCommand: (
+        taskId: string,
+        request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }
+      ) => Promise<{ ok: boolean; combinedOutput: string; stdout: string; stderr: string }>;
+    };
+
+    let capturedArgs: string[] = [];
+    runner.resolveElectronBinary = () => "electron";
+    runner.executeDetachedCommand = async (_taskId, request) => {
+      capturedArgs = request.args ?? [];
+      return {
+        ok: true,
+        combinedOutput: "{\"status\":\"passed\",\"details\":\"ok\"}\n",
+        stdout: "",
+        stderr: ""
+      };
+    };
+
+    const result = await runner.runServedPageBrowserSmoke("file:///tmp/desktop-preview/index.html", {
+      workspaceKind: "react",
+      builderMode: "dashboard",
+      promptRequirements: [
+        { id: "req-summary" },
+        { id: "req-persistence" },
+        { id: "req-summary" }
+      ]
+    });
+
+    assert.equal(result.status, "passed");
+    assert.equal(capturedArgs.includes("--prompt-requirement"), true);
+    assert.equal(capturedArgs.filter((value) => value === "--prompt-requirement").length, 2);
+    assert.equal(capturedArgs.includes("req-summary"), true);
+    assert.equal(capturedArgs.includes("req-persistence"), true);
+  });
+});
+
+test("AgentTaskRunner runs desktop interaction smoke against the built preview", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    await mkdir(join(workspaceRoot, "generated-apps", "desktop-probe", "dist"), { recursive: true });
+    await writeFile(join(workspaceRoot, "generated-apps", "desktop-probe", "dist", "index.html"), "<!doctype html><html><body><div id=\"root\"></div></body></html>\n", "utf8");
+
+    const runner = createRunner(workspaceRoot) as never as {
+      verifyDesktopInteractionProbe: (
+        plan: {
+          workingDirectory: string;
+          workspaceKind: "react" | "static" | "generic";
+          builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
+        },
+        scripts: { start?: string; dev?: string }
+      ) => Promise<{ status: string; details: string }>;
+      runServedPageBrowserSmoke: (url: string) => Promise<{ status: string; details: string }>;
+    };
+
+    let capturedUrl = "";
+    runner.runServedPageBrowserSmoke = async (url) => {
+      capturedUrl = url;
+      return {
+        status: "passed",
+        details: "Browser smoke interaction passed."
+      };
+    };
+
+    const result = await runner.verifyDesktopInteractionProbe(
+      {
+        workingDirectory: "generated-apps/desktop-probe",
+        workspaceKind: "react",
+        builderMode: "dashboard"
+      },
+      { start: "node scripts/desktop-launch.mjs" }
+    );
+
+    assert.equal(result.status, "passed");
+    assert.match(result.details, /desktop preview interaction passed/i);
+    assert.match(capturedUrl, /^file:/i);
+  });
+});
+
 test("AgentTaskRunner fails served web verification when live HTML is not valid for the app type", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunner(workspaceRoot) as never as {
@@ -4480,13 +6267,19 @@ test("AgentTaskRunner surfaces no-usable-edit recovery replies directly after re
 
 test("AgentTaskRunner includes failure category guidance in structured fix prompts", async () => {
   await withTempDir(async (workspaceRoot) => {
-    let capturedMessages: Array<{ role: string; content: string }> = [];
+    let capturedMessages: Array<{
+      role: string;
+      content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+    }> = [];
     const runner = createRunnerWithServices(
       workspaceRoot,
       { apiKey: "test-key" },
       {
         sendMessageAdvanced: async (
-          messages: Array<{ role: string; content: string }>,
+          messages: Array<{
+            role: string;
+            content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+          }>,
           _model: string,
           onChunk: (chunk: string) => void
         ) => {
@@ -4520,9 +6313,105 @@ test("AgentTaskRunner includes failure category guidance in structured fix promp
     );
 
     assert.equal(result.edits.length, 1);
-    const promptText = capturedMessages.map((message) => message.content).join("\n");
+    const promptText = capturedMessages
+      .map((message) => typeof message.content === "string"
+        ? message.content
+        : message.content.map((part) => part.type === "text" ? part.text : "[image]").join("\n"))
+      .join("\n");
     assert.match(promptText, /Failure category: build-error/i);
     assert.match(promptText, /Focus on compile-time or bundling fixes/i);
+  });
+});
+
+test("AgentTaskRunner includes task attachments in structured repair prompts and routes image tasks to vision input", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    let capturedMessages: Array<{
+      role: string;
+      content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+    }> = [];
+    const runner = createRunnerWithServices(
+      workspaceRoot,
+      { apiKey: "test-key", defaultModel: "qwen/qwen3-coder-next", models: ["qwen/qwen3-coder-next", "google/gemini-2.5-flash-lite-preview-09-2025"] },
+      {
+        sendMessageAdvanced: async (
+          messages: Array<{
+            role: string;
+            content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+          }>,
+          _model: string,
+          onChunk: (chunk: string) => void
+        ) => {
+          capturedMessages = messages;
+          const payload = JSON.stringify({
+            summary: "fixed",
+            edits: [{ path: "src/App.tsx", content: "export default function App() { return null; }\n" }]
+          });
+          onChunk(payload);
+          return payload;
+        }
+      }
+    ) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string }>;
+        telemetry: { fallbackUsed: boolean; modelAttempts: Array<{ model: string; outcome: string }> };
+      }>;
+      requestStructuredFix: (
+        taskId: string,
+        userPrompt: string,
+        commandResult: { combinedOutput: string },
+        contextFiles: Array<{ path: string; content: string }>,
+        attempt: number,
+        stageLabel?: string
+      ) => Promise<{ edits: Array<{ path: string; content: string }> }>;
+    };
+
+    const now = new Date().toISOString();
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "fix the screenshot issue",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+        summary: "",
+        steps: [],
+        attachments: [
+          { name: "bug.png", type: "image", content: "data:image/png;base64,YWJj", mimeType: "image/png" },
+          { name: "notes.txt", type: "text", content: "Button overlaps the nav on mobile." }
+        ],
+        telemetry: {
+          fallbackUsed: false,
+          modelAttempts: []
+        }
+      }
+    ]]) as never;
+
+    const result = await runner.requestStructuredFix(
+      "task-1",
+      "fix the layout bug",
+      { combinedOutput: "Preview shows overlapping controls." },
+      [{ path: "src/App.tsx", content: "export default function App() { return <div />; }\n" }],
+      1,
+      "Preview"
+    );
+
+    assert.equal(result.edits.length, 1);
+    assert.equal(capturedMessages[1]?.role, "system");
+    assert.match(String(capturedMessages[1]?.content), /File: notes\.txt/);
+    assert.equal(capturedMessages[2]?.role, "user");
+    const userContent = capturedMessages[2]?.content;
+    assert.ok(Array.isArray(userContent));
+    assert.equal(userContent?.[0]?.type, "image_url");
+    assert.equal(userContent?.[1]?.type, "text");
+    assert.match(userContent?.[1] && "text" in userContent[1] ? userContent[1].text : "", /Task attachments: bug\.png, notes\.txt/);
   });
 });
 
@@ -4809,6 +6698,7 @@ test("AgentTaskRunner exposes route diagnostics with scores and active task rout
           model: string;
           provider: "local" | "remote";
           score: number;
+          scoreFactors: Array<{ label: string; delta: number }>;
           successes: number;
           failures: number;
           transientFailures: number;
@@ -4817,8 +6707,30 @@ test("AgentTaskRunner exposes route diagnostics with scores and active task rout
         task?: {
           taskId: string;
           blacklistedModels: string[];
-          failureCounts: Array<{ model: string; count: number }>;
-          activeStageRoutes: Array<{ stage: string; model: string; provider: "local" | "remote"; routeIndex: number; attempt: number }>;
+          failureCounts: Array<{
+            model: string;
+            count: number;
+            blacklisted: boolean;
+            hardFailuresUntilBlacklist: number;
+            transientFailuresUntilBlacklist: number;
+          }>;
+          visionRequested: boolean;
+          activeStageRoutes: Array<{
+            stage: string;
+            model: string;
+            provider: "local" | "remote";
+            routeIndex: number;
+            attempt: number;
+            score: number;
+            scoreFactors: Array<{ label: string; delta: number }>;
+            failureCount: number;
+            blacklisted: boolean;
+            hardFailuresUntilBlacklist: number;
+            transientFailuresUntilBlacklist: number;
+            visionRequested: boolean;
+            visionCapable: boolean;
+            selectionReason: string;
+          }>;
         };
       };
       tasks: Map<string, {
@@ -4891,21 +6803,56 @@ test("AgentTaskRunner exposes route diagnostics with scores and active task rout
 
     assert.equal(diagnostics.routes[0]?.model, "local-model");
     assert.equal(diagnostics.routes[0]?.score, 1);
+    assert.deepEqual(diagnostics.routes[0]?.scoreFactors, [
+      { label: "1 success", delta: 3 },
+      { label: "1 transient failure", delta: -2 }
+    ]);
     assert.equal(diagnostics.routes[1]?.provider, "remote");
+    assert.deepEqual(diagnostics.routes[1]?.scoreFactors, [
+      { label: "3 successes", delta: 9 },
+      { label: "1 hard fail", delta: -4 },
+      { label: "1 semantic failure", delta: -5 }
+    ]);
     assert.deepEqual(diagnostics.task, {
       taskId: "task-1",
       blacklistedModels: ["first-model"],
       failureCounts: [
-        { model: "first-model", count: 2 },
-        { model: "second-model", count: 1 }
+        {
+          model: "first-model",
+          count: 2,
+          blacklisted: true,
+          hardFailuresUntilBlacklist: 0,
+          transientFailuresUntilBlacklist: 1
+        },
+        {
+          model: "second-model",
+          count: 1,
+          blacklisted: false,
+          hardFailuresUntilBlacklist: 1,
+          transientFailuresUntilBlacklist: 2
+        }
       ],
+      visionRequested: false,
       activeStageRoutes: [{
         stage: "Build recovery",
         model: "first-model",
         baseUrl: "https://example.com",
         provider: "remote",
         routeIndex: 1,
-        attempt: 2
+        attempt: 2,
+        score: 0,
+        scoreFactors: [
+          { label: "3 successes", delta: 9 },
+          { label: "1 hard fail", delta: -4 },
+          { label: "1 semantic failure", delta: -5 }
+        ],
+        failureCount: 2,
+        blacklisted: true,
+        hardFailuresUntilBlacklist: 0,
+        transientFailuresUntilBlacklist: 1,
+        visionRequested: false,
+        visionCapable: false,
+        selectionReason: "Repair stages favor coder and reasoning models. No strong capability hints were detected, so this cloud route stayed available as a fallback. It is currently using route 2, so earlier candidates already failed, were blacklisted, or ranked lower."
       }]
     });
   });
@@ -4972,8 +6919,29 @@ test("AgentTaskRunner persists task route telemetry summary across reload", asyn
         telemetry?: {
           routeDiagnostics?: {
             blacklistedModels: string[];
-            failureCounts: Array<{ model: string; count: number }>;
-            activeStageRoutes: Array<{ stage: string; model: string; routeIndex: number; attempt: number }>;
+            failureCounts: Array<{
+              model: string;
+              count: number;
+              blacklisted: boolean;
+              hardFailuresUntilBlacklist: number;
+              transientFailuresUntilBlacklist: number;
+            }>;
+            visionRequested: boolean;
+            activeStageRoutes: Array<{
+              stage: string;
+              model: string;
+              routeIndex: number;
+              attempt: number;
+              score: number;
+              scoreFactors: Array<{ label: string; delta: number }>;
+              failureCount: number;
+              blacklisted: boolean;
+              hardFailuresUntilBlacklist: number;
+              transientFailuresUntilBlacklist: number;
+              visionRequested: boolean;
+              visionCapable: boolean;
+              selectionReason: string;
+            }>;
           };
         };
       } | null;
@@ -4982,15 +6950,302 @@ test("AgentTaskRunner persists task route telemetry summary across reload", asyn
     const telemetry = restored.getTask("task-1")?.telemetry;
     assert.deepEqual(telemetry?.routeDiagnostics, {
       blacklistedModels: ["first-model"],
-      failureCounts: [{ model: "first-model", count: 2 }],
+      failureCounts: [{
+        model: "first-model",
+        count: 2,
+        blacklisted: true,
+        hardFailuresUntilBlacklist: 0,
+        transientFailuresUntilBlacklist: 1
+      }],
+      visionRequested: false,
       activeStageRoutes: [{
         stage: "Build recovery",
         model: "first-model",
         baseUrl: "https://example.com",
         provider: "remote",
         routeIndex: 0,
-        attempt: 2
+        attempt: 2,
+        score: 0,
+        scoreFactors: [{ label: "No reliability history", delta: 0 }],
+        failureCount: 2,
+        blacklisted: true,
+        hardFailuresUntilBlacklist: 0,
+        transientFailuresUntilBlacklist: 1,
+        visionRequested: false,
+        visionCapable: false,
+        selectionReason: "Repair stages favor coder and reasoning models. No strong capability hints were detected, so this cloud route stayed available as a fallback. It is currently the top remaining route for this stage."
       }]
     });
+  });
+});
+
+test("AgentTaskRunner remembers recurring repair failures as reusable memory", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunnerWithServices(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        artifactType?: string;
+        telemetry: { fallbackUsed: boolean; modelAttempts: Array<{ model: string; outcome: string; error?: string }> };
+      }>;
+      taskLogs: Map<string, string[]>;
+      failureMemory: Map<string, {
+        category: string;
+        signature: string;
+        guidance: string;
+        count: number;
+        artifactType: string;
+      }>;
+      rememberTaskStageRoute: (
+        taskId: string,
+        stage: string,
+        route: { model: string; baseUrl: string; apiKey: string; skipAuth: boolean },
+        routeIndex: number,
+        attempt: number
+      ) => void;
+      recordFailedRepairVerification: (taskId: string, stageLabel: string, failureOutput: string) => void;
+    };
+
+    const now = new Date().toISOString();
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Create a JSON audit CLI tool.",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+        summary: "",
+        steps: [],
+        artifactType: "script-tool",
+        telemetry: {
+          fallbackUsed: false,
+          modelAttempts: []
+        }
+      }
+    ]]) as never;
+    runner.taskLogs = new Map([["task-1", []]]);
+
+    const route = { model: "repair-model", baseUrl: "https://example.com", apiKey: "key", skipAuth: false };
+    runner.rememberTaskStageRoute("task-1", "Build recovery", route, 0, 1);
+    runner.recordFailedRepairVerification("task-1", "Build", "CLI runtime still returned usage guidance instead of completing a real probe run.");
+    runner.rememberTaskStageRoute("task-1", "Build recovery", route, 0, 2);
+    runner.recordFailedRepairVerification("task-1", "Build", "CLI runtime still returned usage guidance instead of completing a real probe run.");
+
+    const memory = [...runner.failureMemory.values()];
+    assert.equal(memory.length > 0, true);
+    assert.equal(memory[0]?.count, 2);
+    assert.equal(memory[0]?.artifactType, "script-tool");
+    assert.equal(memory[0]?.signature, "cli-usage-output");
+    assert.match(memory[0]?.guidance ?? "", /real output, not just usage text/i);
+  });
+});
+
+test("AgentTaskRunner persists failure memory across reload", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const now = new Date().toISOString();
+    const runner = createRunnerWithServices(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        artifactType?: string;
+        telemetry: { fallbackUsed: boolean; modelAttempts: Array<{ model: string; outcome: string; error?: string }> };
+      }>;
+      taskLogs: Map<string, string[]>;
+      rememberTaskStageRoute: (
+        taskId: string,
+        stage: string,
+        route: { model: string; baseUrl: string; apiKey: string; skipAuth: boolean },
+        routeIndex: number,
+        attempt: number
+      ) => void;
+      recordFailedRepairVerification: (taskId: string, stageLabel: string, failureOutput: string) => void;
+      persistTaskState: () => void;
+    };
+
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Create an API service with health and records routes.",
+        status: "failed",
+        createdAt: now,
+        updatedAt: now,
+        summary: "Repair failed",
+        steps: [],
+        artifactType: "api-service",
+        telemetry: {
+          fallbackUsed: false,
+          modelAttempts: []
+        }
+      }
+    ]]) as never;
+    runner.taskLogs = new Map([["task-1", []]]);
+    runner.rememberTaskStageRoute("task-1", "Launch recovery", {
+      model: "repair-model",
+      baseUrl: "https://example.com",
+      apiKey: "key",
+      skipAuth: false
+    }, 0, 1);
+    runner.recordFailedRepairVerification("task-1", "Launch", "Health probe failed at http://127.0.0.1:3000/health: HTTP 500");
+    runner.persistTaskState();
+
+    const restored = createRunnerWithServices(workspaceRoot) as never as {
+      failureMemory: Map<string, { signature: string; artifactType: string; count: number }>;
+    };
+
+    const memory = [...restored.failureMemory.values()];
+    assert.equal(memory.length > 0, true);
+    assert.equal(memory[0]?.artifactType, "api-service");
+    assert.equal(memory[0]?.count, 1);
+    assert.equal(memory[0]?.signature, "api-runtime-endpoints");
+  });
+});
+
+test("AgentTaskRunner includes relevant failure memory in structured repair prompts", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunnerWithServices(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        artifactType?: string;
+        telemetry: { fallbackUsed: boolean; modelAttempts: Array<{ model: string; outcome: string; error?: string }> };
+      }>;
+      taskLogs: Map<string, string[]>;
+      rememberTaskStageRoute: (
+        taskId: string,
+        stage: string,
+        route: { model: string; baseUrl: string; apiKey: string; skipAuth: boolean },
+        routeIndex: number,
+        attempt: number
+      ) => void;
+      recordFailedRepairVerification: (taskId: string, stageLabel: string, failureOutput: string) => void;
+      requestStructuredFix: (
+        taskId: string,
+        userPrompt: string,
+        commandResult: {
+          combinedOutput: string;
+          ok: boolean;
+          code: number | null;
+          signal: string | null;
+          stdout: string;
+          stderr: string;
+          durationMs: number;
+          timedOut: boolean;
+          commandLine: string;
+          cwd: string;
+        },
+        contextFiles: Array<{ path: string; content: string }>,
+        attempt: number,
+        stageLabel?: string,
+        plan?: unknown
+      ) => Promise<{ summary: string; edits: Array<{ path: string; content: string }> }>;
+      sendFixModelRequest: (
+        taskId: string,
+        routes: unknown[],
+        messages: Array<{ role: string; content: string }>
+      ) => Promise<string>;
+      resolveModelRoutes: () => Array<{ model: string; baseUrl: string; apiKey: string; skipAuth: boolean }>;
+      appendLog: (taskId: string, line: string) => void;
+    };
+
+    const now = new Date().toISOString();
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Create a JSON audit CLI tool.",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+        summary: "",
+        steps: [],
+        artifactType: "script-tool",
+        telemetry: {
+          fallbackUsed: false,
+          modelAttempts: []
+        }
+      }
+    ]]) as never;
+    runner.taskLogs = new Map([["task-1", []]]);
+    runner.appendLog = () => {};
+    runner.resolveModelRoutes = () => [{ model: "repair-model", baseUrl: "https://example.com", apiKey: "key", skipAuth: false }];
+    runner.rememberTaskStageRoute("task-1", "Build recovery", {
+      model: "repair-model",
+      baseUrl: "https://example.com",
+      apiKey: "key",
+      skipAuth: false
+    }, 0, 1);
+    runner.recordFailedRepairVerification("task-1", "Build", "CLI runtime still returned usage guidance instead of completing a real probe run.");
+    runner.rememberTaskStageRoute("task-1", "Build recovery", {
+      model: "repair-model",
+      baseUrl: "https://example.com",
+      apiKey: "key",
+      skipAuth: false
+    }, 0, 2);
+    runner.recordFailedRepairVerification("task-1", "Build", "CLI runtime still returned usage guidance instead of completing a real probe run.");
+
+    let captured = "";
+    runner.sendFixModelRequest = async (_taskId, _routes, messages) => {
+      captured = messages.map((message) => message.content).join("\n");
+      return "{\"summary\":\"ok\",\"edits\":[{\"path\":\"generated-apps/tool/README.md\",\"content\":\"# Tool\\n\"}]}";
+    };
+
+    const result = await runner.requestStructuredFix(
+      "task-1",
+      "Repair the generated CLI tool.",
+      {
+        combinedOutput: "CLI runtime still returned usage guidance instead of completing a real probe run.",
+        ok: false,
+        code: 1,
+        signal: null,
+        stdout: "",
+        stderr: "usage",
+        durationMs: 0,
+        timedOut: false,
+        commandLine: "npm start",
+        cwd: workspaceRoot
+      },
+      [{ path: "generated-apps/tool/src/index.js", content: "console.log('usage');\n" }],
+      1,
+      "Build",
+      {
+        repositoryContext: {
+          summary: "Single-package Node workspace.",
+          workspaceShape: "single-package",
+          packageManager: "npm",
+          languageStyle: "javascript",
+          moduleFormat: "esm",
+          uiFramework: "none",
+          styling: "unknown",
+          testing: "node:test",
+          linting: "none",
+          conventions: []
+        },
+        spec: {
+          starterProfile: "node-cli"
+        }
+      }
+    );
+
+    assert.equal(result.edits.length, 1);
+    assert.match(captured, /Recurring failure memory:/);
+    assert.match(captured, /cli-usage-output/);
+    assert.match(captured, /real output, not just usage text/i);
   });
 });
