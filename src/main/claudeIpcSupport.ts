@@ -5,6 +5,7 @@ import type { ClaudeSessionManager } from "./claudeSupport";
 interface ClaudeSendOptions {
   attachments?: AttachmentPayload[];
   enabledTools?: string[];
+  includeFullTextAttachments?: boolean;
 }
 
 export function sendClaudePrompt(
@@ -22,6 +23,7 @@ export function sendClaudePrompt(
   return claudeSessionManager.sendPrompt(
     normalizedPrompt || "Please review the attached files and summarize important points.",
     normalizedAttachments,
-    enabledTools
+    enabledTools,
+    { includeFullTextAttachments: options?.includeFullTextAttachments === true }
   );
 }

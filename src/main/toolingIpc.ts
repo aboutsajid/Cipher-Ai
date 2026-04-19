@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, WebContents } from "electron";
 import { pickAttachmentPayloads, pickWritableRootPayloads } from "./attachmentSupport";
 import { sendClaudePrompt } from "./claudeIpcSupport";
-import { applyManagedClaudeEdits } from "./managedEditSupport";
+import { applyManagedClaudeEdits, inspectManagedClaudeEdits } from "./managedEditSupport";
 import { repairManagedWriteProposal } from "./managedWriteRepairSupport";
 import { verifyManagedWriteProposal } from "./managedWriteVerificationSupport";
 import { addMcpServer, listMcpServers, removeMcpServer } from "./mcpIpcSupport";
@@ -15,11 +15,13 @@ import {
 } from "./settingsSupport";
 import { probeOllamaInstalled, ClaudeSessionManager } from "./claudeSupport";
 import type { CcrService } from "./services/ccrService";
+import type { ImageGenerationService } from "./services/imageGenerationService";
 import type { SettingsStore } from "./services/settingsStore";
 import type {
   AttachmentPayload,
   ClaudeManagedEdit,
   ClaudeManagedEditPermissions,
+  ImageGenerationRequest,
   ManagedWriteVerificationReport,
   McpServerConfig
 } from "../shared/types";
@@ -27,11 +29,13 @@ import type {
 interface ClaudeSendOptions {
   attachments?: AttachmentPayload[];
   enabledTools?: string[];
+  includeFullTextAttachments?: boolean;
 }
 
 interface Deps {
   settingsStore: SettingsStore;
   ccrService: CcrService;
+  imageGenerationService: ImageGenerationService;
   mcpRuntimeManager: McpRuntimeManager;
   claudeSessionManager: ClaudeSessionManager;
   getWindowForSender: (sender: WebContents) => BrowserWindow | null;
@@ -43,6 +47,7 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   const {
     settingsStore,
     ccrService,
+    imageGenerationService,
     mcpRuntimeManager,
     claudeSessionManager,
     getWindowForSender,
@@ -105,6 +110,26 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   ipcMain.removeHandler("ollama:check");
   ipcMain.handle("ollama:check", async () => probeOllamaInstalled());
 
+  ipcMain.removeHandler("images:generate");
+  ipcMain.handle("images:generate", async (_e, request: ImageGenerationRequest) => {
+    return imageGenerationService.generate(request);
+  });
+
+  ipcMain.removeHandler("images:listHistory");
+  ipcMain.handle("images:listHistory", async () => {
+    return imageGenerationService.listHistory();
+  });
+
+  ipcMain.removeHandler("images:save");
+  ipcMain.handle("images:save", async (event, dataUrl: string, suggestedName?: string, historyId?: string) => {
+    return imageGenerationService.saveImage(resolveDialogWindow(event.sender), dataUrl, suggestedName, historyId);
+  });
+
+  ipcMain.removeHandler("images:deleteHistory");
+  ipcMain.handle("images:deleteHistory", async (_event, historyId: string) => {
+    return imageGenerationService.deleteHistoryItem(historyId);
+  });
+
   ipcMain.removeHandler("mcp:list");
   ipcMain.handle("mcp:list", () => listMcpServers(settingsStore));
 
@@ -153,9 +178,30 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   });
 
   ipcMain.removeHandler("claude:applyEdits");
-  ipcMain.handle("claude:applyEdits", async (_e, rawEdits: ClaudeManagedEdit[], permissions: ClaudeManagedEditPermissions) => {
-    return applyManagedClaudeEdits(rawEdits, permissions);
-  });
+  ipcMain.handle(
+    "claude:applyEdits",
+    async (
+      _e,
+      rawEdits: ClaudeManagedEdit[],
+      permissions: ClaudeManagedEditPermissions,
+      baselineContents?: Array<{ path: string; content: string }>
+    ) => {
+      return applyManagedClaudeEdits(rawEdits, permissions, Array.isArray(baselineContents) ? baselineContents : []);
+    }
+  );
+
+  ipcMain.removeHandler("claude:inspectEdits");
+  ipcMain.handle(
+    "claude:inspectEdits",
+    async (
+      _e,
+      rawEdits: ClaudeManagedEdit[],
+      permissions: ClaudeManagedEditPermissions,
+      baselineContents?: Array<{ path: string; content: string }>
+    ) => {
+      return inspectManagedClaudeEdits(rawEdits, permissions, Array.isArray(baselineContents) ? baselineContents : []);
+    }
+  );
 
   ipcMain.removeHandler("claude:verifyManagedEdits");
   ipcMain.handle("claude:verifyManagedEdits", async (_e, rawEdits: ClaudeManagedEdit[]) => {

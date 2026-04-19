@@ -8,6 +8,10 @@ interface ClaudeRuntime {
   awaitingResult: boolean;
 }
 
+interface ClaudePromptOptions {
+  includeFullTextAttachments?: boolean;
+}
+
 type ClaudeOutputStream = "stdout" | "stderr" | "system";
 type ClaudeRendererSender = (channel: "claude:output" | "claude:error" | "claude:exit", payload: unknown) => void;
 
@@ -104,7 +108,12 @@ export class ClaudeSessionManager {
     return result;
   }
 
-  sendPrompt(prompt: string, attachments: AttachmentPayload[] = [], enabledTools: string[] = []): ClaudeSessionResult {
+  sendPrompt(
+    prompt: string,
+    attachments: AttachmentPayload[] = [],
+    enabledTools: string[] = [],
+    options: ClaudePromptOptions = {}
+  ): ClaudeSessionResult {
     if (!this.sessionEnabled) {
       const message = "Claude Code session is not started.";
       this.emitError(message);
@@ -123,7 +132,7 @@ export class ClaudeSessionManager {
     }
 
     try {
-      const content = buildClaudeMessageContent(prompt, attachments, enabledTools);
+      const content = buildClaudeMessageContent(prompt, attachments, enabledTools, options);
       const packet = JSON.stringify({ type: "user", message: { role: "user", content } });
       runtime.process.stdin.write(`${packet}\n`);
       runtime.awaitingResult = true;

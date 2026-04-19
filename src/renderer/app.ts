@@ -6,9 +6,65 @@ interface AttachmentPayload {
   sourcePath?: string;
   writableRoot?: string;
 }
-interface MessageMetadata { attachmentNames?: string[]; compareGroup?: string; compareSlot?: "A" | "B"; }
+type ImageGenerationAspectRatio = "1:1" | "1:2" | "2:1" | "2:3" | "3:2" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
+interface GeneratedImageAsset {
+  id?: string;
+  dataUrl: string;
+  mimeType: string;
+}
+interface GeneratedImageHistoryItem {
+  id: string;
+  generationId: string;
+  prompt: string;
+  model: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  text: string;
+  mimeType: string;
+  dataUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  saveCount: number;
+  lastSavedAt?: string;
+  lastSavedPath?: string;
+}
+interface ImageGenerationRequest {
+  prompt: string;
+  provider?: ImageProviderMode;
+  model?: string;
+  aspectRatio?: ImageGenerationAspectRatio;
+}
+interface ImageGenerationResult {
+  provider: ImageProviderMode;
+  model: string;
+  prompt: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  text: string;
+  images: GeneratedImageAsset[];
+}
+interface ImageSaveResult {
+  ok: boolean;
+  message: string;
+  path?: string;
+}
+interface ImageHistoryMutationResult {
+  ok: boolean;
+  message: string;
+}
+interface MessageMetadata {
+  attachmentNames?: string[];
+  compareGroup?: string;
+  compareSlot?: "A" | "B";
+  generatedImageAssetIds?: string[];
+}
 interface Message { id: string; role: string; content: string; createdAt: string; model?: string; error?: string; metadata?: MessageMetadata; }
-interface Chat { id: string; title: string; messages: Message[]; createdAt: string; updatedAt: string; systemPrompt?: string; }
+type ChatProvider = "openrouter" | "nvidia" | "ollama" | "claude";
+interface ChatContext {
+  provider: ChatProvider;
+  selectedModel?: string;
+  compareModel?: string;
+  compareEnabled?: boolean;
+}
+interface Chat { id: string; title: string; messages: Message[]; createdAt: string; updatedAt: string; systemPrompt?: string; context?: ChatContext; }
 interface ChatSummary { id: string; title: string; messageCount: number; updatedAt: string; }
 interface PromptTemplate { name: string; content: string; }
 interface McpServerConfig { name: string; command: string; args: string[]; }
@@ -18,6 +74,7 @@ interface ClaudeOutputPayload { text: string; stream: "stdout" | "stderr" | "sys
 interface ClaudeSessionStatus { running: boolean; pid?: number; model: string; }
 interface ClaudeSessionResult extends ClaudeSessionStatus { ok: boolean; message: string; }
 interface ClaudeManagedEdit { path: string; content: string; }
+interface ClaudeManagedEditBaseline { path: string; content: string; }
 interface ClaudeManagedEditPermissions { allowedPaths: string[]; allowedRoots: string[]; }
 interface ManagedWriteVerificationFinding { severity: "error" | "warn"; message: string; path?: string; }
 interface ManagedWriteVerificationReport {
@@ -52,6 +109,7 @@ interface AgentTaskStep {
   finishedAt?: string;
   summary?: string;
 }
+type AgentTaskRestartMode = "retry" | "retry-clean" | "continue-fix";
 interface AgentVerificationCheck {
   id: string;
   label: string;
@@ -62,6 +120,21 @@ interface AgentVerificationReport {
   summary: string;
   checks: AgentVerificationCheck[];
   previewReady: boolean;
+}
+interface AgentExecutionSpecScriptGroup {
+  label: string;
+  options: string[];
+}
+interface AgentExecutionSpec {
+  summary: string;
+  starterProfile: string;
+  domainFocus?: string;
+  deliverables: string[];
+  acceptanceCriteria: string[];
+  qualityGates: string[];
+  requiredFiles: string[];
+  requiredScriptGroups: AgentExecutionSpecScriptGroup[];
+  expectsReadme: boolean;
 }
 interface AgentTaskModelAttempt {
   stage: string;
@@ -94,6 +167,7 @@ interface AgentTaskTelemetry {
   finalVerificationResult?: "passed" | "failed" | "skipped" | "partial";
   verificationSummary?: string;
   lastStage?: string;
+  failureMemoryHints?: string[];
   routeDiagnostics?: AgentTaskRouteTelemetrySummary;
   modelAttempts: AgentTaskModelAttempt[];
 }
@@ -103,15 +177,23 @@ interface AgentModelRouteDiagnostics {
   baseUrl: string;
   provider: "local" | "remote";
   score: number;
+  scoreFactors: AgentModelRouteScoreFactor[];
   successes: number;
   failures: number;
   transientFailures: number;
   semanticFailures: number;
   lastUsedAt?: string;
 }
+interface AgentModelRouteScoreFactor {
+  label: string;
+  delta: number;
+}
 interface AgentTaskRouteFailureCount {
   model: string;
   count: number;
+  blacklisted: boolean;
+  hardFailuresUntilBlacklist: number;
+  transientFailuresUntilBlacklist: number;
 }
 interface AgentTaskStageRouteDiagnostics {
   stage: string;
@@ -120,25 +202,41 @@ interface AgentTaskStageRouteDiagnostics {
   provider: "local" | "remote";
   routeIndex: number;
   attempt: number;
+  score: number;
+  scoreFactors: AgentModelRouteScoreFactor[];
+  failureCount: number;
+  blacklisted: boolean;
+  hardFailuresUntilBlacklist: number;
+  transientFailuresUntilBlacklist: number;
+  visionRequested: boolean;
+  visionCapable: boolean;
+  selectionReason: string;
 }
 interface AgentTaskRouteDiagnostics {
   taskId: string;
   blacklistedModels: string[];
   failureCounts: AgentTaskRouteFailureCount[];
+  visionRequested: boolean;
   activeStageRoutes: AgentTaskStageRouteDiagnostics[];
 }
 interface AgentTaskRouteTelemetrySummary {
   blacklistedModels: string[];
   failureCounts: AgentTaskRouteFailureCount[];
+  visionRequested: boolean;
   activeStageRoutes: AgentTaskStageRouteDiagnostics[];
 }
 interface AgentRouteDiagnostics {
   routes: AgentModelRouteDiagnostics[];
   task?: AgentTaskRouteDiagnostics;
 }
+interface AgentTaskRequest {
+  prompt: string;
+  attachments?: AttachmentPayload[];
+}
 interface AgentTask {
   id: string;
   prompt: string;
+  attachments?: AttachmentPayload[];
   status: "running" | "completed" | "failed" | "stopped";
   createdAt: string;
   updatedAt: string;
@@ -150,6 +248,7 @@ interface AgentTask {
   artifactType?: AgentArtifactType;
   output?: AgentTaskOutput;
   verification?: AgentVerificationReport;
+  executionSpec?: AgentExecutionSpec;
   telemetry?: AgentTaskTelemetry;
 }
 type AgentArtifactType = "web-app" | "api-service" | "script-tool" | "library" | "desktop-app" | "workspace-change" | "unknown";
@@ -229,6 +328,7 @@ interface ManagedSavePreviewState {
   msgId: string;
   parsed: { summary: string; edits: ClaudeManagedEdit[] };
   permissions: ClaudeManagedEditPermissions;
+  baselines: ClaudeManagedEditBaseline[];
   verification: ManagedWriteVerificationReport | null;
 }
 interface ChatStats {
@@ -242,6 +342,8 @@ interface ChatStats {
 interface Settings {
   apiKey: string;
   baseUrl: string;
+  cloudProvider?: "openrouter" | "nvidia";
+  imageProvider?: ImageProviderMode;
   defaultModel: string;
   routerPort: number;
   models: string[];
@@ -249,6 +351,7 @@ interface Settings {
   ollamaEnabled: boolean;
   ollamaBaseUrl: string;
   ollamaModels: string[];
+  comfyuiBaseUrl?: string;
   localVoiceEnabled: boolean;
   localVoiceModel: string;
   mcpServers: McpServerConfig[];
@@ -272,6 +375,7 @@ interface Window {
   api: {
     app: {
       workspacePath: () => Promise<string>;
+      info: () => Promise<{ name: string; version: string }>;
       newWindow: () => Promise<{ ok: boolean; message: string }>;
       openExternal: (targetUrl: string) => Promise<{ ok: boolean; message: string }>;
       openPreview: (targetPath: string, preferredUrl?: string) => Promise<{ ok: boolean; message: string; url?: string }>;
@@ -280,13 +384,14 @@ interface Window {
     chat: {
       list: () => Promise<ChatSummary[]>;
       get: (id: string) => Promise<Chat | null>;
-      create: () => Promise<Chat>;
+      create: (context?: ChatContext) => Promise<Chat>;
       delete: (id: string) => Promise<boolean>;
       rename: (id: string, title: string) => Promise<boolean>;
       export: (id: string) => Promise<{ ok: boolean; message: string }>;
       import: () => Promise<{ ok: boolean; message: string; chat?: Chat }>;
       appendMessage: (chatId: string, message: Message) => Promise<boolean>;
       updateMessage: (chatId: string, messageId: string, patch: Partial<Message>) => Promise<boolean>;
+      setContext: (id: string, context: ChatContext) => Promise<boolean>;
       setSystemPrompt: (id: string, systemPrompt: string) => Promise<boolean>;
       summarize: (messages: Array<{ role: string; content: string }>) => Promise<string>;
       generateTitle: (chatId: string, firstUserMessage: string) => Promise<string>;
@@ -295,7 +400,7 @@ interface Window {
         chatId: string,
         content: string,
         model: string,
-        options?: { attachments?: AttachmentPayload[]; compareModel?: string; enabledTools?: string[]; }
+        options?: { attachments?: AttachmentPayload[]; compareModel?: string; context?: ChatContext; enabledTools?: string[]; }
       ) => Promise<void>;
       stop: (chatId: string) => Promise<boolean>;
       onMessage: (cb: (chatId: string, msg: Message) => void) => void;
@@ -303,6 +408,12 @@ interface Window {
       onDone: (cb: (chatId: string, msgId: string) => void) => void;
       onError: (cb: (chatId: string, msgId: string, err: string) => void) => void;
       onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => void;
+    };
+    images: {
+      generate: (request: ImageGenerationRequest) => Promise<ImageGenerationResult>;
+      listHistory: () => Promise<GeneratedImageHistoryItem[]>;
+      save: (dataUrl: string, suggestedName?: string, historyId?: string) => Promise<ImageSaveResult>;
+      deleteHistory: (historyId: string) => Promise<ImageHistoryMutationResult>;
     };
     attachments: {
       pick: () => Promise<AttachmentPayload[]>;
@@ -328,8 +439,20 @@ interface Window {
     claude: {
       status: () => Promise<ClaudeSessionStatus>;
       start: () => Promise<ClaudeSessionResult>;
-      send: (prompt: string, options?: { attachments?: AttachmentPayload[]; enabledTools?: string[] }) => Promise<ClaudeSessionResult>;
-      applyEdits: (edits: ClaudeManagedEdit[], permissions: ClaudeManagedEditPermissions) => Promise<ClaudeApplyEditsResult>;
+      send: (
+        prompt: string,
+        options?: { attachments?: AttachmentPayload[]; enabledTools?: string[]; includeFullTextAttachments?: boolean }
+      ) => Promise<ClaudeSessionResult>;
+      inspectEdits: (
+        edits: ClaudeManagedEdit[],
+        permissions: ClaudeManagedEditPermissions,
+        baselineContents?: ClaudeManagedEditBaseline[]
+      ) => Promise<ClaudeApplyEditsResult>;
+      applyEdits: (
+        edits: ClaudeManagedEdit[],
+        permissions: ClaudeManagedEditPermissions,
+        baselineContents?: ClaudeManagedEditBaseline[]
+      ) => Promise<ClaudeApplyEditsResult>;
       verifyManagedEdits: (edits: ClaudeManagedEdit[]) => Promise<ManagedWriteVerificationReport>;
       repairManagedEdits: (edits: ClaudeManagedEdit[], verification: ManagedWriteVerificationReport) => Promise<ManagedWriteRepairResult>;
       stop: () => Promise<ClaudeSessionResult>;
@@ -342,7 +465,8 @@ interface Window {
       getTask: (taskId: string) => Promise<AgentTask | null>;
       getLogs: (taskId: string) => Promise<string[]>;
       getRouteDiagnostics: (taskId?: string) => Promise<AgentRouteDiagnostics>;
-      startTask: (prompt: string) => Promise<AgentTask>;
+      startTask: (request: string | AgentTaskRequest) => Promise<AgentTask>;
+      restartTask: (taskId: string, mode: AgentTaskRestartMode) => Promise<AgentTask>;
       stopTask: (taskId: string) => Promise<boolean>;
       listSnapshots: () => Promise<WorkspaceSnapshot[]>;
       getRestoreState: () => Promise<AgentSnapshotRestoreResult | null>;
@@ -384,15 +508,37 @@ interface Window {
 
 // â”€â”€ State â”€â”€
 let currentChatId: string | null = null;
+let activeChatContext: ChatContext | null = null;
+let pendingRenameChatId: string | null = null;
+let activeChatActionMenuId: string | null = null;
+let chatProviderMenuOpen = false;
 let isStreaming = false;
+let suppressChatContextSync = false;
 let settings: Settings | null = null;
 type ThemeMode = "dark" | "light";
 type UiMode = "write" | "code" | "think" | "claude" | "edit";
-type ProviderMode = "openrouter" | "ollama";
-type InteractionMode = "chat" | "agent";
+type ProviderMode = "openrouter" | "nvidia" | "ollama";
+type CloudProviderMode = Exclude<ProviderMode, "ollama">;
+type ImageProviderMode = CloudProviderMode | "comfyui";
+type InteractionMode = "chat" | "agent" | "image";
 const THEME_STORAGE_KEY = "cipher-ai-theme";
 const UI_MODE_STORAGE_KEY = "cipher-ai-ui-mode";
 const ONBOARDING_STORAGE_KEY = "cipher-ai-onboarding-v1";
+const SIDEBAR_WIDTH_STORAGE_KEY = "cipher-ai-sidebar-width";
+const SIDEBAR_DEFAULT_WIDTH = 304;
+const SIDEBAR_MIN_WIDTH = 248;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_WIDTH_STEP = 32;
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = "cipher-ai-right-panel-width";
+const RIGHT_PANEL_DEFAULT_WIDTH = 356;
+const RIGHT_PANEL_MIN_WIDTH = 320;
+const RIGHT_PANEL_MAX_WIDTH = 760;
+const RIGHT_PANEL_WIDTH_STEP = 48;
+const ROUTER_TOGGLE_BUTTON_ID = ["router", "toggle", "btn"].join("-");
+const AGENT_TOGGLE_BUTTON_ID = ["agent", "toggle", "btn"].join("-");
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const COMFYUI_DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 let currentTheme: ThemeMode = "dark";
 let currentMode: UiMode = "write";
 let providerMode: ProviderMode = "openrouter";
@@ -401,7 +547,6 @@ let rawModeEnabled = false;
 type UiExperienceMode = "default" | "simple";
 let currentUiExperience: UiExperienceMode = "default";
 let activeAttachments: AttachmentPayload[] = [];
-let templates: PromptTemplate[] = [];
 let compareModeEnabled = false;
 let mcpStatus: McpStatus = { servers: [], tools: [] };
 let activeAgentTaskId: string | null = null;
@@ -420,6 +565,8 @@ const pendingDesktopLaunchPromptTasks = new Set<string>();
 const handledDesktopLaunchPromptTasks = new Set<string>();
 let activePreviewUrl: string | null = null;
 let activePreviewTarget: string | null = null;
+let currentSidebarWidth = SIDEBAR_DEFAULT_WIDTH;
+let currentRightPanelWidth = RIGHT_PANEL_DEFAULT_WIDTH;
 const agentChatMessageMap = new Map<string, { chatId: string; userMessageId: string; assistantMessageId: string }>();
 const pendingTitleGeneration = new Set<string>();
 const enabledMcpTools = new Set<string>();
@@ -452,6 +599,7 @@ let claudeRenderMessageId: string | null = null;
 const claudeDraftByMessage = new Map<string, string>();
 let pendingClaudeSaveGuard: ClaudeSaveGuard | null = null;
 let pendingClaudeManagedPermissions: ClaudeManagedEditPermissions = { allowedPaths: [], allowedRoots: [] };
+let pendingClaudeManagedBaselines: ClaudeManagedEditBaseline[] = [];
 let pendingClaudeManagedMode: "none" | "edit" | "chat" = "none";
 let claudeSessionResetting = false;
 let suppressClaudeExitNotice = false;
@@ -461,18 +609,49 @@ let managedSaveApplying = false;
 const chatSaveGuardByMessageId = new Map<string, ClaudeSaveGuard>();
 const CLAUDE_RENDER_BATCH_MS = 80;
 const CLAUDE_MODEL_LABEL = "claude/minimax-m2.5:cloud";
+const OPENROUTER_DEFAULT_MODEL = "qwen/qwen3.6-plus";
+const OPENROUTER_THINK_MODEL = "deepseek/deepseek-v3.2";
+const OPENROUTER_LONG_CONTEXT_MODEL = "google/gemini-2.5-flash-lite-preview-09-2025";
+const OPENROUTER_DEFAULT_IMAGE_MODEL = "google/gemini-2.5-flash-image";
+const OPENROUTER_IMAGE_MODELS = [
+  OPENROUTER_DEFAULT_IMAGE_MODEL,
+  "google/gemini-3.1-flash-image-preview",
+  "black-forest-labs/flux.2-flex",
+  "black-forest-labs/flux.2-pro"
+];
+const NVIDIA_DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-schnell";
+const NVIDIA_IMAGE_MODELS = [
+  NVIDIA_DEFAULT_IMAGE_MODEL,
+  "black-forest-labs/flux.1-dev"
+];
+const COMFYUI_DEFAULT_IMAGE_MODEL = "sd_xl_base_1.0.safetensors";
+const COMFYUI_IMAGE_MODELS = [
+  COMFYUI_DEFAULT_IMAGE_MODEL
+];
 const RECOMMENDED_MODELS = [
-  "qwen/qwen3-coder:free",
+  OPENROUTER_DEFAULT_MODEL,
+  "qwen/qwen3.6-plus-preview",
   "qwen/qwen3-coder-flash",
-  "qwen/qwen3-coder-next",
-  "google/gemma-4-31b-it",
+  "qwen/qwen3-coder:free",
   "google/gemini-2.5-flash-lite-preview-09-2025",
+  "google/gemma-4-31b-it",
   "deepseek/deepseek-v3.2"
+];
+const NVIDIA_DEFAULT_MODEL = "meta/llama-3.3-70b-instruct";
+const NVIDIA_THINK_MODEL = "nvidia/llama-3.3-nemotron-super-49b-v1.5";
+const NVIDIA_LONG_CONTEXT_MODEL = "meta/llama-3.3-70b-instruct";
+const NVIDIA_RECOMMENDED_MODELS = [
+  NVIDIA_DEFAULT_MODEL,
+  NVIDIA_THINK_MODEL,
+  NVIDIA_LONG_CONTEXT_MODEL,
+  "nvidia/nemotron-3-nano-30b-a3b",
+  "deepseek-ai/deepseek-r1-distill-qwen-32b"
 ];
 
 const LOCAL_CODER_PRIMARY = "qwen2.5-coder:14b";
 const LOCAL_CODER_FALLBACK = "qwen2.5-coder:7b";
 const LOCAL_VOICE_SUPPORTED = false;
+const IMAGE_GENERATION_ASPECT_RATIOS: ImageGenerationAspectRatio[] = ["1:1", "16:9", "21:9", "2:1", "9:16", "1:2", "4:3", "3:2", "2:3", "4:5", "5:4", "3:4"];
 const CHAT_MODE_TEMPLATES: ModeTemplate[] = [
   { name: "Explain Code", content: "Explain this code clearly, including what it does, key logic, and any risks or edge cases." },
   { name: "Write Reply", content: "Help me write a clear, concise reply in a professional but natural tone." },
@@ -483,6 +662,9 @@ const AGENT_MODE_TEMPLATES: ModeTemplate[] = [
   { name: "Fix Bug", content: "Investigate this bug, make the smallest safe fix, run verification, and explain the root cause." },
   { name: "Continue Build", content: "Continue working on the current task output. Improve it, keep scope focused, and make sure it runs cleanly." }
 ];
+let imageGenerationSubmitting = false;
+let imageHistoryLoading = false;
+let imageHistoryItems: GeneratedImageHistoryItem[] = [];
 
 interface DirectSaveStatus {
   state: "ready" | "warn" | "off" | "blocked";
@@ -586,8 +768,8 @@ function applyUiExperience(mode: UiExperienceMode): void {
   }
   if (help instanceof HTMLElement) {
     help.textContent = mode === "simple"
-      ? "Simple UI is active. Advanced controls are hidden, but you can switch back any time."
-      : "Simple UI hides advanced controls and keeps the main chat flow easier to follow.";
+      ? "Simple UI is active. Setup stays focused on provider, API key, and default model."
+      : "Simple UI hides route tuning, diagnostics, and other advanced controls until you need them.";
   }
 
   if (mode === "simple") {
@@ -599,10 +781,106 @@ function applyUiExperience(mode: UiExperienceMode): void {
     if (systemPromptPanel instanceof HTMLElement) systemPromptPanel.style.display = "none";
     document.getElementById("system-prompt-toggle-btn")?.classList.remove("active");
   }
+
+  applyProviderUiState(providerMode);
 }
 
 function toggleUiExperience(): void {
   applyUiExperience(currentUiExperience === "simple" ? "default" : "simple");
+}
+
+function getSidebarMaxWidth(): number {
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - 560));
+}
+
+function clampSidebarWidth(width: number): number {
+  if (!Number.isFinite(width)) return SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(getSidebarMaxWidth(), Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+function updateSidebarWidthUi(width: number): void {
+  const widthLabel = document.getElementById("sidebar-width-label");
+  if (widthLabel instanceof HTMLElement) {
+    widthLabel.textContent = `${width}px`;
+  }
+
+  const handle = document.getElementById("sidebar-resize-handle");
+  if (handle instanceof HTMLElement) {
+    handle.setAttribute("aria-valuenow", String(width));
+    handle.setAttribute("aria-valuemax", String(getSidebarMaxWidth()));
+    handle.setAttribute("aria-valuetext", `${width} pixels`);
+  }
+}
+
+function applySidebarWidth(width: number, persist = true): void {
+  currentSidebarWidth = clampSidebarWidth(width);
+  document.documentElement.style.setProperty("--sidebar-w", `${currentSidebarWidth}px`);
+  updateSidebarWidthUi(currentSidebarWidth);
+
+  if (persist) {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(currentSidebarWidth));
+  }
+}
+
+function getInitialSidebarWidth(): number {
+  const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+  if (!Number.isFinite(saved)) return SIDEBAR_DEFAULT_WIDTH;
+  return clampSidebarWidth(saved);
+}
+
+function adjustSidebarWidth(delta: number): void {
+  applySidebarWidth(currentSidebarWidth + delta);
+}
+
+function resetSidebarWidth(): void {
+  applySidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+}
+
+function getRightPanelMaxWidth(): number {
+  return Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, window.innerWidth - 220));
+}
+
+function clampRightPanelWidth(width: number): number {
+  if (!Number.isFinite(width)) return RIGHT_PANEL_DEFAULT_WIDTH;
+  return Math.min(getRightPanelMaxWidth(), Math.max(RIGHT_PANEL_MIN_WIDTH, Math.round(width)));
+}
+
+function updateRightPanelWidthUi(width: number): void {
+  const widthLabel = document.getElementById("panel-width-label");
+  if (widthLabel instanceof HTMLElement) {
+    widthLabel.textContent = `${width}px`;
+  }
+
+  const handle = document.getElementById("panel-resize-handle");
+  if (handle instanceof HTMLElement) {
+    handle.setAttribute("aria-valuenow", String(width));
+    handle.setAttribute("aria-valuemax", String(getRightPanelMaxWidth()));
+    handle.setAttribute("aria-valuetext", `${width} pixels`);
+  }
+}
+
+function applyRightPanelWidth(width: number, persist = true): void {
+  currentRightPanelWidth = clampRightPanelWidth(width);
+  document.documentElement.style.setProperty("--panel-w", `${currentRightPanelWidth}px`);
+  updateRightPanelWidthUi(currentRightPanelWidth);
+
+  if (persist) {
+    localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(currentRightPanelWidth));
+  }
+}
+
+function getInitialRightPanelWidth(): number {
+  const saved = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY));
+  if (!Number.isFinite(saved)) return RIGHT_PANEL_DEFAULT_WIDTH;
+  return clampRightPanelWidth(saved);
+}
+
+function adjustRightPanelWidth(delta: number): void {
+  applyRightPanelWidth(currentRightPanelWidth + delta);
+}
+
+function resetRightPanelWidth(): void {
+  applyRightPanelWidth(RIGHT_PANEL_DEFAULT_WIDTH);
 }
 
 function markOnboardingSeen(): void {
@@ -623,9 +901,9 @@ function shouldShowOnboarding(): boolean {
   if (hasSeenOnboarding()) return false;
   const hasChats = cachedChatSummaries.length > 0;
   if (hasChats) return false;
-  const hasOpenRouter = Boolean((settings?.apiKey ?? "").trim());
+  const hasCloudKey = Boolean((settings?.apiKey ?? "").trim());
   const hasOllama = (settings?.ollamaModels ?? []).length > 0;
-  return !hasOpenRouter && !hasOllama;
+  return !hasCloudKey && !hasOllama;
 }
 
 function showOnboarding(): void {
@@ -649,7 +927,7 @@ function nextClientMessageId(prefix: string): string {
 async function ensureActiveChatId(): Promise<string> {
   let chatId = currentChatId;
   if (!chatId) {
-    chatId = await createNewChat(false);
+    chatId = await createNewChat(false, activeChatContext ?? getActiveUiChatContext());
   }
   return chatId;
 }
@@ -814,6 +1092,7 @@ function resetClaudeRenderState(): void {
   activeClaudeAssistantMessageId = null;
   pendingClaudeSaveGuard = null;
   pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+  pendingClaudeManagedBaselines = [];
   pendingClaudeManagedMode = "none";
   pendingChatSaveGuard = null;
   const previewModal = document.getElementById("managed-save-preview-modal");
@@ -858,6 +1137,7 @@ function finalizeClaudeAssistantMessage(done: boolean): void {
   if (!msgId) {
     pendingClaudeSaveGuard = null;
     pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedBaselines = [];
     pendingClaudeManagedMode = "none";
     return;
   }
@@ -1043,9 +1323,16 @@ function showManagedSavePreview(
   msgId: string,
   parsed: { summary: string; edits: ClaudeManagedEdit[] },
   permissions: ClaudeManagedEditPermissions,
-  verification: ManagedWriteVerificationReport | null
+  verification: ManagedWriteVerificationReport | null,
+  baselines: ClaudeManagedEditBaseline[] = pendingClaudeManagedBaselines
 ): void {
-  pendingManagedSavePreview = { msgId, parsed, permissions, verification };
+  pendingManagedSavePreview = {
+    msgId,
+    parsed,
+    permissions,
+    baselines: baselines.map((item) => ({ ...item })),
+    verification
+  };
   $("managed-save-preview-modal").style.display = "flex";
   const summaryLines = [
     parsed.summary || "Review Claude's proposed file changes before saving.",
@@ -1084,7 +1371,11 @@ async function confirmManagedSavePreview(): Promise<void> {
   if (closeBtn instanceof HTMLButtonElement) closeBtn.disabled = true;
 
   try {
-    const result = await window.api.claude.applyEdits(pending.parsed.edits, pending.permissions);
+    const result = await window.api.claude.applyEdits(
+      pending.parsed.edits,
+      pending.permissions,
+      pending.baselines
+    );
     hideManagedSavePreview();
     const lines = buildManagedSaveResultLines(
       result.ok ? "[Managed save applied]" : "[Managed save partially applied]",
@@ -1128,7 +1419,8 @@ function cancelManagedSavePreview(): void {
 async function applyManagedClaudeEdits(
   msgId: string,
   permissions: ClaudeManagedEditPermissions,
-  mode: "edit" | "chat"
+  mode: "edit" | "chat",
+  baselines: ClaudeManagedEditBaseline[] = pendingClaudeManagedBaselines
 ): Promise<void> {
   if (permissions.allowedPaths.length === 0 && permissions.allowedRoots.length === 0) return;
   const current = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
@@ -1159,6 +1451,27 @@ async function applyManagedClaudeEdits(
     );
     updateMessageContent(msgId, lines.join("\n"), true, false);
     pendingClaudeSaveGuard = null;
+    return;
+  }
+
+  const inspection = await window.api.claude.inspectEdits(parsed.edits, permissions, baselines);
+  if (!inspection.ok) {
+    const lines = buildManagedSaveResultLines(
+      "[Managed save not applied]",
+      inspection.failedFiles.length > 0
+        ? `${parsed.summary || "Claude proposed file changes."} Local safety checks rejected the proposal before review.`
+        : parsed.summary || "Claude proposed no actionable file changes.",
+      inspection
+    );
+    lines[lines.length - 1] = `Result: ${inspection.message}`;
+    updateMessageContent(msgId, lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    showToast(
+      inspection.failedFiles.length > 0
+        ? "Managed save blocked before review."
+        : "No actionable file changes to review.",
+      3200
+    );
     return;
   }
 
@@ -1264,6 +1577,7 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
   const rawPrompt = input.value.trim();
   const attachmentsToSend = [...activeAttachments];
   const permissions = getClaudeManagedEditPermissions(attachmentsToSend);
+  const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   if (isVagueEditRequest(rawPrompt)) {
     showToast("Edit & Save ke liye exact change likho. Example: text change karo, button rename karo, ya spacing adjust karo.", 4800);
@@ -1284,6 +1598,7 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
   await ensureActiveChatId();
 
   pendingClaudeManagedPermissions = permissions;
+  pendingClaudeManagedBaselines = baselines;
   pendingClaudeManagedMode = "edit";
   const prompt = buildClaudeEditSavePrompt(rawPrompt, attachmentsToSend);
   pendingClaudeSaveGuard = shouldVerifyClaudeSave(prompt, attachmentsToSend) ?? {
@@ -1303,11 +1618,13 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
   try {
     const res = await window.api.claude.send(prompt, {
       attachments: attachmentsToSend,
-      enabledTools: []
+      enabledTools: [],
+      includeFullTextAttachments: true
     });
     claudeSessionRunning = Boolean(res.running);
     if (!res.ok) {
       pendingClaudeSaveGuard = null;
+      pendingClaudeManagedBaselines = [];
       activeAttachments = attachmentsToSend;
       renderComposerAttachments();
       setClaudeStatus(res.message, "err");
@@ -1322,6 +1639,7 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
     setStreamingUi(true, "Claude is editing files...");
   } catch (err) {
     pendingClaudeSaveGuard = null;
+    pendingClaudeManagedBaselines = [];
     activeAttachments = attachmentsToSend;
     renderComposerAttachments();
     const msg = err instanceof Error ? err.message : "Failed to send prompt.";
@@ -1339,6 +1657,7 @@ async function sendClaudePrompt(): Promise<void> {
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   const prompt = rawPrompt || "Please review the attached files.";
   const workspaceRoot = isClaudeManagedWriteRequest(prompt) ? await ensureWorkspaceRootPath() : "";
+  const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
   const managedWritePermissions: ClaudeManagedEditPermissions = isClaudeManagedWriteRequest(prompt) && workspaceRoot
     ? {
         allowedPaths: getEditableSourcePaths(attachmentsToSend),
@@ -1347,6 +1666,7 @@ async function sendClaudePrompt(): Promise<void> {
     : { allowedPaths: [], allowedRoots: [] };
   const managedWriteRequested = managedWritePermissions.allowedRoots.length > 0 || managedWritePermissions.allowedPaths.length > 0;
   pendingClaudeManagedPermissions = managedWriteRequested ? managedWritePermissions : { allowedPaths: [], allowedRoots: [] };
+  pendingClaudeManagedBaselines = managedWriteRequested ? baselines : [];
   pendingClaudeManagedMode = managedWriteRequested ? "chat" : "none";
   pendingClaudeSaveGuard = managedWriteRequested ? null : shouldVerifyClaudeSave(rawPrompt || prompt, attachmentsToSend);
 
@@ -1354,6 +1674,7 @@ async function sendClaudePrompt(): Promise<void> {
   if (hasImageAttachment) {
     pendingClaudeSaveGuard = null;
     pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedBaselines = [];
     pendingClaudeManagedMode = "none";
     await sendChatPromptWithAttachments(rawPrompt, attachmentsToSend, {
       forceVisionModel: true,
@@ -1389,6 +1710,7 @@ async function sendClaudePrompt(): Promise<void> {
     if (!res.ok) {
       pendingClaudeSaveGuard = null;
       pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+      pendingClaudeManagedBaselines = [];
       pendingClaudeManagedMode = "none";
       activeAttachments = attachmentsToSend;
       renderComposerAttachments();
@@ -1405,6 +1727,7 @@ async function sendClaudePrompt(): Promise<void> {
   } catch (err) {
     pendingClaudeSaveGuard = null;
     pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedBaselines = [];
     pendingClaudeManagedMode = "none";
     activeAttachments = attachmentsToSend;
     renderComposerAttachments();
@@ -1444,6 +1767,7 @@ function applyMode(mode: UiMode): void {
   if (currentInteractionMode === "agent") {
     applyInteractionMode("agent");
   }
+  refreshChatProviderMenuUi();
 }
 
 function syncComposerAgentPrompts(source: "composer" | "agent"): void {
@@ -1508,7 +1832,7 @@ function isAgentTaskRunning(): boolean {
 }
 
 function applyInteractionMode(mode: InteractionMode): void {
-  if (mode === "chat" && currentInteractionMode === "agent" && isAgentTaskRunning()) {
+  if (mode !== "agent" && currentInteractionMode === "agent" && isAgentTaskRunning()) {
     const statusMessage = "Wait for agent to finish, or stop it first.";
     setAgentStatus(statusMessage);
     showToast(statusMessage, 2600);
@@ -1519,37 +1843,52 @@ function applyInteractionMode(mode: InteractionMode): void {
 
   const chatBtn = document.getElementById("interaction-chat-btn");
   const agentBtn = document.getElementById("interaction-agent-btn");
-  chatBtn?.classList.toggle("active", mode === "chat");
-  agentBtn?.classList.toggle("active", mode === "agent");
-
+  const imageBtn = document.getElementById("generate-image-btn");
+  const messages = document.getElementById("messages");
+  const imageStudio = document.getElementById("image-studio");
   const providerSwitcher = document.getElementById("provider-switcher");
   const composerModeSwitcher = document.getElementById("mode-switcher");
-  const templatesBtn = document.getElementById("templates-btn");
+  const composerAttachments = document.getElementById("composer-attachments");
+  const composerInner = document.querySelector(".composer-inner");
+  const composerHint = document.querySelector(".composer-hint");
   const attachBtn = document.getElementById("attach-btn");
   const voiceBtn = document.getElementById("voice-btn");
   const directSaveBadge = document.getElementById("direct-save-badge");
   const directSaveDetail = document.getElementById("direct-save-detail");
   const shortcutHint = document.getElementById("composer-shortcut-hint");
   const input = document.getElementById("composer-input");
+  const isAgentMode = mode === "agent";
+  const isImageMode = mode === "image";
 
-  if (providerSwitcher instanceof HTMLElement) providerSwitcher.style.display = mode === "agent" ? "none" : "inline-flex";
-  if (composerModeSwitcher instanceof HTMLElement) composerModeSwitcher.style.display = mode === "agent" ? "none" : "inline-flex";
-  if (templatesBtn instanceof HTMLButtonElement) templatesBtn.disabled = false;
-  if (attachBtn instanceof HTMLButtonElement) attachBtn.style.display = mode === "agent" ? "none" : "inline-flex";
-  if (voiceBtn instanceof HTMLButtonElement) voiceBtn.disabled = mode === "agent";
-  if (directSaveBadge instanceof HTMLElement) directSaveBadge.textContent = mode === "agent" ? "Agent mode" : directSaveBadge.textContent;
+  chatBtn?.classList.toggle("active", mode === "chat");
+  agentBtn?.classList.toggle("active", isAgentMode);
+  imageBtn?.classList.toggle("active", isImageMode);
+
+  if (messages instanceof HTMLElement) messages.style.display = isImageMode ? "none" : "flex";
+  if (imageStudio instanceof HTMLElement) imageStudio.style.display = isImageMode ? "block" : "none";
+  if (providerSwitcher instanceof HTMLElement) providerSwitcher.style.display = "none";
+  if (composerModeSwitcher instanceof HTMLElement) composerModeSwitcher.style.display = mode === "chat" ? "inline-flex" : "none";
+  if (composerAttachments instanceof HTMLElement && isImageMode) composerAttachments.style.display = "none";
+  if (composerInner instanceof HTMLElement) composerInner.style.display = isImageMode ? "none" : "flex";
+  if (composerHint instanceof HTMLElement) composerHint.style.display = isImageMode ? "none" : "flex";
+  if (attachBtn instanceof HTMLButtonElement) attachBtn.style.display = isAgentMode || isImageMode ? "none" : "inline-flex";
+  if (voiceBtn instanceof HTMLButtonElement) {
+    voiceBtn.disabled = isAgentMode || isImageMode;
+    if (isImageMode) voiceBtn.style.display = "none";
+  }
+  if (directSaveBadge instanceof HTMLElement && isAgentMode) directSaveBadge.textContent = "Agent mode";
   if (directSaveDetail instanceof HTMLElement) {
-    directSaveDetail.textContent = mode === "agent"
+    directSaveDetail.textContent = isAgentMode
       ? "Agent mode starts a supervised coding task with rollback protection."
       : "Use Edit & Save mode for Claude-only file edits.";
   }
   if (shortcutHint instanceof HTMLElement) {
-    shortcutHint.textContent = mode === "agent"
+    shortcutHint.textContent = isAgentMode
       ? "Enter to start agent task"
       : "Shift+Enter for new line · Enter to send";
   }
   if (input instanceof HTMLTextAreaElement) {
-    input.placeholder = mode === "agent"
+    input.placeholder = isAgentMode
       ? "Describe the coding task. Agent will inspect, edit, verify, and log progress..."
       : ({
         write: "Message Cipher Workspace...",
@@ -1560,15 +1899,29 @@ function applyInteractionMode(mode: InteractionMode): void {
       }[currentMode]);
   }
 
-  if (mode === "agent") {
+  if (isAgentMode) {
     syncComposerAgentPrompts("composer");
     setAgentStatus("Agent mode active. Send will start a supervised task.");
   }
+  if (isImageMode) {
+    syncImageStudioControls(true);
+    setImageStudioStatus("Loading generated image history...");
+    void refreshImageHistory();
+  }
 
+  renderComposerAttachments();
   refreshComposerContextUi();
   refreshEmptyStateIfNeeded();
-  renderTemplatesList();
   updateDirectSaveUi();
+  refreshChatProviderMenuUi();
+}
+
+function mountTopbarControls(): void {
+  const topbarControls = document.getElementById("app-topbar-controls");
+  const workspaceHeader = document.querySelector(".chat-header");
+  const controls = workspaceHeader?.querySelector(".chat-header-right");
+  if (!(topbarControls instanceof HTMLElement) || !(controls instanceof HTMLElement)) return;
+  topbarControls.replaceChildren(controls);
 }
 
 function showToast(msg: string, duration = 2500) {
@@ -1605,11 +1958,12 @@ function normalizeApiKey(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
 
+  const withoutBearer = trimmed.replace(/^Bearer\s+/i, "");
+  const firstToken = withoutBearer.split(/\s+/)[0] ?? "";
   const extracted = trimmed.match(/sk-or-v1-[^\s"'`]+/i);
   if (extracted?.[0]) return extracted[0];
 
-  const withoutBearer = trimmed.replace(/^Bearer\s+/i, "");
-  return withoutBearer.split(/\s+/)[0] ?? "";
+  return firstToken;
 }
 
 function setStatus(msg: string, type: "ok" | "err" | "" = "") {
@@ -1618,15 +1972,95 @@ function setStatus(msg: string, type: "ok" | "err" | "" = "") {
   el.className = "status-msg " + type;
 }
 
-function requireOpenRouterApiKey(message?: string): boolean {
+function inferCloudProviderFromBaseUrl(baseUrl: string): CloudProviderMode {
+  const normalized = (baseUrl ?? "").trim().toLowerCase();
+  return normalized.includes("nvidia.com") ? "nvidia" : "openrouter";
+}
+
+function getCloudProviderModeFromSettings(source: Settings | null): CloudProviderMode {
+  const preferred = (source?.cloudProvider ?? "").trim().toLowerCase();
+  if (preferred === "nvidia") return "nvidia";
+  if (preferred === "openrouter") return "openrouter";
+  return inferCloudProviderFromBaseUrl(source?.baseUrl ?? OPENROUTER_BASE_URL);
+}
+
+function isCloudProviderMode(mode: ProviderMode): mode is CloudProviderMode {
+  return mode !== "ollama";
+}
+
+function getImageProviderFromSettings(source: Settings | null): ImageProviderMode {
+  const preferred = (source?.imageProvider ?? "").trim().toLowerCase();
+  if (preferred === "comfyui") return "comfyui";
+  if (preferred === "nvidia") return "nvidia";
+  if (preferred === "openrouter") return "openrouter";
+  return getCloudProviderModeFromSettings(source);
+}
+
+function getProviderDisplayName(mode: ProviderMode): string {
+  if (mode === "ollama") return "Ollama";
+  return mode === "nvidia" ? "NVIDIA" : "OpenRouter";
+}
+
+function getImageProviderDisplayName(mode: ImageProviderMode): string {
+  return mode === "comfyui" ? "ComfyUI Local" : getProviderDisplayName(mode);
+}
+
+function getDefaultBaseUrlForProvider(mode: CloudProviderMode): string {
+  return mode === "nvidia" ? NVIDIA_BASE_URL : OPENROUTER_BASE_URL;
+}
+
+function getRecommendedCloudModelsForProvider(mode: CloudProviderMode): string[] {
+  return [...(mode === "nvidia" ? NVIDIA_RECOMMENDED_MODELS : RECOMMENDED_MODELS)];
+}
+
+function getDefaultRoutingForProvider(mode: CloudProviderMode): Settings["routing"] {
+  if (mode === "nvidia") {
+    return {
+      default: NVIDIA_DEFAULT_MODEL,
+      think: NVIDIA_THINK_MODEL,
+      longContext: NVIDIA_LONG_CONTEXT_MODEL
+    };
+  }
+
+  return {
+    default: OPENROUTER_DEFAULT_MODEL,
+    think: OPENROUTER_THINK_MODEL,
+    longContext: OPENROUTER_LONG_CONTEXT_MODEL
+  };
+}
+
+function getCloudProviderLabelFromBaseUrl(baseUrl: string): string {
+  return getProviderDisplayName(inferCloudProviderFromBaseUrl(baseUrl));
+}
+
+function getCloudProviderLabelForModel(model: string, route?: Pick<AgentModelRouteDiagnostics, "baseUrl"> | null): string {
+  if (model.startsWith("ollama/")) return "Local provider";
+  return `${getCloudProviderLabelFromBaseUrl(route?.baseUrl ?? settings?.baseUrl ?? OPENROUTER_BASE_URL)} cloud`;
+}
+
+function syncBaseUrlInputForProvider(mode: ProviderMode): void {
+  if (!isCloudProviderMode(mode)) return;
+  const input = document.getElementById("base-url-input");
+  if (!(input instanceof HTMLInputElement)) return;
+
+  const current = input.value.trim();
+  const knownDefaults = new Set([OPENROUTER_BASE_URL, NVIDIA_BASE_URL]);
+  if (!current || knownDefaults.has(current)) {
+    input.value = getDefaultBaseUrlForProvider(mode);
+  }
+}
+
+function requireCloudApiKey(message?: string): boolean {
   const key = (settings?.apiKey ?? "").trim();
   if (key) return true;
+  const activeProvider = providerMode === "ollama" ? getCloudProviderModeFromSettings(settings) : providerMode;
+  const providerName = getProviderDisplayName(activeProvider);
   openPanel("settings");
   setStatus(
-    message ?? "OpenRouter API key required for OpenRouter models. Add key, or choose an ollama/... model.",
+    message ?? `${providerName} API key required for cloud models. Add key, or choose an ollama/... model.`,
     "err"
   );
-  showToast("Add OpenRouter API key, or select an ollama model to continue without key.", 4200);
+  showToast(`Add ${providerName} API key, or select an ollama model to continue without key.`, 4200);
   const input = $("api-key-input") as HTMLInputElement;
   input.focus();
   return false;
@@ -1746,8 +2180,6 @@ function buildRouteStrategyDraft(): Settings | null {
   const defaultModelInput = document.getElementById("default-model-input");
   const modelsTextarea = document.getElementById("models-textarea");
   const ollamaBaseUrlInput = document.getElementById("ollama-base-url-input");
-  const localVoiceEnabledInput = document.getElementById("local-voice-enabled-input");
-  const localVoiceModelSelect = document.getElementById("local-voice-model-select");
 
   const apiKey = normalizeApiKey(apiKeyInput instanceof HTMLInputElement ? apiKeyInput.value : base.apiKey);
   const baseUrl = baseUrlInput instanceof HTMLInputElement ? baseUrlInput.value.trim() : base.baseUrl;
@@ -1799,44 +2231,73 @@ function buildRouteStrategyDraft(): Settings | null {
     ollamaEnabled: providerMode === "ollama",
     ollamaBaseUrl,
     ollamaModels,
-    localVoiceEnabled: LOCAL_VOICE_SUPPORTED
-      && (localVoiceEnabledInput instanceof HTMLInputElement ? localVoiceEnabledInput.checked : base.localVoiceEnabled),
-    localVoiceModel: localVoiceModelSelect instanceof HTMLSelectElement ? localVoiceModelSelect.value : base.localVoiceModel,
+    localVoiceEnabled: false,
+    localVoiceModel: "base",
     routing
   };
 }
 
-function buildAgentRoutePreferenceOrder(source: Settings | null, stage: "generator" | "repair" | "planner"): string[] {
-  const preferred = stage === "planner"
-    ? [
-      (source?.routing?.longContext ?? "").trim(),
-      (source?.routing?.think ?? "").trim(),
-      (source?.defaultModel ?? "").trim(),
-      (source?.routing?.default ?? "").trim()
-    ]
-    : stage === "repair"
-      ? [
-        (source?.routing?.think ?? "").trim(),
-        (source?.defaultModel ?? "").trim(),
-        (source?.routing?.default ?? "").trim(),
-        (source?.routing?.longContext ?? "").trim()
-      ]
-      : [
-        (source?.defaultModel ?? "").trim(),
-        (source?.routing?.default ?? "").trim(),
-        (source?.routing?.think ?? "").trim(),
-        (source?.routing?.longContext ?? "").trim()
-      ];
+function getModelCapabilityTags(model: string): string[] {
+  const normalized = (model.startsWith("ollama/") ? model.slice("ollama/".length) : model).trim().toLowerCase();
+  if (!normalized) return [];
+  const tags: string[] = [];
+  if (/coder|code|devstral|starcoder|codellama|granite-code|deepcoder|program|software/.test(normalized)) tags.push("coder");
+  if (/r1|reason|think|o1|o3|deepseek|claude|gemini|gpt-oss|terminus/.test(normalized)) tags.push("reasoning");
+  if (/gemini|claude|gpt-4\.1|gpt-4o|long|128k|200k|1m/.test(normalized)) tags.push("long-context");
+  if (/(^|[-_/])vl([:-]|$)|vision|ocr|image|video|pixtral|llava|minicpm-v|gpt-4o|gpt-4\.1|gemini|claude/.test(normalized)) tags.push("vision");
+  return [...new Set(tags)];
+}
 
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const model of [...preferred, ...getRoutingModelPool(source)]) {
-    const normalized = (model ?? "").trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    ordered.push(normalized);
+function scoreRouteModelForStage(model: string, stage: "generator" | "repair" | "planner"): number {
+  const tags = getModelCapabilityTags(model);
+  const coding = tags.includes("coder") ? 8 : /(qwen|deepseek|gpt-oss)/i.test(model) ? 2 : 0;
+  const reasoning = tags.includes("reasoning") ? 6 : /llama-3\.[13]|qwen3/i.test(model) ? 2 : 0;
+  const longContext = tags.includes("long-context") ? 8 : /llama-3\.[13]|qwen3|deepseek/i.test(model) ? 3 : 0;
+  const hasVision = tags.includes("vision");
+  const stageScore = stage === "planner"
+    ? (longContext * 3) + (reasoning * 2) + coding
+    : stage === "repair"
+      ? (coding * 3) + (reasoning * 2) + longContext
+      : (coding * 3) + reasoning + longContext;
+  return stageScore + (hasVision && coding === 0 && stage !== "planner" ? -4 : 0);
+}
+
+function getRoutePreferenceBoost(source: Settings | null, stage: "generator" | "repair" | "planner", model: string): number {
+  const normalized = (model ?? "").trim();
+  if (!normalized) return 0;
+  if (stage === "planner") {
+    if (normalized === (source?.routing?.longContext ?? "").trim()) return 8;
+    if (normalized === (source?.routing?.think ?? "").trim()) return 3;
+    if (normalized === (source?.defaultModel ?? "").trim()) return 1;
+    if (normalized === (source?.routing?.default ?? "").trim()) return 1;
+    return 0;
   }
-  return ordered;
+  if (stage === "repair") {
+    if (normalized === (source?.routing?.think ?? "").trim()) return 4;
+    if (normalized === (source?.defaultModel ?? "").trim()) return 2;
+    if (normalized === (source?.routing?.default ?? "").trim()) return 2;
+    if (normalized === (source?.routing?.longContext ?? "").trim()) return 1;
+    return 0;
+  }
+  if (normalized === (source?.defaultModel ?? "").trim()) return 4;
+  if (normalized === (source?.routing?.default ?? "").trim()) return 4;
+  if (normalized === (source?.routing?.think ?? "").trim()) return 1;
+  if (normalized === (source?.routing?.longContext ?? "").trim()) return 1;
+  return 0;
+}
+
+function buildAgentRoutePreferenceOrder(source: Settings | null, stage: "generator" | "repair" | "planner"): string[] {
+  return getRoutingModelPool(source)
+    .map((model, index) => ({
+      model,
+      index,
+      score: scoreRouteModelForStage(model, stage) + getRoutePreferenceBoost(source, stage, model)
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return left.index - right.index;
+    })
+    .map((entry) => entry.model);
 }
 
 function isRouteModelActive(source: Settings | null, model: string): boolean {
@@ -1853,6 +2314,12 @@ function formatRouteModelLabel(model: string): string {
   return `${label} · ${model.startsWith("ollama/") ? "local" : "cloud"}`;
 }
 
+function renderModelCapabilityBadges(model: string): string {
+  const tags = getModelCapabilityTags(model);
+  if (tags.length === 0) return "";
+  return tags.map((tag) => `<span class="agent-history-badge">${escHtml(tag)}</span>`).join("");
+}
+
 function renderRouteStrategyBadges(models: string[], options: { disabled?: boolean } = {}): string {
   if (models.length === 0) {
     return '<span class="route-strategy-badge route-strategy-badge-empty">Not available</span>';
@@ -1861,7 +2328,9 @@ function renderRouteStrategyBadges(models: string[], options: { disabled?: boole
   return models.map((model) => {
     const tone = model.startsWith("ollama/") ? "route-strategy-badge-local" : "route-strategy-badge-cloud";
     const disabled = options.disabled ? " route-strategy-badge-disabled" : "";
-    return `<span class="route-strategy-badge ${tone}${disabled}" title="${escHtml(model)}">${escHtml(formatRouteModelLabel(model))}</span>`;
+    const tags = getModelCapabilityTags(model);
+    const title = tags.length > 0 ? `${model} (${tags.join(", ")})` : model;
+    return `<span class="route-strategy-badge ${tone}${disabled}" title="${escHtml(title)}">${escHtml(formatRouteModelLabel(model))}</span>`;
   }).join("");
 }
 
@@ -1954,12 +2423,12 @@ function refreshRouteStrategyUi(): void {
         </div>
       `;
     }).join("")}
-    <div class="route-strategy-footnote">Actual route order can still shift when reliability scoring improves another model, when transient failures force fallback, or when a model is blacklisted for the current task.</div>
+    <div class="route-strategy-footnote">Actual route order can still shift when reliability scoring improves another model, when transient failures force fallback, or when a model is blacklisted for the current task. Transient failures blacklist more slowly than hard or semantic failures.</div>
   `;
 }
 
 function getProviderModeFromSettings(source: Settings | null): ProviderMode {
-  return source?.ollamaEnabled ? "ollama" : "openrouter";
+  return source?.ollamaEnabled ? "ollama" : getCloudProviderModeFromSettings(source);
 }
 
 function getVisibleModelsForProvider(source: Settings | null, mode: ProviderMode): string[] {
@@ -1968,8 +2437,10 @@ function getVisibleModelsForProvider(source: Settings | null, mode: ProviderMode
 
 function applyProviderUiState(mode: ProviderMode): void {
   const openrouterBtn = document.getElementById("provider-openrouter-btn");
+  const nvidiaBtn = document.getElementById("provider-nvidia-btn");
   const ollamaBtn = document.getElementById("provider-ollama-btn");
   openrouterBtn?.classList.toggle("active", mode === "openrouter");
+  nvidiaBtn?.classList.toggle("active", mode === "nvidia");
   ollamaBtn?.classList.toggle("active", mode === "ollama");
 
   const openrouterApiSection = document.getElementById("openrouter-api-section");
@@ -1978,33 +2449,71 @@ function applyProviderUiState(mode: ProviderMode): void {
   const ollamaModelsSection = document.getElementById("ollama-models-section");
   const testConnBtn = document.getElementById("test-conn-btn");
   const helpText = document.getElementById("provider-help-text");
+  const apiKeyLabel = document.getElementById("provider-api-key-label");
+  const apiKeyHelp = document.getElementById("provider-api-key-help");
+  const baseUrlLabel = document.getElementById("provider-base-url-label");
+  const apiKeyInput = document.getElementById("api-key-input");
+  const fillModelsBtn = document.getElementById("fill-models-btn");
 
   const ollamaMode = mode === "ollama";
+  const cloudProvider = isCloudProviderMode(mode) ? mode : getCloudProviderModeFromSettings(settings);
+  const cloudProviderName = getProviderDisplayName(cloudProvider);
   if (openrouterApiSection instanceof HTMLElement) openrouterApiSection.style.display = ollamaMode ? "none" : "flex";
   if (openrouterBaseSection instanceof HTMLElement) openrouterBaseSection.style.display = ollamaMode ? "none" : "flex";
   if (ollamaSettingsSection instanceof HTMLElement) ollamaSettingsSection.style.display = ollamaMode ? "flex" : "none";
   if (ollamaModelsSection instanceof HTMLElement) ollamaModelsSection.style.display = ollamaMode ? "flex" : "none";
-  if (testConnBtn instanceof HTMLButtonElement) testConnBtn.style.display = ollamaMode ? "none" : "inline-block";
+  if (testConnBtn instanceof HTMLButtonElement) {
+    testConnBtn.style.display = ollamaMode ? "none" : "inline-block";
+    testConnBtn.textContent = ollamaMode ? "Test Cloud API" : `Test ${cloudProviderName}`;
+  }
+  if (apiKeyLabel instanceof HTMLElement) apiKeyLabel.textContent = `${cloudProviderName} API Key (Optional for Ollama-only)`;
+  if (apiKeyHelp instanceof HTMLElement) {
+    apiKeyHelp.textContent = cloudProvider === "nvidia"
+      ? "Required for NVIDIA-hosted chat models, summaries, and auto-title."
+      : "Required for OpenRouter models, summaries, and auto-title.";
+  }
+  if (baseUrlLabel instanceof HTMLElement) baseUrlLabel.textContent = `${cloudProviderName} Base URL`;
+  if (apiKeyInput instanceof HTMLInputElement) {
+    apiKeyInput.placeholder = cloudProvider === "nvidia" ? "Paste your NVIDIA key" : "Paste your OpenRouter key";
+  }
+  if (fillModelsBtn instanceof HTMLButtonElement) {
+    fillModelsBtn.textContent = mode === "ollama"
+      ? "Use Local List"
+      : cloudProvider === "nvidia"
+        ? "Use NVIDIA Presets"
+        : "Use Recommended";
+  }
   if (helpText) {
-    helpText.textContent = ollamaMode
-      ? "Local mode: only ollama/... models will be shown and used."
-      : "Cloud mode: only OpenRouter models will be shown and used.";
+    helpText.textContent = currentUiExperience === "simple"
+      ? ollamaMode
+        ? "Simple setup: local mode uses your default Ollama model and hides route tuning."
+        : `Simple setup: cloud mode uses your default ${cloudProviderName} model and hides route tuning.`
+      : ollamaMode
+        ? "Local mode: only ollama/... models will be shown and used."
+        : cloudProvider === "nvidia"
+          ? "Cloud mode: use NVIDIA-compatible model IDs in the model list below."
+          : "Cloud mode: only OpenRouter models will be shown and used.";
   }
 }
 
 function setProviderMode(mode: ProviderMode): void {
   providerMode = mode;
+  syncBaseUrlInputForProvider(mode);
   applyProviderUiState(mode);
   updateSidebarProviderButtons(mode);
   populateModels();
   refreshRouteStrategyUi();
+  syncImageStudioControls(false);
+  refreshChatProviderMenuUi();
 }
 
 function updateSidebarProviderButtons(mode: ProviderMode): void {
   const ollamaBtn = document.getElementById("quick-ollama-btn");
   const openrouterBtn = document.getElementById("quick-openrouter-btn");
+  const nvidiaBtn = document.getElementById("quick-nvidia-btn");
   ollamaBtn?.classList.toggle("active", mode === "ollama");
   openrouterBtn?.classList.toggle("active", mode === "openrouter");
+  nvidiaBtn?.classList.toggle("active", mode === "nvidia");
 }
 
 function shouldPreferOllamaWithoutApiKey(source: Settings | null): boolean {
@@ -2052,7 +2561,7 @@ function autoSwitchToOllamaIfNeeded(): boolean {
   }
 
   const statusText = ($("settings-status").textContent ?? "").toLowerCase();
-  if (statusText.includes("openrouter api key required")) {
+  if (statusText.includes("api key required")) {
     setStatus("");
   }
 
@@ -2304,7 +2813,7 @@ function populateModels() {
   if (models.length === 0) {
     const emptyOpt = document.createElement("option");
     emptyOpt.value = "";
-    emptyOpt.textContent = providerMode === "ollama" ? "No Ollama model configured" : "No OpenRouter model configured";
+    emptyOpt.textContent = providerMode === "ollama" ? "No Ollama model configured" : `No ${getProviderDisplayName(providerMode)} model configured`;
     sel.appendChild(emptyOpt);
     compareSel.appendChild(emptyOpt.cloneNode(true));
     sel.value = "";
@@ -2354,6 +2863,154 @@ function getSelectedCompareModel(): string {
   return (($("compare-model-select") as HTMLSelectElement).value ?? "").trim();
 }
 
+function normalizeChatContext(context: ChatContext | null | undefined): ChatContext | null {
+  if (!context) return null;
+
+  const provider = context.provider === "claude" || context.provider === "ollama" || context.provider === "nvidia" || context.provider === "openrouter"
+    ? context.provider
+    : null;
+  if (!provider) return null;
+
+  const selectedModel = (context.selectedModel ?? "").trim();
+  const compareModel = (context.compareModel ?? "").trim();
+
+  if (provider === "claude") {
+    return {
+      provider,
+      selectedModel: selectedModel || CLAUDE_MODEL_LABEL,
+      compareEnabled: false
+    };
+  }
+
+  return {
+    provider,
+    ...(selectedModel ? { selectedModel } : {}),
+    ...(compareModel && context.compareEnabled ? { compareEnabled: true, compareModel } : {})
+  };
+}
+
+function getActiveUiChatContext(): ChatContext {
+  if (currentMode === "claude" || currentMode === "edit") {
+    return {
+      provider: "claude",
+      selectedModel: CLAUDE_MODEL_LABEL,
+      compareEnabled: false
+    };
+  }
+
+  const compareModel = compareModeEnabled ? getSelectedCompareModel() : "";
+  return {
+    provider: providerMode,
+    selectedModel: getSelectedModel(),
+    ...(compareModeEnabled && compareModel ? { compareEnabled: true, compareModel } : {})
+  };
+}
+
+function areChatContextsEqual(left: ChatContext | null | undefined, right: ChatContext | null | undefined): boolean {
+  const normalizedLeft = normalizeChatContext(left);
+  const normalizedRight = normalizeChatContext(right);
+  if (!normalizedLeft && !normalizedRight) return true;
+  if (!normalizedLeft || !normalizedRight) return false;
+  return normalizedLeft.provider === normalizedRight.provider
+    && (normalizedLeft.selectedModel ?? "") === (normalizedRight.selectedModel ?? "")
+    && Boolean(normalizedLeft.compareEnabled) === Boolean(normalizedRight.compareEnabled)
+    && (normalizedLeft.compareModel ?? "") === (normalizedRight.compareModel ?? "");
+}
+
+function applyChatContextToUi(context: ChatContext | null | undefined): void {
+  const normalized = normalizeChatContext(context);
+  if (!normalized) return;
+
+  suppressChatContextSync = true;
+  try {
+    applyInteractionMode("chat");
+    if (normalized.provider === "claude") {
+      compareModeEnabled = false;
+      refreshCompareUi();
+      applyMode("claude");
+      activeChatContext = normalized;
+      return;
+    }
+
+    setProviderMode(normalized.provider);
+    if (currentMode === "claude" || currentMode === "edit") {
+      applyMode("write");
+    }
+
+    const modelSelect = $("model-select") as HTMLSelectElement;
+    if (normalized.selectedModel && selectHasOption(modelSelect, normalized.selectedModel)) {
+      modelSelect.value = normalized.selectedModel;
+    }
+
+    const compareSelect = $("compare-model-select") as HTMLSelectElement;
+    if (normalized.compareEnabled && normalized.compareModel && selectHasOption(compareSelect, normalized.compareModel)) {
+      compareSelect.value = normalized.compareModel;
+      compareModeEnabled = true;
+    } else {
+      compareModeEnabled = false;
+    }
+    refreshCompareUi();
+    activeChatContext = {
+      provider: normalized.provider,
+      selectedModel: getSelectedModel(),
+      ...(compareModeEnabled ? { compareEnabled: true, compareModel: getSelectedCompareModel() } : {})
+    };
+  } finally {
+    suppressChatContextSync = false;
+  }
+}
+
+function getStoredChatContext(chat: Chat | null | undefined): ChatContext {
+  const normalized = normalizeChatContext(chat?.context);
+  if (normalized) return normalized;
+
+  const latestAssistant = [...(chat?.messages ?? [])]
+    .reverse()
+    .find((message) => message.role === "assistant" && (message.model ?? "").trim());
+  if ((latestAssistant?.model ?? "").trim() === CLAUDE_MODEL_LABEL) {
+    return {
+      provider: "claude",
+      selectedModel: CLAUDE_MODEL_LABEL,
+      compareEnabled: false
+    };
+  }
+  if ((latestAssistant?.model ?? "").trim().startsWith("ollama/")) {
+    return {
+      provider: "ollama",
+      selectedModel: latestAssistant?.model?.trim(),
+      compareEnabled: false
+    };
+  }
+
+  return activeChatContext ?? getActiveUiChatContext();
+}
+
+async function syncChatContextAfterUiChange(): Promise<void> {
+  if (suppressChatContextSync) return;
+
+  const nextContext = getActiveUiChatContext();
+  if (areChatContextsEqual(activeChatContext, nextContext)) return;
+
+  if (isStreaming) {
+    showToast("Wait for the current response to finish before switching chat provider or model.", 3200);
+    applyChatContextToUi(activeChatContext);
+    return;
+  }
+
+  activeChatContext = nextContext;
+  const hasPersistedChat = Boolean(currentChatId);
+  const hasConversation = renderedMessages.length > 0;
+
+  if (hasPersistedChat && hasConversation) {
+    openDraftChat(true, { preserveAttachments: true, context: nextContext });
+    return;
+  }
+
+  if (currentChatId) {
+    await window.api.chat.setContext(currentChatId, nextContext);
+  }
+}
+
 function populateSettingsDefaultModelSelect(): void {
   const select = document.getElementById("default-model-select");
   if (!(select instanceof HTMLSelectElement)) return;
@@ -2368,7 +3025,7 @@ function populateSettingsDefaultModelSelect(): void {
   placeholder.value = "";
   placeholder.textContent = visibleModels.length > 0
     ? "Choose an existing model..."
-    : (providerMode === "ollama" ? "No Ollama model configured" : "No OpenRouter model configured");
+    : (providerMode === "ollama" ? "No Ollama model configured" : `No ${getProviderDisplayName(providerMode)} model configured`);
   select.appendChild(placeholder);
 
   for (const model of visibleModels) {
@@ -2380,6 +3037,105 @@ function populateSettingsDefaultModelSelect(): void {
 
   select.disabled = visibleModels.length === 0;
   select.value = visibleModels.includes(currentValue) ? currentValue : "";
+}
+
+function applyLoadedSettingsToUi(loaded: Settings): void {
+  settings = loaded;
+  ($("api-key-input") as HTMLInputElement).value = loaded.apiKey;
+  ($("base-url-input") as HTMLInputElement).value = loaded.baseUrl;
+  ($("default-model-input") as HTMLInputElement).value = loaded.defaultModel;
+  ($("ollama-base-url-input") as HTMLInputElement).value = loaded.ollamaBaseUrl || "http://localhost:11434/v1";
+  const comfyuiBaseUrlInput = document.getElementById("comfyui-base-url-input");
+  if (comfyuiBaseUrlInput instanceof HTMLInputElement) {
+    comfyuiBaseUrlInput.value = loaded.comfyuiBaseUrl || COMFYUI_DEFAULT_BASE_URL;
+  }
+  renderOllamaModels(loaded.ollamaModels ?? []);
+  setProviderMode(getProviderModeFromSettings(loaded));
+  autoSwitchToOllamaIfNeeded();
+  refreshRouteStrategyUi();
+  renderSettingsModelHealth(cachedAgentRouteDiagnostics, activeAgentTaskId ? (cachedAgentTasks.find((item) => item.id === activeAgentTaskId) ?? null) : null);
+  updateVoiceUi();
+}
+
+async function prepareCloudProviderSelection(provider: CloudProviderMode): Promise<void> {
+  const base = settings ?? await window.api.settings.get();
+  const apiKeyInput = document.getElementById("api-key-input");
+  const rawApiKey = apiKeyInput instanceof HTMLInputElement ? apiKeyInput.value : base.apiKey;
+  const apiKey = normalizeApiKey(rawApiKey);
+  const preferredBaseUrl = getDefaultBaseUrlForProvider(provider);
+  const currentBaseUrl = (($("base-url-input") as HTMLInputElement).value ?? "").trim();
+  const currentBaseUrlSupportsProvider = provider === "nvidia"
+    ? currentBaseUrl.toLowerCase().includes("nvidia.com")
+    : currentBaseUrl.toLowerCase().includes("openrouter.ai");
+  const baseUrl = currentBaseUrl && currentBaseUrlSupportsProvider
+    ? currentBaseUrl
+    : preferredBaseUrl;
+  const defaultModel = provider === "nvidia" ? NVIDIA_DEFAULT_MODEL : OPENROUTER_DEFAULT_MODEL;
+  const models = getRecommendedCloudModelsForProvider(provider);
+  const nextSettings = await window.api.settings.save({
+    apiKey,
+    baseUrl,
+    cloudProvider: provider,
+    imageProvider: getImageProviderFromSettings(base),
+    defaultModel,
+    models,
+    routing: getDefaultRoutingForProvider(provider),
+    ollamaEnabled: false,
+    ollamaBaseUrl: base.ollamaBaseUrl,
+    ollamaModels: base.ollamaModels,
+    comfyuiBaseUrl: base.comfyuiBaseUrl ?? COMFYUI_DEFAULT_BASE_URL,
+    localVoiceEnabled: false,
+    localVoiceModel: base.localVoiceModel || "base"
+  });
+  applyLoadedSettingsToUi(nextSettings);
+}
+
+async function prepareOllamaProviderSelection(): Promise<void> {
+  const base = settings ?? await window.api.settings.get();
+  setProviderMode("ollama");
+
+  const check = await window.api.ollama.check();
+  if (!check.ok) {
+    setStatus(
+      (check.message ?? "Ollama is not installed.")
+      + ` Install Ollama, run \`ollama pull ${LOCAL_CODER_PRIMARY}\`, then retry.`,
+      "err"
+    );
+    showToast("Ollama not found. Install it and pull a local model first.", 4200);
+    return;
+  }
+
+  const ollamaBaseUrlInput = document.getElementById("ollama-base-url-input");
+  const baseUrl = ollamaBaseUrlInput instanceof HTMLInputElement
+    ? ollamaBaseUrlInput.value.trim() || base.ollamaBaseUrl || "http://localhost:11434/v1"
+    : base.ollamaBaseUrl || "http://localhost:11434/v1";
+  const models = await window.api.ollama.listModels(baseUrl);
+  const preferredModel = pickPreferredLocalCoderModel(models);
+  const defaultModel = preferredModel ? `ollama/${preferredModel}` : "";
+
+  const nextSettings = await window.api.settings.save({
+    apiKey: normalizeApiKey((document.getElementById("api-key-input") as HTMLInputElement | null)?.value ?? base.apiKey),
+    baseUrl: base.baseUrl,
+    cloudProvider: getCloudProviderModeFromSettings(base),
+    imageProvider: getImageProviderFromSettings(base),
+    ...(defaultModel ? { defaultModel } : {}),
+    ollamaEnabled: true,
+    ollamaBaseUrl: baseUrl,
+    ollamaModels: models,
+    comfyuiBaseUrl: base.comfyuiBaseUrl ?? COMFYUI_DEFAULT_BASE_URL,
+    localVoiceEnabled: false,
+    localVoiceModel: base.localVoiceModel || "base"
+  });
+  applyLoadedSettingsToUi(nextSettings);
+
+  if (models.length === 0) {
+    setStatus(`Ollama is installed, but no local models were found. Run \`ollama pull ${LOCAL_CODER_PRIMARY}\` and retry.`, "err");
+    showToast("No local Ollama models found. Pull a model first.", 3600);
+    return;
+  }
+
+  setStatus(`Ollama ready with ${preferredModel}.`, "ok");
+  showToast(`Ollama ready. Local models auto-load ho gaye: ${preferredModel}`, 2600);
 }
 
 function getEditableSourcePaths(items: AttachmentPayload[]): string[] {
@@ -2402,6 +3158,16 @@ function getClaudeManagedEditPermissions(
   const allowedRoots = getWritableRootPaths(items);
 
   return { allowedPaths, allowedRoots };
+}
+
+function buildClaudeManagedEditBaselines(items: AttachmentPayload[]): ClaudeManagedEditBaseline[] {
+  return items
+    .filter((attachment) => attachment.type === "text")
+    .map((attachment) => {
+      const path = (attachment.sourcePath ?? "").trim();
+      return path ? { path, content: attachment.content ?? "" } : null;
+    })
+    .filter((item): item is ClaudeManagedEditBaseline => Boolean(item));
 }
 
 function hasManagedSaveTargets(items: AttachmentPayload[]): boolean {
@@ -2586,8 +3352,11 @@ function findVisionModelCandidate(): { provider: ProviderMode; model: string } |
   const currentProviderMatch = currentProviderModels.find(isLikelyVisionCapableModel);
   if (currentProviderMatch) return { provider: providerMode, model: currentProviderMatch };
 
-  const openRouterMatch = getVisibleModelsForProvider(settings, "openrouter").find(isLikelyVisionCapableModel);
-  if (openRouterMatch) return { provider: "openrouter", model: openRouterMatch };
+  const cloudProvider = getCloudProviderModeFromSettings(settings);
+  if (cloudProvider !== providerMode) {
+    const cloudMatch = getVisibleModelsForProvider(settings, cloudProvider).find(isLikelyVisionCapableModel);
+    if (cloudMatch) return { provider: cloudProvider, model: cloudMatch };
+  }
 
   const ollamaMatch = getVisibleModelsForProvider(settings, "ollama").find(isLikelyVisionCapableModel);
   if (ollamaMatch) return { provider: "ollama", model: ollamaMatch };
@@ -2611,9 +3380,14 @@ async function sendChatPromptWithAttachments(
     return;
   }
 
+  if (options?.switchFromClaude) {
+    applyMode("write");
+    await syncChatContextAfterUiChange();
+  }
+
   let chatId = currentChatId;
   if (!chatId) {
-    chatId = await createNewChat(false);
+    chatId = await createNewChat(false, activeChatContext ?? getActiveUiChatContext());
   }
   pendingChatSaveGuard = {
     ...(shouldVerifyClaudeSave(rawContent || content, attachmentsToSend) ?? { requested: false, expectedPaths: [] }),
@@ -2659,13 +3433,14 @@ async function sendChatPromptWithAttachments(
     return;
   }
 
-  const modelsNeedingOpenRouterKey = [model, ...(compareModeEnabled ? [compareModel] : [])]
+  const modelsNeedingCloudKey = [model, ...(compareModeEnabled ? [compareModel] : [])]
     .map((m) => (m ?? "").trim())
     .filter(Boolean)
     .some((m) => !m.startsWith("ollama/"));
-  if (modelsNeedingOpenRouterKey) {
-    const message = "Selected model is OpenRouter. Add API key, or switch model to ollama/...";
-    if (!requireOpenRouterApiKey(message)) {
+  if (modelsNeedingCloudKey) {
+    const cloudProvider = getCloudProviderModeFromSettings(settings);
+    const message = `Selected model needs a ${getProviderDisplayName(cloudProvider)} API key. Add key, or switch model to ollama/...`;
+    if (!requireCloudApiKey(message)) {
       pendingChatSaveGuard = null;
       activeAttachments = mergeAttachments(attachmentsToSend);
       renderComposerAttachments();
@@ -2675,7 +3450,6 @@ async function sendChatPromptWithAttachments(
 
   activeAttachments = [];
   renderComposerAttachments();
-  showTemplatesDropdown(false);
 
   const input = $("composer-input") as HTMLTextAreaElement;
   input.value = "";
@@ -2693,9 +3467,11 @@ async function sendChatPromptWithAttachments(
   scrollToBottom(true);
 
   try {
+    const chatContext = activeChatContext ?? getActiveUiChatContext();
     await window.api.chat.send(chatId, content, model, {
       attachments: attachmentsToSend,
       compareModel: compareModeEnabled ? compareModel : undefined,
+      context: chatContext,
       enabledTools: getEnabledToolNames()
     });
   } catch (err) {
@@ -2789,94 +3565,69 @@ function renderMessageAttachmentNames(body: HTMLElement, msg: Message): void {
   body.appendChild(wrap);
 }
 
-function renderTemplatesList(): void {
-  const listEl = $("templates-list");
-  listEl.innerHTML = "";
-  const modeTemplates = getActiveModeTemplates();
-  const helpEl = document.getElementById("templates-help");
-  if (helpEl instanceof HTMLElement) {
-    helpEl.textContent = templates.length > 0
-      ? "Built-in templates are listed first. Your saved templates appear below with a Delete action."
-      : "Built-in templates are listed first. Save the current composer text to add your own reusable templates here.";
-  }
-
-  for (const template of modeTemplates) {
-    const item = document.createElement("div");
-    item.className = "template-item";
-
-    const useBtn = document.createElement("button");
-    useBtn.type = "button";
-    useBtn.textContent = template.name;
-    useBtn.style.flex = "1";
-    useBtn.style.textAlign = "left";
-    useBtn.onclick = () => {
-      const input = $("composer-input") as HTMLTextAreaElement;
-      input.value = template.content;
-      input.dispatchEvent(new Event("input"));
-      $("templates-dropdown").style.display = "none";
-    };
-
-    item.appendChild(useBtn);
-    listEl.appendChild(item);
-  }
-
-  if (templates.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "template-item";
-    empty.textContent = currentInteractionMode === "agent"
-      ? "No saved agent templates yet. Write an agent prompt, then click Save Template."
-      : "No saved chat templates yet. Write in the composer, then click Save Template.";
-    listEl.appendChild(empty);
-
-    const smokeBtn = document.createElement("button");
-    smokeBtn.type = "button";
-    smokeBtn.className = "btn-ghost-sm";
-    smokeBtn.textContent = "Try Template Smoke";
-    smokeBtn.style.marginTop = "8px";
-    smokeBtn.onclick = () => {
-      void startTemplateSmokePath();
-    };
-    listEl.appendChild(smokeBtn);
-  }
-
-  for (const template of templates) {
-    const item = document.createElement("div");
-    item.className = "template-item";
-
-    const useBtn = document.createElement("button");
-    useBtn.type = "button";
-    useBtn.textContent = template.name;
-    useBtn.style.flex = "1";
-    useBtn.style.textAlign = "left";
-    useBtn.onclick = () => {
-      const input = $("composer-input") as HTMLTextAreaElement;
-      input.value = template.content;
-      input.dispatchEvent(new Event("input"));
-      $("templates-dropdown").style.display = "none";
-    };
-
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.textContent = "Delete";
-    delBtn.onclick = async () => {
-      templates = await window.api.templates.delete(template.name);
-      renderTemplatesList();
-    };
-
-    item.appendChild(useBtn);
-    item.appendChild(delBtn);
-    listEl.appendChild(item);
-  }
-}
-
-function showTemplatesDropdown(show: boolean): void {
-  const dropdown = $("templates-dropdown");
+function showHeaderToolsMenu(show: boolean): void {
+  const dropdown = $("header-tools-menu");
+  const btn = $("header-tools-menu-btn");
   dropdown.style.display = show ? "block" : "none";
+  btn.setAttribute("aria-expanded", show ? "true" : "false");
+  btn.classList.toggle("active", show);
 }
 
-async function loadTemplates(): Promise<void> {
-  templates = await window.api.templates.list();
-  renderTemplatesList();
+function closeChatItemMenus(): void {
+  activeChatActionMenuId = null;
+  document.querySelectorAll<HTMLElement>(".chat-item-menu").forEach((menu) => {
+    menu.style.display = "none";
+    menu.setAttribute("data-open", "false");
+  });
+  document.querySelectorAll<HTMLButtonElement>(".chat-item-menu-btn").forEach((btn) => {
+    btn.setAttribute("aria-expanded", "false");
+    btn.classList.remove("active");
+  });
+}
+
+function showChatItemMenu(chatId: string, button: HTMLButtonElement, menu: HTMLElement, show: boolean): void {
+  closeChatItemMenus();
+  if (!show) return;
+  activeChatActionMenuId = chatId;
+  menu.style.display = "block";
+  button.setAttribute("aria-expanded", "true");
+  button.classList.add("active");
+}
+
+function getHeaderToolsMenuItems(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>(".header-tools-menu-item"));
+}
+
+function focusHeaderToolsMenuItem(target: "first" | "last" | number): void {
+  const items = getHeaderToolsMenuItems();
+  if (items.length === 0) return;
+  if (target === "first") {
+    items[0]?.focus();
+    return;
+  }
+  if (target === "last") {
+    items[items.length - 1]?.focus();
+    return;
+  }
+  items[Math.max(0, Math.min(items.length - 1, target))]?.focus();
+}
+
+function updateHeaderBuildLabel(name: string, version: string): void {
+  const buildLabel = document.getElementById("header-build-value");
+  if (!(buildLabel instanceof HTMLElement)) return;
+  const trimmedName = (name ?? "").trim() || "Cipher Workspace";
+  const trimmedVersion = (version ?? "").trim();
+  buildLabel.textContent = trimmedVersion ? `v${trimmedVersion}` : trimmedName;
+  buildLabel.title = trimmedVersion ? `${trimmedName} v${trimmedVersion}` : trimmedName;
+}
+
+async function loadAppInfo(): Promise<void> {
+  try {
+    const info = await window.api.app.info();
+    updateHeaderBuildLabel(info.name, info.version);
+  } catch {
+    updateHeaderBuildLabel("Cipher Workspace", "");
+  }
 }
 
 async function promptForTextInput(options: TextPromptOptions): Promise<string | null> {
@@ -2967,62 +3718,6 @@ async function promptForTextInput(options: TextPromptOptions): Promise<string | 
       if (inputEl instanceof HTMLInputElement) inputEl.select();
     });
   });
-}
-
-async function saveCurrentAsTemplate(): Promise<void> {
-  const input = $("composer-input") as HTMLTextAreaElement;
-  const content = input.value.trim();
-  if (!content) {
-    showToast("Write something in the composer first, then save it as a template.", 2200);
-    return;
-  }
-
-  const name = (await promptForTextInput({
-    title: "Template name",
-    placeholder: "My template",
-    confirmLabel: "Save"
-  }))?.trim();
-  if (!name) return;
-
-  templates = await window.api.templates.save(name, content);
-  renderTemplatesList();
-  showTemplatesDropdown(true);
-  showToast(`Template saved: ${name}`);
-}
-
-function getTemplateSmokeContent(): { name: string; content: string } {
-  if (currentInteractionMode === "agent") {
-    return {
-      name: "Smoke Agent Template",
-      content: "Create a tiny demo change and summarize exactly what files were changed."
-    };
-  }
-
-  return {
-    name: "Smoke Chat Template",
-    content: "Reply with exactly: smoke template ok"
-  };
-}
-
-async function startTemplateSmokePath(): Promise<void> {
-  const input = $("composer-input") as HTMLTextAreaElement;
-  const sample = getTemplateSmokeContent();
-  input.value = sample.content;
-  input.dispatchEvent(new Event("input"));
-  showTemplatesDropdown(true);
-
-  const name = (await promptForTextInput({
-    title: "Template smoke name",
-    placeholder: sample.name,
-    initialValue: sample.name,
-    confirmLabel: "Save"
-  }))?.trim();
-  if (!name) return;
-
-  templates = await window.api.templates.save(name, sample.content);
-  renderTemplatesList();
-  showTemplatesDropdown(true);
-  showToast(`Template smoke saved: ${name}`);
 }
 
 function parseArgsInput(raw: string): string[] {
@@ -3235,27 +3930,86 @@ function renderChatList(chats: ChatSummary[]): void {
     title.className = "chat-item-title";
     title.textContent = chat.title;
 
+    const meta = document.createElement("div");
+    meta.className = "chat-item-meta";
+
     const time = document.createElement("span");
     time.className = "chat-item-time";
     time.textContent = formatUiTime(chat.updatedAt);
 
+    const menuShell = document.createElement("div");
+    menuShell.className = "chat-item-menu-shell";
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "chat-item-menu-btn";
+    menuBtn.type = "button";
+    menuBtn.title = "Chat actions";
+    menuBtn.setAttribute("aria-label", "Chat actions");
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-expanded", "false");
+    menuBtn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.25" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.75" cy="8" r="1.1"/></svg>';
+    menuBtn.onclick = (e) => {
+      e.stopPropagation();
+      const isOpen = menu.getAttribute("data-open") === "true";
+      showChatItemMenu(chat.id, menuBtn, menu, !isOpen);
+      menu.setAttribute("data-open", !isOpen ? "true" : "false");
+    };
+
+    const menu = document.createElement("div");
+    menu.className = "chat-item-menu";
+    menu.setAttribute("role", "menu");
+    menu.style.display = "none";
+    menu.setAttribute("data-open", "false");
+
+    const rename = document.createElement("button");
+    rename.className = "chat-item-menu-item";
+    rename.type = "button";
+    rename.setAttribute("role", "menuitem");
+    rename.textContent = "Rename";
+    rename.onclick = (e) => {
+      e.stopPropagation();
+      closeChatItemMenus();
+      openRenameModalForChat(chat.id, chat.title);
+    };
+
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "chat-item-menu-item";
+    exportBtn.type = "button";
+    exportBtn.setAttribute("role", "menuitem");
+    exportBtn.textContent = "Export";
+    exportBtn.onclick = async (e) => {
+      e.stopPropagation();
+      closeChatItemMenus();
+      await exportChatById(chat.id);
+    };
+
     const del = document.createElement("button");
-    del.className = "chat-item-del";
-    del.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5.5 6.5v5M8 6.5v5M10.5 6.5v5M4.5 4.5l.6 8.4c.04.62.56 1.1 1.18 1.1h3.32c.62 0 1.14-.48 1.18-1.1l.6-8.4"/></svg>';
-    del.title = "Delete";
-    del.setAttribute("aria-label", "Delete chat");
+    del.className = "chat-item-menu-item danger";
+    del.type = "button";
+    del.setAttribute("role", "menuitem");
+    del.textContent = "Delete";
     del.onclick = async (e) => {
       e.stopPropagation();
+      closeChatItemMenus();
       await window.api.chat.delete(chat.id);
       if (currentChatId === chat.id) { currentChatId = null; clearMessages(); }
       await loadChatList();
     };
 
     top.appendChild(title);
-    top.appendChild(time);
+    meta.appendChild(time);
+    menu.appendChild(rename);
+    menu.appendChild(exportBtn);
+    menu.appendChild(del);
+    menuShell.appendChild(menuBtn);
+    menuShell.appendChild(menu);
+    meta.appendChild(menuShell);
+    top.appendChild(meta);
     item.appendChild(top);
-    item.appendChild(del);
-    item.onclick = () => loadChat(chat.id);
+    item.onclick = () => {
+      closeChatItemMenus();
+      void loadChat(chat.id);
+    };
     list.appendChild(item);
   }
 }
@@ -3296,16 +4050,74 @@ function shouldOpenDraftChatFromLocation(): boolean {
   return (new URLSearchParams(window.location.search).get("draftChat") ?? "").trim() === "1";
 }
 
+function showChatProviderMenu(show: boolean): void {
+  const menu = document.getElementById("chat-provider-menu");
+  const button = document.getElementById("interaction-chat-btn");
+  if (!(menu instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) return;
+  chatProviderMenuOpen = show;
+  menu.style.display = show ? "block" : "none";
+  button.setAttribute("aria-expanded", show ? "true" : "false");
+}
+
+function refreshChatProviderMenuUi(): void {
+  const providerItems: Array<[string, ProviderMode]> = [
+    ["chat-provider-openrouter-btn", "openrouter"],
+    ["chat-provider-nvidia-btn", "nvidia"],
+    ["chat-provider-ollama-btn", "ollama"]
+  ];
+  const claudeActive = currentMode === "claude" || currentMode === "edit";
+
+  for (const [id, mode] of providerItems) {
+    document.getElementById(id)?.classList.toggle("active", !claudeActive && providerMode === mode);
+  }
+  document.getElementById("chat-provider-claude-btn")?.classList.toggle("active", claudeActive);
+}
+
+async function selectChatProvider(option: "openrouter" | "nvidia" | "ollama" | "claude"): Promise<void> {
+  applyInteractionMode("chat");
+  if (option === "claude") {
+    applyMode("claude");
+    showChatProviderMenu(false);
+    refreshChatProviderMenuUi();
+    await syncChatContextAfterUiChange();
+    return;
+  }
+
+  if (option === "openrouter" || option === "nvidia") {
+    await prepareCloudProviderSelection(option);
+    const providerName = getProviderDisplayName(option);
+    setStatus(`${providerName} presets ready.`, "ok");
+    showToast(`${providerName} ready. Base URL aur models auto-set ho gaye.`, 2600);
+  } else if (option === "ollama") {
+    await prepareOllamaProviderSelection();
+  } else {
+    setProviderMode(option);
+  }
+  if (currentMode === "claude" || currentMode === "edit") {
+    applyMode("write");
+  }
+  showChatProviderMenu(false);
+  refreshChatProviderMenuUi();
+  await syncChatContextAfterUiChange();
+}
+
+function updateChatHeaderTitle(title: string | null): void {
+  const value = title?.trim() ?? "";
+  $("chat-title-display").textContent = value;
+  document.querySelector(".chat-title-stack")?.classList.toggle("is-empty", value.length === 0);
+}
+
 // â”€â”€ Load Chat â”€â”€
 async function loadChat(id: string) {
   currentChatId = id;
   const chat = await window.api.chat.get(id);
   if (!chat) return;
+  applyChatContextToUi(getStoredChatContext(chat));
 
-  $("chat-title-display").textContent = chat.title;
-  $("rename-btn").style.display = "inline-block";
-  $("export-btn").style.display = "inline-block";
-  $("system-prompt-toggle-btn").style.display = "inline-block";
+  updateChatHeaderTitle(chat.title);
+  $("rename-btn").style.display = "none";
+  $("export-btn").style.display = "none";
+  $("system-prompt-toggle-btn").style.display = "none";
   $("system-prompt-panel").style.display = "none";
   $("system-prompt-toggle-btn").classList.remove("active");
   ($("system-prompt-input") as HTMLTextAreaElement).value = chat.systemPrompt ?? "";
@@ -3323,7 +4135,6 @@ async function loadChat(id: string) {
 
   activeAttachments = [];
   renderComposerAttachments();
-  showTemplatesDropdown(false);
   scrollToBottom(true);
   await loadChatList();
 }
@@ -3337,7 +4148,6 @@ function createEmptyStateElement(): HTMLDivElement {
   };
 
   const recentChats = cachedChatSummaries.slice(0, 3);
-  const modeTemplates = getActiveModeTemplates().slice(0, 3);
   const quickActions = currentInteractionMode === "agent"
     ? [
         {
@@ -3377,14 +4187,14 @@ function createEmptyStateElement(): HTMLDivElement {
   const empty = document.createElement("div");
   empty.className = `empty-state${currentInteractionMode === "agent" ? " agent-empty-state" : " chat-empty-state"}`;
   empty.innerHTML = currentInteractionMode === "agent"
-    ? '<div class="empty-icon">&#9881;</div><p>Agent workspace ready for supervised tasks.</p><span><span class="empty-subtle-icon">&#8984;</span> Build, fix, continue, and verify work without leaving the main conversation.</span>'
-    : '<div class="empty-icon">&#10024;</div><p>Start work from a smarter home screen.</p><span><span class="empty-subtle-icon">&#8984;</span> Chat, think, write, and launch focused tasks from one workspace.</span>';
+    ? '<div class="empty-hero"><div class="empty-kicker">Agent Mode</div><p><span class="empty-heading-icon" aria-hidden="true">&#9881;</span><span class="empty-heading-text">Agent workspace ready for supervised tasks.</span></p><span class="empty-hero-copy"><span class="empty-subtle-icon">&#8984;</span> Build, fix, continue, and verify work without leaving the main conversation.</span></div>'
+    : '<div class="empty-hero"><div class="empty-kicker">Workspace Home</div><p><span class="empty-heading-icon" aria-hidden="true">&#10024;</span><span class="empty-heading-text">Start work from a smarter home screen.</span></p><span class="empty-hero-copy"><span class="empty-subtle-icon">&#8984;</span> Chat, think, write, and launch focused tasks from one workspace.</span></div>';
 
   const actions = document.createElement("div");
   actions.className = "empty-actions";
   actions.innerHTML = currentInteractionMode === "agent"
-    ? '<button class="btn-primary empty-action-btn" type="button" data-empty-action="template">Use Agent Template</button><button class="btn-ghost empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>'
-    : '<button class="btn-primary empty-action-btn" type="button" data-empty-action="new-chat">Start Chat</button><button class="btn-ghost empty-action-btn" type="button" data-empty-action="template">Use a Template</button><button class="btn-ghost empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>';
+    ? '<button class="btn-primary empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>'
+    : '<button class="btn-primary empty-action-btn" type="button" data-empty-action="new-chat">Start Chat</button><button class="btn-ghost empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>';
   empty.appendChild(actions);
 
   const grid = document.createElement("div");
@@ -3405,22 +4215,6 @@ function createEmptyStateElement(): HTMLDivElement {
   }
   quickSection.appendChild(quickList);
   grid.appendChild(quickSection);
-
-  const templateSection = document.createElement("section");
-  templateSection.className = "empty-panel";
-  templateSection.innerHTML = '<div class="empty-panel-head"><span class="empty-panel-kicker">Templates</span><strong>Mode-aware starting points</strong></div>';
-  const templateList = document.createElement("div");
-  templateList.className = "empty-template-list";
-  for (const template of modeTemplates) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "empty-template-card";
-    button.innerHTML = `<strong>${template.name}</strong><span>${template.content}</span>`;
-    button.onclick = () => applyComposerDraft(template.content);
-    templateList.appendChild(button);
-  }
-  templateSection.appendChild(templateList);
-  grid.appendChild(templateSection);
 
   const recentSection = document.createElement("section");
   recentSection.className = "empty-panel";
@@ -3443,7 +4237,7 @@ function createEmptyStateElement(): HTMLDivElement {
   motto.className = "empty-motto";
   motto.textContent = currentInteractionMode === "agent"
     ? "Agent mode inspects, edits, verifies, and logs progress."
-    : "Cipher Workspace: Intelligent desktop work, with local control";
+    : "AI Workspace for Real Output";
   empty.appendChild(motto);
   return empty;
 }
@@ -3458,10 +4252,6 @@ async function handleGuidedUiAction(action: string): Promise<void> {
       return;
     case "new-chat":
       await createNewChat();
-      return;
-    case "template":
-    case "templates":
-      showTemplatesDropdown(true);
       return;
     default:
       return;
@@ -3489,13 +4279,18 @@ function clearRenderedMessages(): void {
 }
 
 function hideSummaryOverlay(): void {
-  $("chat-summary-overlay").style.display = "none";
-  $("chat-summary-content").textContent = "";
+  const overlay = document.getElementById("chat-summary-overlay");
+  const content = document.getElementById("chat-summary-content");
+  if (overlay instanceof HTMLElement) overlay.style.display = "none";
+  if (content instanceof HTMLElement) content.textContent = "";
 }
 
 function showSummaryOverlay(summary: string): void {
-  $("chat-summary-content").textContent = summary.trim();
-  $("chat-summary-overlay").style.display = "flex";
+  const overlay = document.getElementById("chat-summary-overlay");
+  const content = document.getElementById("chat-summary-content");
+  if (!(overlay instanceof HTMLElement) || !(content instanceof HTMLElement)) return;
+  content.textContent = summary.trim();
+  overlay.style.display = "flex";
 }
 
 function clearMessages() {
@@ -3508,7 +4303,7 @@ function clearMessages() {
   virtualItemHeights.clear();
   shouldAutoScroll = true;
   $("messages").appendChild(createEmptyStateElement());
-  $("chat-title-display").textContent = "Choose a conversation";
+  updateChatHeaderTitle(null);
   $("rename-btn").style.display = "none";
   $("export-btn").style.display = "none";
   $("system-prompt-toggle-btn").style.display = "none";
@@ -3516,12 +4311,15 @@ function clearMessages() {
   $("system-prompt-toggle-btn").classList.remove("active");
   ($("system-prompt-input") as HTMLTextAreaElement).value = "";
   activeAttachments = [];
+  activeChatContext = getActiveUiChatContext();
   renderComposerAttachments();
-  showTemplatesDropdown(false);
   updateScrollBottomButton();
 }
 
-function openDraftChat(showEmptyState = true): void {
+function openDraftChat(
+  showEmptyState = true,
+  options?: { preserveAttachments?: boolean; context?: ChatContext | null }
+): void {
   currentChatId = null;
   clearRenderedMessages();
   hideSummaryOverlay();
@@ -3532,21 +4330,21 @@ function openDraftChat(showEmptyState = true): void {
   virtualItemHeights.clear();
   shouldAutoScroll = true;
   const messages = $("messages");
-  messages.innerHTML = "";
+  clearRenderedMessages();
   messages.scrollTop = 0;
   if (showEmptyState) {
     messages.appendChild(createEmptyStateElement());
   }
-  $("chat-title-display").textContent = "New Chat";
+  updateChatHeaderTitle(null);
   $("rename-btn").style.display = "none";
   $("export-btn").style.display = "none";
   $("system-prompt-toggle-btn").style.display = "none";
   $("system-prompt-panel").style.display = "none";
   $("system-prompt-toggle-btn").classList.remove("active");
   ($("system-prompt-input") as HTMLTextAreaElement).value = "";
-  activeAttachments = [];
+  if (!options?.preserveAttachments) activeAttachments = [];
+  activeChatContext = normalizeChatContext(options?.context) ?? getActiveUiChatContext();
   renderComposerAttachments();
-  showTemplatesDropdown(false);
   updateScrollBottomButton();
   renderChatList(cachedChatSummaries);
 }
@@ -3564,6 +4362,16 @@ function renderMessageBody(contentEl: HTMLElement, content: string, done: boolea
   }
 }
 
+function applyGeneratedImageAssetIds(contentEl: HTMLElement, msg: Message | undefined): void {
+  const assetIds = msg?.metadata?.generatedImageAssetIds ?? [];
+  const saveButtons = Array.from(contentEl.querySelectorAll<HTMLButtonElement>(".message-image-save-btn"));
+  saveButtons.forEach((button, index) => {
+    const assetId = assetIds[index] ?? "";
+    if (assetId) button.dataset["imageAssetId"] = assetId;
+    else delete button.dataset["imageAssetId"];
+  });
+}
+
 function rerenderAllMessageBodies(done = true): void {
   const wrappers = document.querySelectorAll<HTMLElement>(".msg-wrapper");
   wrappers.forEach((wrapper) => {
@@ -3571,6 +4379,9 @@ function rerenderAllMessageBodies(done = true): void {
     if (!contentEl) return;
     const raw = contentEl.dataset["raw"] ?? "";
     renderMessageBody(contentEl, raw, done);
+    const messageId = wrapper.dataset["id"] ?? "";
+    const message = renderedMessages.find((item) => item.id === messageId);
+    applyGeneratedImageAssetIds(contentEl, message);
   });
 }
 
@@ -3607,6 +4418,7 @@ function createMessageWrapper(msg: Message): HTMLElement {
     renderAgentMessageBody(content, msg.content);
   } else {
     renderMessageBody(content, msg.content, !activeStreamingMessageIds.has(msg.id));
+    applyGeneratedImageAssetIds(content, msg);
   }
 
   meta.appendChild(role);
@@ -4288,6 +5100,7 @@ function updateMessageContent(msgId: string, content: string, done = false, allo
     renderAgentMessageBody(contentEl, content);
   } else {
     renderMessageBody(contentEl, content, done);
+    applyGeneratedImageAssetIds(contentEl, message);
   }
 
 }
@@ -4370,19 +5183,36 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function sanitizeDownloadName(value: string): string {
+  const compact = (value ?? "").trim().replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-");
+  return compact.replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "cipher-generated-image";
+}
+
 function renderMarkdown(text: string): string {
   if (!text) return "";
 
   const codeBlocks: string[] = [];
+  const imageBlocks: string[] = [];
   const placeholderPrefix = "__CODE_BLOCK_";
+  const imagePlaceholderPrefix = "__IMAGE_BLOCK_";
 
-  const withPlaceholders = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+  const withCodePlaceholders = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
     const normalizedLang = (lang ?? "").trim().toLowerCase();
     const langAttr = normalizedLang ? ` class="language-${escHtml(normalizedLang)}"` : "";
     const runnable = normalizedLang === "html" || normalizedLang === "javascript" || normalizedLang === "js";
     const runBtn = runnable ? '<button class="run-btn" type="button">Run</button>' : "";
     codeBlocks.push(`<div class="code-block" data-lang="${escHtml(normalizedLang)}"><div class="code-actions"><button class="copy-btn" type="button">Copy</button>${runBtn}</div><pre><code${langAttr}>${escHtml(code.trim())}</code></pre></div>`);
     return `${placeholderPrefix}${codeBlocks.length - 1}__`;
+  });
+
+  const withPlaceholders = withCodePlaceholders.replace(/!\[([^\]]*)\]\((data:image\/[^)]+)\)/g, (_m, alt, url) => {
+    const label = (alt ?? "").trim() || "Generated image";
+    const encodedUrl = escHtml(url);
+    const suggestedName = sanitizeDownloadName(label);
+    imageBlocks.push(
+      `<figure class="message-image-card"><img class="message-image" src="${encodedUrl}" alt="${escHtml(label)}" loading="lazy" /><figcaption><span>${escHtml(label)}</span><button class="message-image-save-btn" type="button" data-image-name="${escHtml(suggestedName)}">Save image</button></figcaption></figure>`
+    );
+    return `${imagePlaceholderPrefix}${imageBlocks.length - 1}__`;
   });
 
   const escaped = escHtml(withPlaceholders)
@@ -4393,7 +5223,9 @@ function renderMarkdown(text: string): string {
     .replace(/^# (.+)$/gm, "<h1>$1</h1>")
     .replace(/\n/g, "<br>");
 
-  return escaped.replace(/__CODE_BLOCK_(\d+)__/g, (_m, index) => codeBlocks[Number(index)] ?? "");
+  return escaped
+    .replace(/__CODE_BLOCK_(\d+)__/g, (_m, index) => codeBlocks[Number(index)] ?? "")
+    .replace(/__IMAGE_BLOCK_(\d+)__/g, (_m, index) => imageBlocks[Number(index)] ?? "");
 }
 
 function applyRawMode(enabled: boolean): void {
@@ -4432,6 +5264,23 @@ function openCodePreview(html: string): void {
   modal.style.display = "flex";
 }
 
+function openImagePreview(item: GeneratedImageHistoryItem): void {
+  const modal = document.getElementById("image-preview-modal");
+  const image = document.getElementById("image-preview-image") as HTMLImageElement | null;
+  const title = document.getElementById("image-preview-title");
+  const meta = document.getElementById("image-preview-meta");
+  if (!(modal instanceof HTMLElement) || !(image instanceof HTMLImageElement)) return;
+
+  const prompt = item.prompt.trim() || "Generated image preview";
+  if (title instanceof HTMLElement) title.textContent = prompt;
+  if (meta instanceof HTMLElement) {
+    meta.textContent = `${compactModelName(item.model)} • ${item.aspectRatio} • ${formatImageHistoryTimestamp(item.createdAt)}`;
+  }
+  image.src = item.dataUrl;
+  image.alt = prompt;
+  modal.style.display = "flex";
+}
+
 function closePreviewWorkspace(): void {
   const workspace = document.getElementById("preview-workspace");
   const workspaceTitle = document.getElementById("preview-workspace-title");
@@ -4467,6 +5316,20 @@ function closeCodePreview(): void {
   modal.style.display = "none";
   frame.removeAttribute("src");
   frame.srcdoc = "";
+}
+
+function closeImagePreviewModal(): void {
+  const modal = document.getElementById("image-preview-modal");
+  const image = document.getElementById("image-preview-image") as HTMLImageElement | null;
+  const title = document.getElementById("image-preview-title");
+  const meta = document.getElementById("image-preview-meta");
+  if (title instanceof HTMLElement) title.textContent = "Image Preview";
+  if (meta instanceof HTMLElement) meta.textContent = "Generated image";
+  if (modal instanceof HTMLElement) modal.style.display = "none";
+  if (image instanceof HTMLImageElement) {
+    image.removeAttribute("src");
+    image.alt = "Generated image preview";
+  }
 }
 
 function runJavaScriptPreview(block: HTMLElement, code: string): void {
@@ -4526,7 +5389,7 @@ async function maybeGenerateTitle(chatId: string): Promise<void> {
   try {
     const title = await window.api.chat.generateTitle(chatId, firstUserMessage.content);
     if (chatId === currentChatId) {
-      $("chat-title-display").textContent = title;
+      updateChatHeaderTitle(title);
     }
     await loadChatList();
   } catch (err) {
@@ -4657,13 +5520,14 @@ function setStreamingUi(active: boolean, statusText = "") {
   $("stream-status").textContent = "";
 }
 
-async function createNewChat(showEmptyState = true): Promise<string> {
-  const chat = await window.api.chat.create();
+async function createNewChat(showEmptyState = true, context = activeChatContext ?? getActiveUiChatContext()): Promise<string> {
+  const chat = await window.api.chat.create(context);
   currentChatId = chat.id;
-  $("chat-title-display").textContent = chat.title;
-  $("rename-btn").style.display = "inline-block";
-  $("export-btn").style.display = "inline-block";
-  $("system-prompt-toggle-btn").style.display = "inline-block";
+  activeChatContext = normalizeChatContext(chat.context) ?? normalizeChatContext(context) ?? getActiveUiChatContext();
+  updateChatHeaderTitle(chat.title);
+  $("rename-btn").style.display = "none";
+  $("export-btn").style.display = "none";
+  $("system-prompt-toggle-btn").style.display = "none";
   $("system-prompt-panel").style.display = "none";
   $("system-prompt-toggle-btn").classList.remove("active");
   ($("system-prompt-input") as HTMLTextAreaElement).value = chat.systemPrompt ?? "";
@@ -4680,13 +5544,575 @@ async function createNewChat(showEmptyState = true): Promise<string> {
   }
   activeAttachments = [];
   renderComposerAttachments();
-  showTemplatesDropdown(false);
   updateScrollBottomButton();
   await loadChatList();
   return chat.id;
 }
 
 // â”€â”€ Send Message â”€â”€
+function isImageCapableModel(model: string): boolean {
+  return /image|flux|riverflow|sourceful|vision/.test((model ?? "").trim().toLowerCase());
+}
+
+function getActiveImageGenerationProvider(): ImageProviderMode {
+  return getImageProviderFromSettings(settings);
+}
+
+function getImageGenerationModelOptions(provider: ImageProviderMode): string[] {
+  if (provider === "comfyui") return COMFYUI_IMAGE_MODELS;
+  return provider === "nvidia" ? NVIDIA_IMAGE_MODELS : OPENROUTER_IMAGE_MODELS;
+}
+
+function isProviderCompatibleImageModel(provider: ImageProviderMode, model: string): boolean {
+  const normalized = (model ?? "").trim();
+  if (provider === "comfyui") {
+    return getImageGenerationModelOptions(provider).includes(normalized)
+      || /\.safetensors$/i.test(normalized);
+  }
+  return getImageGenerationModelOptions(provider).includes(normalized);
+}
+
+function refreshImageGenerationModelOptions(provider: ImageProviderMode): void {
+  const datalist = document.getElementById("image-generation-model-options");
+  if (!(datalist instanceof HTMLDataListElement)) return;
+  datalist.innerHTML = "";
+  for (const model of getImageGenerationModelOptions(provider)) {
+    const option = document.createElement("option");
+    option.value = model;
+    datalist.appendChild(option);
+  }
+}
+
+function populateImageGenerationAspectRatioOptions(): void {
+  const selectIds = ["image-studio-aspect-select", "image-generation-aspect-select"];
+  for (const selectId of selectIds) {
+    const select = document.getElementById(selectId);
+    if (!(select instanceof HTMLSelectElement)) continue;
+    const currentValue = select.value;
+    select.innerHTML = "";
+    for (const ratio of IMAGE_GENERATION_ASPECT_RATIOS) {
+      const option = document.createElement("option");
+      option.value = ratio;
+      option.textContent = ratio;
+      select.appendChild(option);
+    }
+    select.value = IMAGE_GENERATION_ASPECT_RATIOS.includes(currentValue as ImageGenerationAspectRatio)
+      ? currentValue
+      : "1:1";
+  }
+}
+
+function updateImageProviderButtons(provider: ImageProviderMode): void {
+  document.getElementById("image-provider-openrouter-btn")?.classList.toggle("active", provider === "openrouter");
+  document.getElementById("image-provider-nvidia-btn")?.classList.toggle("active", provider === "nvidia");
+  document.getElementById("image-provider-comfyui-btn")?.classList.toggle("active", provider === "comfyui");
+}
+
+async function setImageProvider(provider: ImageProviderMode): Promise<void> {
+  const current = getImageProviderFromSettings(settings);
+  if (current === provider) {
+    syncImageStudioControls(false);
+    return;
+  }
+  settings = await window.api.settings.save({ imageProvider: provider });
+  syncImageStudioControls(false);
+}
+
+function updateImageGenerationModalHelp(provider: ImageProviderMode): void {
+  const help = document.getElementById("image-generation-help");
+  if (!(help instanceof HTMLElement)) return;
+  help.textContent = provider === "comfyui"
+    ? "Local image generation uses ComfyUI. No cloud API key is required. Press Ctrl+Enter to submit."
+    : provider === "nvidia"
+      ? "Hosted image generation uses NVIDIA cloud APIs for this MVP free-tier path. Press Ctrl+Enter to submit."
+      : "Hosted image generation uses OpenRouter. Press Ctrl+Enter to submit.";
+}
+
+function updateImageStudioHelp(provider: ImageProviderMode): void {
+  const help = document.getElementById("image-studio-help");
+  const status = document.getElementById("image-studio-status");
+  if (help instanceof HTMLElement) {
+    help.textContent = provider === "comfyui"
+      ? "Image Studio uses your local ComfyUI server. Use a checkpoint like sd_xl_base_1.0.safetensors and press Ctrl+Enter to generate."
+      : provider === "nvidia"
+        ? "Image Studio uses NVIDIA cloud image APIs in the current MVP path. Press Ctrl+Enter inside the prompt to generate."
+        : "Image Studio uses OpenRouter hosted image generation. Press Ctrl+Enter inside the prompt to generate.";
+  }
+  if (status instanceof HTMLElement && !imageGenerationSubmitting) {
+    status.textContent = `Active provider: ${getImageProviderDisplayName(provider)}. Latest generated images appear below.`;
+  }
+}
+
+function syncImageStudioControls(prefillPrompt = false): void {
+  const provider = getActiveImageGenerationProvider();
+  const promptInput = document.getElementById("image-studio-prompt-input");
+  const modelInput = document.getElementById("image-studio-model-input");
+  const aspectSelect = document.getElementById("image-studio-aspect-select");
+  const composerInput = document.getElementById("composer-input");
+  const comfyuiBaseUrlInput = document.getElementById("comfyui-base-url-input");
+
+  refreshImageGenerationModelOptions(provider);
+  updateImageGenerationModalHelp(provider);
+  updateImageStudioHelp(provider);
+  updateImageProviderButtons(provider);
+
+  if (promptInput instanceof HTMLTextAreaElement && prefillPrompt && composerInput instanceof HTMLTextAreaElement) {
+    const composerText = composerInput.value.trim();
+    if (composerText && !promptInput.value.trim()) {
+      promptInput.value = composerText;
+    }
+  }
+
+  if (modelInput instanceof HTMLInputElement) {
+    const currentModel = modelInput.value.trim();
+    modelInput.value = isProviderCompatibleImageModel(provider, currentModel)
+      ? currentModel
+      : getDefaultImageGenerationModel(provider);
+  }
+
+  if (comfyuiBaseUrlInput instanceof HTMLInputElement) {
+    comfyuiBaseUrlInput.value = (settings?.comfyuiBaseUrl ?? "").trim() || COMFYUI_DEFAULT_BASE_URL;
+  }
+
+  if (aspectSelect instanceof HTMLSelectElement && !aspectSelect.value) {
+    aspectSelect.value = "1:1";
+  }
+}
+
+function setImageStudioStatus(message: string): void {
+  const status = document.getElementById("image-studio-status");
+  if (status instanceof HTMLElement) {
+    status.textContent = message;
+  }
+}
+
+function getDefaultImageGenerationModel(provider = getActiveImageGenerationProvider()): string {
+  if (provider === "comfyui") {
+    return COMFYUI_DEFAULT_IMAGE_MODEL;
+  }
+
+  const selectedModel = (($("model-select") as HTMLSelectElement | null)?.value ?? "").trim();
+  if (isImageCapableModel(selectedModel)) return selectedModel;
+
+  const configuredModels = settings?.models ?? [];
+  return configuredModels.find((model) => isImageCapableModel(model))
+    ?? getImageGenerationModelOptions(provider).find((model) => configuredModels.includes(model))
+    ?? (provider === "nvidia" ? NVIDIA_DEFAULT_IMAGE_MODEL : OPENROUTER_DEFAULT_IMAGE_MODEL);
+}
+
+function buildImageGenerationUserPrompt(prompt: string, aspectRatio: ImageGenerationAspectRatio): string {
+  return [
+    `Generate image: ${prompt}`,
+    `Aspect ratio: ${aspectRatio}`
+  ].join("\n");
+}
+
+function buildImageGenerationAssistantMessage(result: ImageGenerationResult): string {
+  const summary = result.text.trim() || `Generated ${result.images.length} image${result.images.length === 1 ? "" : "s"}.`;
+  const imageBlocks = result.images
+    .map((image, index) => `![Generated image ${index + 1}](${image.dataUrl})`)
+    .join("\n\n");
+
+  return [
+    summary,
+    "",
+    `Provider: \`${getImageProviderDisplayName(result.provider)}\``,
+    `Model: \`${result.model}\``,
+    `Aspect ratio: \`${result.aspectRatio}\``,
+    "",
+    imageBlocks
+  ].join("\n").trim();
+}
+
+function formatImageHistoryTimestamp(value?: string): string {
+  if (!value) return "Not saved yet";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function getImageHistorySortTime(item: GeneratedImageHistoryItem): number {
+  const timestamps = [item.updatedAt, item.createdAt, item.lastSavedAt];
+  for (const value of timestamps) {
+    const parsed = Date.parse(value ?? "");
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function createImageHistoryChip(label: string, tone: "default" | "accent" = "default"): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.className = `image-history-chip${tone === "accent" ? " accent" : ""}`;
+  chip.textContent = label;
+  chip.title = label;
+  return chip;
+}
+
+function renderImageHistoryListInto(listId: string, emptyId: string): void {
+  const list = document.getElementById(listId);
+  const emptyState = document.getElementById(emptyId);
+  if (!(list instanceof HTMLElement) || !(emptyState instanceof HTMLElement)) return;
+  const isStudioVariant = listId === "image-studio-history-list";
+
+  list.innerHTML = "";
+  if (imageHistoryLoading) {
+    emptyState.style.display = "block";
+    emptyState.textContent = "Loading image history...";
+    return;
+  }
+
+  if (imageHistoryItems.length === 0) {
+    emptyState.style.display = "block";
+    emptyState.textContent = "No generated images in history yet.";
+    return;
+  }
+
+  emptyState.style.display = "none";
+  const items = [...imageHistoryItems].sort((left, right) => getImageHistorySortTime(right) - getImageHistorySortTime(left));
+  for (const [index, item] of items.entries()) {
+    const card = document.createElement("article");
+    card.className = `image-history-entry${isStudioVariant ? " is-gallery" : ""}`;
+
+    const figure = document.createElement("figure");
+    figure.className = `message-image-card image-history-card${isStudioVariant ? " is-gallery-card" : ""}`;
+
+    const visual = document.createElement("div");
+    visual.className = "image-history-visual";
+
+    const image = document.createElement("img");
+    image.className = "message-image";
+    image.src = item.dataUrl;
+    image.alt = item.prompt || "Generated image";
+    image.loading = "lazy";
+    visual.appendChild(image);
+    figure.appendChild(visual);
+
+    const caption = document.createElement("figcaption");
+    caption.className = "image-history-caption";
+
+    const top = document.createElement("div");
+    top.className = "image-history-top";
+
+    const info = document.createElement("div");
+    info.className = "image-history-meta";
+
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "image-history-overline";
+    eyebrow.textContent = item.saveCount > 0
+      ? "Saved asset"
+      : index === 0
+        ? "Latest render"
+        : "Generated asset";
+    info.appendChild(eyebrow);
+
+    const prompt = document.createElement("strong");
+    prompt.className = "image-history-prompt";
+    prompt.textContent = item.prompt || "Untitled image prompt";
+    prompt.title = prompt.textContent;
+    info.appendChild(prompt);
+
+    const chips = document.createElement("div");
+    chips.className = "image-history-chips";
+    chips.appendChild(createImageHistoryChip(compactModelName(item.model)));
+    chips.appendChild(createImageHistoryChip(item.aspectRatio));
+    chips.appendChild(createImageHistoryChip(formatImageHistoryTimestamp(item.createdAt)));
+    if (item.saveCount > 0) {
+      chips.appendChild(createImageHistoryChip(`Saved ${item.saveCount}x`, "accent"));
+    }
+    info.appendChild(chips);
+
+    const details = document.createElement("div");
+    details.className = "image-history-details image-history-meta-line";
+    details.textContent = `${compactModelName(item.model)} • ${item.aspectRatio} • ${formatImageHistoryTimestamp(item.createdAt)}`;
+    info.appendChild(details);
+
+    const saved = document.createElement("div");
+    saved.className = "image-history-details image-history-status-line";
+    saved.textContent = item.saveCount > 0
+      ? `Saved ${item.saveCount} time${item.saveCount === 1 ? "" : "s"} • ${formatImageHistoryTimestamp(item.lastSavedAt)}`
+      : "Not saved outside Cipher yet";
+    info.appendChild(saved);
+
+    if (item.text.trim()) {
+      const text = document.createElement("div");
+      text.className = "image-history-note";
+      text.textContent = item.text.trim();
+      text.title = text.textContent;
+      info.appendChild(text);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "image-history-actions";
+
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "btn-ghost-sm image-history-preview-btn";
+    previewBtn.textContent = "Preview";
+    previewBtn.onclick = () => {
+      openImagePreview(item);
+    };
+    actions.appendChild(previewBtn);
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "message-image-save-btn";
+    saveBtn.dataset["imageName"] = sanitizeDownloadName(item.prompt || "cipher-generated-image");
+    saveBtn.dataset["imageAssetId"] = item.id;
+    saveBtn.textContent = "Save image";
+    saveBtn.onclick = async () => {
+      try {
+        const result = await window.api.images.save(item.dataUrl, saveBtn.dataset["imageName"], item.id);
+        showToast(result.message, result.ok ? 2200 : 2800);
+        if (result.ok) {
+          await refreshImageHistory();
+        }
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Image save failed.", 2800);
+      }
+    };
+    actions.appendChild(saveBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "btn-ghost-sm image-history-delete-btn";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.onclick = async () => {
+      try {
+        const result = await window.api.images.deleteHistory(item.id);
+        showToast(result.message, result.ok ? 2200 : 2800);
+        if (result.ok) {
+          imageHistoryItems = imageHistoryItems.filter((entry) => entry.id !== item.id);
+          renderImageHistoryViews();
+        }
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Delete failed.", 2800);
+      }
+    };
+    actions.appendChild(deleteBtn);
+
+    top.appendChild(info);
+    top.appendChild(actions);
+    caption.appendChild(top);
+    figure.appendChild(caption);
+    card.appendChild(figure);
+    list.appendChild(card);
+  }
+}
+
+function renderImageHistoryViews(): void {
+  renderImageHistoryListInto("image-history-list", "image-history-empty");
+  renderImageHistoryListInto("image-studio-history-list", "image-studio-empty");
+}
+
+async function refreshImageHistory(): Promise<void> {
+  imageHistoryLoading = true;
+  renderImageHistoryViews();
+  try {
+    imageHistoryItems = await window.api.images.listHistory();
+  } catch (err) {
+    imageHistoryItems = [];
+    showToast(err instanceof Error ? err.message : "Failed to load image history.", 3200);
+  } finally {
+    imageHistoryLoading = false;
+    renderImageHistoryViews();
+  }
+}
+
+function closeImageHistoryModal(): void {
+  const modal = document.getElementById("image-history-modal");
+  if (!(modal instanceof HTMLElement)) return;
+  modal.style.display = "none";
+}
+
+async function openImageHistoryModal(): Promise<void> {
+  const modal = document.getElementById("image-history-modal");
+  if (!(modal instanceof HTMLElement)) return;
+  modal.style.display = "flex";
+  await refreshImageHistory();
+}
+
+function closeImageGenerationModal(force = false): void {
+  if (imageGenerationSubmitting && !force) return;
+  const modal = document.getElementById("image-generation-modal");
+  if (!(modal instanceof HTMLElement)) return;
+  modal.style.display = "none";
+  ($("image-generation-submit-btn") as HTMLButtonElement).disabled = false;
+  ($("image-generation-cancel-btn") as HTMLButtonElement).disabled = false;
+}
+
+function openImageGenerationModal(): void {
+  const imageProvider = getActiveImageGenerationProvider();
+  if (imageProvider !== "comfyui" && !settings?.apiKey?.trim()) {
+    showToast(`Paste your ${getImageProviderDisplayName(imageProvider)} key in Settings to generate images.`, 3200);
+    openPanel("settings");
+    return;
+  }
+
+  const promptInput = $("image-generation-prompt-input") as HTMLTextAreaElement;
+  const modelInput = $("image-generation-model-input") as HTMLInputElement;
+  const aspectSelect = $("image-generation-aspect-select") as HTMLSelectElement;
+  const composerInput = $("composer-input") as HTMLTextAreaElement;
+  const modal = $("image-generation-modal");
+  const composerText = composerInput.value.trim();
+
+  refreshImageGenerationModelOptions(imageProvider);
+  updateImageGenerationModalHelp(imageProvider);
+  promptInput.value = composerText || promptInput.value.trim();
+  const currentModel = modelInput.value.trim();
+  modelInput.value = isProviderCompatibleImageModel(imageProvider, currentModel)
+    ? currentModel
+    : getDefaultImageGenerationModel(imageProvider);
+  aspectSelect.value = aspectSelect.value || "1:1";
+  modal.style.display = "flex";
+  promptInput.focus();
+  promptInput.select();
+}
+
+async function submitImageGeneration(): Promise<void> {
+  if (imageGenerationSubmitting) return;
+
+  const promptInput = $("image-generation-prompt-input") as HTMLTextAreaElement;
+  const modelInput = $("image-generation-model-input") as HTMLInputElement;
+  const aspectSelect = $("image-generation-aspect-select") as HTMLSelectElement;
+  const submitBtn = $("image-generation-submit-btn") as HTMLButtonElement;
+  const cancelBtn = $("image-generation-cancel-btn") as HTMLButtonElement;
+  const prompt = promptInput.value.trim();
+  const imageProvider = getActiveImageGenerationProvider() ?? "openrouter";
+  const requestedModel = modelInput.value.trim();
+  const model = isProviderCompatibleImageModel(imageProvider, requestedModel)
+    ? requestedModel
+    : getDefaultImageGenerationModel(imageProvider);
+  const aspectRatio = (aspectSelect.value || "1:1") as ImageGenerationAspectRatio;
+
+  if (!prompt) {
+    showToast("Image prompt required.", 2200);
+    promptInput.focus();
+    return;
+  }
+
+  imageGenerationSubmitting = true;
+  submitBtn.disabled = true;
+  cancelBtn.disabled = true;
+  submitBtn.textContent = "Generating...";
+
+  const chatId = await ensureActiveChatId();
+  const userMessage: Message = {
+    id: nextClientMessageId("img-user"),
+    role: "user",
+    content: buildImageGenerationUserPrompt(prompt, aspectRatio),
+    createdAt: new Date().toISOString()
+  };
+
+  appendMessage(userMessage);
+  await window.api.chat.appendMessage(chatId, userMessage);
+  void loadChatList();
+  setStreamingUi(true, "Generating image...");
+
+  try {
+    const result = await window.api.images.generate({ prompt, provider: imageProvider, model, aspectRatio });
+    const assistantMessage: Message = {
+      id: nextClientMessageId("img-assistant"),
+      role: "assistant",
+      content: buildImageGenerationAssistantMessage(result),
+      createdAt: new Date().toISOString(),
+      model: result.model,
+      metadata: result.images.some((image) => Boolean(image.id))
+        ? { generatedImageAssetIds: result.images.map((image) => image.id ?? "").filter(Boolean) }
+        : undefined
+    };
+    appendMessage(assistantMessage);
+    await window.api.chat.appendMessage(chatId, assistantMessage);
+    void loadChatList();
+    void maybeGenerateTitle(chatId);
+    if (document.getElementById("image-history-modal") instanceof HTMLElement
+      && ($("image-history-modal") as HTMLElement).style.display !== "none") {
+      void refreshImageHistory();
+    }
+    closeImageGenerationModal(true);
+    showToast(`Generated ${result.images.length} image${result.images.length === 1 ? "" : "s"}.`, 2200);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Image generation failed.";
+    const assistantError: Message = {
+      id: nextClientMessageId("img-error"),
+      role: "assistant",
+      content: message,
+      createdAt: new Date().toISOString(),
+      model: "Image Generation",
+      error: message
+    };
+    appendMessage(assistantError);
+    await window.api.chat.appendMessage(chatId, assistantError);
+    void loadChatList();
+    showToast(message, 3600);
+  } finally {
+    imageGenerationSubmitting = false;
+    submitBtn.disabled = false;
+    cancelBtn.disabled = false;
+    submitBtn.textContent = "Generate";
+    setStreamingUi(false);
+  }
+}
+
+async function submitImageStudioGeneration(): Promise<void> {
+  if (imageGenerationSubmitting) return;
+
+  const imageProvider = getActiveImageGenerationProvider();
+  if (imageProvider !== "comfyui" && !settings?.apiKey?.trim()) {
+    setImageStudioStatus(`Paste your ${getImageProviderDisplayName(imageProvider)} key in Settings to continue.`);
+    showToast(`Paste your ${getImageProviderDisplayName(imageProvider)} key in Settings to generate images.`, 3200);
+    openPanel("settings");
+    return;
+  }
+
+  const promptInput = document.getElementById("image-studio-prompt-input");
+  const modelInput = document.getElementById("image-studio-model-input");
+  const aspectSelect = document.getElementById("image-studio-aspect-select");
+  const generateBtn = document.getElementById("image-studio-generate-btn");
+
+  if (!(promptInput instanceof HTMLTextAreaElement)
+    || !(modelInput instanceof HTMLInputElement)
+    || !(aspectSelect instanceof HTMLSelectElement)
+    || !(generateBtn instanceof HTMLButtonElement)) {
+    showToast("Image Studio controls are unavailable.", 3200);
+    return;
+  }
+
+  const prompt = promptInput.value.trim();
+  if (!prompt) {
+    setImageStudioStatus("Image prompt required.");
+    promptInput.focus();
+    showToast("Image prompt required.", 2200);
+    return;
+  }
+
+  const requestedModel = modelInput.value.trim();
+  const model = isProviderCompatibleImageModel(imageProvider, requestedModel)
+    ? requestedModel
+    : getDefaultImageGenerationModel(imageProvider);
+  const aspectRatio = (aspectSelect.value || "1:1") as ImageGenerationAspectRatio;
+
+  imageGenerationSubmitting = true;
+  generateBtn.disabled = true;
+  generateBtn.textContent = "Generating...";
+  modelInput.value = model;
+  setImageStudioStatus(`Generating with ${compactModelName(model)}...`);
+
+  try {
+    const result = await window.api.images.generate({ prompt, provider: imageProvider, model, aspectRatio });
+    await refreshImageHistory();
+    setImageStudioStatus(`Generated ${result.images.length} image${result.images.length === 1 ? "" : "s"} with ${compactModelName(result.model)} via ${getImageProviderDisplayName(result.provider)}.`);
+    showToast(`Generated ${result.images.length} image${result.images.length === 1 ? "" : "s"}.`, 2200);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Image generation failed.";
+    setImageStudioStatus(message);
+    showToast(message, 3600);
+  } finally {
+    imageGenerationSubmitting = false;
+    generateBtn.disabled = false;
+    generateBtn.textContent = "Generate Image";
+  }
+}
+
 async function sendMessage() {
   if (currentInteractionMode === "agent") {
     const input = $("composer-input") as HTMLTextAreaElement;
@@ -4745,14 +6171,13 @@ async function syncChatStoreAcrossWindows(payload?: { chatId?: string; reason?: 
     return;
   }
 
-  if (currentChatId === affectedChatId && (payload?.reason === "rename" || payload?.reason === "system-prompt")) {
+  if (currentChatId === affectedChatId && (payload?.reason === "rename" || payload?.reason === "system-prompt" || payload?.reason === "context")) {
     await loadChat(affectedChatId);
   }
 }
 
 async function syncSettingsAcrossWindows(): Promise<void> {
   await loadSettings();
-  await loadTemplates();
   await refreshMcpStatus();
 }
 
@@ -4867,10 +6292,11 @@ function setupIpcListeners() {
     setClaudeStatus("Running...", "busy");
   });
 
-  window.api.claude.onError((message) => {
-    claudeSessionRunning = false;
-    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
-    pendingClaudeManagedMode = "none";
+    window.api.claude.onError((message) => {
+      claudeSessionRunning = false;
+      pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+      pendingClaudeManagedBaselines = [];
+      pendingClaudeManagedMode = "none";
     appendClaudeLine(message, "stderr");
     finalizeClaudeAssistantMessage(true);
     setClaudeStatus(message, "err");
@@ -4883,18 +6309,20 @@ function setupIpcListeners() {
     const suppressExitNotice = suppressClaudeExitNotice;
     suppressClaudeExitNotice = false;
     const msgId = activeClaudeAssistantMessageId;
-    const permissions = {
-      allowedPaths: [...pendingClaudeManagedPermissions.allowedPaths],
-      allowedRoots: [...pendingClaudeManagedPermissions.allowedRoots]
-    };
-    const managedMode = pendingClaudeManagedMode;
-    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
-    pendingClaudeManagedMode = "none";
+      const permissions = {
+        allowedPaths: [...pendingClaudeManagedPermissions.allowedPaths],
+        allowedRoots: [...pendingClaudeManagedPermissions.allowedRoots]
+      };
+      const baselines = pendingClaudeManagedBaselines.map((item) => ({ ...item }));
+      const managedMode = pendingClaudeManagedMode;
+      pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+      pendingClaudeManagedBaselines = [];
+      pendingClaudeManagedMode = "none";
     finalizeClaudeAssistantMessage(true);
-    setStreamingUi(false);
-    if (msgId && managedMode !== "none") {
-      void applyManagedClaudeEdits(msgId, permissions, managedMode);
-    }
+      setStreamingUi(false);
+      if (msgId && managedMode !== "none") {
+        void applyManagedClaudeEdits(msgId, permissions, managedMode, baselines);
+      }
     if (managedMode !== "none") {
       void resetClaudeSessionAfterManagedWrite();
     }
@@ -4922,41 +6350,25 @@ function setupIpcListeners() {
 // â”€â”€ Settings Panel â”€â”€
 async function loadSettings() {
   const loaded = await window.api.settings.get();
-  settings = loaded;
-  ($("api-key-input") as HTMLInputElement).value = loaded.apiKey;
-  ($("base-url-input") as HTMLInputElement).value = loaded.baseUrl;
-  ($("default-model-input") as HTMLInputElement).value = loaded.defaultModel;
-  ($("ollama-base-url-input") as HTMLInputElement).value = loaded.ollamaBaseUrl || "http://localhost:11434/v1";
+  applyLoadedSettingsToUi(loaded);
   const localVoiceSettings = document.getElementById("local-voice-settings");
-  const localVoiceEnabledInput = document.getElementById("local-voice-enabled-input");
-  const localVoiceModelSelect = document.getElementById("local-voice-model-select");
-  if (localVoiceSettings instanceof HTMLElement) localVoiceSettings.style.display = LOCAL_VOICE_SUPPORTED ? "" : "none";
-  if (localVoiceEnabledInput instanceof HTMLInputElement) {
-    localVoiceEnabledInput.checked = LOCAL_VOICE_SUPPORTED && Boolean(loaded.localVoiceEnabled);
-    localVoiceEnabledInput.disabled = !LOCAL_VOICE_SUPPORTED;
+  if (localVoiceSettings instanceof HTMLElement) {
+    localVoiceSettings.dataset["availability"] = LOCAL_VOICE_SUPPORTED ? "available" : "unavailable";
+    localVoiceSettings.classList.toggle("is-unavailable", !LOCAL_VOICE_SUPPORTED);
   }
-  if (localVoiceModelSelect instanceof HTMLSelectElement) {
-    localVoiceModelSelect.value = loaded.localVoiceModel || "base";
-    localVoiceModelSelect.disabled = !LOCAL_VOICE_SUPPORTED;
-  }
-  renderOllamaModels(loaded.ollamaModels ?? []);
-  setProviderMode(getProviderModeFromSettings(loaded));
-  autoSwitchToOllamaIfNeeded();
-  refreshRouteStrategyUi();
-  updateVoiceUi();
   await refreshLocalAgentWorkspacePath();
 }
 
 async function saveSettings() {
   const apiKeyRaw = ($("api-key-input") as HTMLInputElement).value;
   const apiKey = normalizeApiKey(apiKeyRaw);
-  const baseUrl = ($("base-url-input") as HTMLInputElement).value.trim();
+  const baseUrlInput = ($("base-url-input") as HTMLInputElement).value.trim();
   const defaultModelInput = ($("default-model-input") as HTMLInputElement).value.trim();
   const ollamaEnabled = providerMode === "ollama";
+  const cloudProvider = isCloudProviderMode(providerMode) ? providerMode : getCloudProviderModeFromSettings(settings);
+  const baseUrl = ollamaEnabled ? baseUrlInput : (baseUrlInput || getDefaultBaseUrlForProvider(cloudProvider));
   const ollamaBaseUrl = ($("ollama-base-url-input") as HTMLInputElement).value.trim() || "http://localhost:11434/v1";
-  const localVoiceEnabled = LOCAL_VOICE_SUPPORTED
-    && ((document.getElementById("local-voice-enabled-input") as HTMLInputElement | null)?.checked ?? false);
-  const localVoiceModel = (document.getElementById("local-voice-model-select") as HTMLSelectElement | null)?.value ?? "base";
+  const comfyuiBaseUrl = ((document.getElementById("comfyui-base-url-input") as HTMLInputElement | null)?.value ?? "").trim() || COMFYUI_DEFAULT_BASE_URL;
   const modelsInput = [...new Set(($("models-textarea") as HTMLTextAreaElement).value
     .split(/[\n,]+/)
     .map((m) => m.trim())
@@ -4969,9 +6381,9 @@ async function saveSettings() {
 
   const selectedModel = getSelectedModel();
   const existingDefault = (settings?.defaultModel ?? "").trim();
-  const fallbackModel = "qwen/qwen3-coder:free";
+  const fallbackModel = cloudProvider === "nvidia" ? NVIDIA_DEFAULT_MODEL : OPENROUTER_DEFAULT_MODEL;
 
-  const openRouterInput = modelsInput.filter((model) => !model.startsWith("ollama/"));
+  const cloudInput = modelsInput.filter((model) => !model.startsWith("ollama/"));
   const ollamaInput = modelsInput
     .filter((model) => model.startsWith("ollama/"))
     .map((model) => model.slice("ollama/".length))
@@ -4979,7 +6391,7 @@ async function saveSettings() {
     .filter(Boolean);
 
   let models = [...new Set([
-    ...openRouterInput,
+    ...cloudInput,
     ...(settings?.models ?? []),
     !selectedModel.startsWith("ollama/") ? selectedModel : "",
     !existingDefault.startsWith("ollama/") ? existingDefault : "",
@@ -5012,32 +6424,28 @@ async function saveSettings() {
     if (!models.includes(defaultModel)) models.unshift(defaultModel);
   }
 
-  if (apiKeyRaw.trim() && !apiKey.startsWith("sk-or-v1-")) {
+  if (!ollamaEnabled && cloudProvider === "openrouter" && apiKeyRaw.trim() && !apiKey.startsWith("sk-or-v1-")) {
     setStatus("Invalid OpenRouter key format.", "err");
     showToast("API key ghalat format mein hai. Sirf sk-or-v1-... key paste karo.", 4500);
     return;
   }
 
-  settings = await window.api.settings.save({
+  const saved = await window.api.settings.save({
     apiKey,
     baseUrl,
+    cloudProvider,
+    imageProvider: getImageProviderFromSettings(settings),
     defaultModel,
     models,
     routing,
     ollamaEnabled,
     ollamaBaseUrl,
     ollamaModels,
-    localVoiceEnabled,
-    localVoiceModel
+    comfyuiBaseUrl,
+    localVoiceEnabled: false,
+    localVoiceModel: "base"
   });
-  ($("api-key-input") as HTMLInputElement).value = settings.apiKey;
-  ($("default-model-input") as HTMLInputElement).value = settings.defaultModel;
-  ($("ollama-base-url-input") as HTMLInputElement).value = settings.ollamaBaseUrl;
-  renderOllamaModels(settings.ollamaModels ?? []);
-  setProviderMode(getProviderModeFromSettings(settings));
-  autoSwitchToOllamaIfNeeded();
-  refreshRouteStrategyUi();
-  updateVoiceUi();
+  applyLoadedSettingsToUi(saved);
   setStatus("Settings saved!", "ok");
   setTimeout(() => setStatus(""), 2000);
   showToast("Settings saved");
@@ -5085,6 +6493,185 @@ function formatRouteDiagnosticTimestamp(value?: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+type ModelHealthTone = "active" | "working" | "warning" | "blocked" | "failing" | "untested";
+
+function getRouteDiagnosticsByModel(diagnostics: AgentRouteDiagnostics | null): Map<string, AgentModelRouteDiagnostics> {
+  const map = new Map<string, AgentModelRouteDiagnostics>();
+  for (const route of diagnostics?.routes ?? []) {
+    if (!map.has(route.model)) map.set(route.model, route);
+  }
+  return map;
+}
+
+function getEffectiveTaskRouteState(task: AgentTask | null, diagnostics: AgentRouteDiagnostics | null): AgentTaskRouteDiagnostics | undefined {
+  return diagnostics?.task ?? (task?.telemetry?.routeDiagnostics
+    ? {
+      taskId: task.id,
+      blacklistedModels: task.telemetry.routeDiagnostics.blacklistedModels,
+      failureCounts: task.telemetry.routeDiagnostics.failureCounts,
+      visionRequested: task.telemetry.routeDiagnostics.visionRequested ?? false,
+      activeStageRoutes: task.telemetry.routeDiagnostics.activeStageRoutes
+    }
+    : undefined);
+}
+
+function describeModelHealth(
+  model: string,
+  route: AgentModelRouteDiagnostics | undefined,
+  taskState?: AgentTaskRouteDiagnostics
+): { tone: ModelHealthTone; label: string; detail: string } {
+  if (taskState?.blacklistedModels.includes(model)) {
+    return { tone: "blocked", label: "Blocked", detail: "This model is blacklisted for the active task." };
+  }
+  if (taskState?.activeStageRoutes.some((entry) => entry.model === model)) {
+    return { tone: "active", label: "Active", detail: "This model is in the current task's live route order." };
+  }
+  if (!route) {
+    return { tone: "untested", label: "Untested", detail: "No reliability history captured yet." };
+  }
+  if (route.successes > 0 && route.failures === 0 && route.transientFailures === 0 && route.semanticFailures === 0) {
+    return { tone: "working", label: "Working", detail: "Recent history is clean with successful runs." };
+  }
+  if (route.successes > 0) {
+    return { tone: "warning", label: "Mixed", detail: "This model works, but it also has some failure history." };
+  }
+  if (route.failures > 0 || route.semanticFailures > 0) {
+    return { tone: "failing", label: "Failing", detail: "This model only shows failed attempts right now." };
+  }
+  if (route.transientFailures > 0) {
+    return { tone: "warning", label: "Unstable", detail: "Only transient failures have been seen so far." };
+  }
+  return { tone: "untested", label: "Untested", detail: "No useful reliability signal yet." };
+}
+
+function buildModelHealthBadgeTone(tone: ModelHealthTone): string {
+  if (tone === "active" || tone === "working") return "ok";
+  if (tone === "blocked" || tone === "failing") return "err";
+  return "";
+}
+
+function renderRouteScoreFactors(factors: AgentModelRouteScoreFactor[] | undefined): string {
+  const safeFactors = (factors ?? []).filter((factor) => factor && typeof factor.label === "string");
+  if (safeFactors.length === 0) return "";
+  return safeFactors.map((factor) => {
+    const tone = factor.delta > 0 ? "ok" : factor.delta < 0 ? "err" : "";
+    const deltaLabel = factor.delta > 0 ? `+${factor.delta}` : `${factor.delta}`;
+    return `<span class="agent-history-badge ${tone}">${escHtml(`${deltaLabel} ${factor.label}`)}</span>`;
+  }).join("");
+}
+
+function formatBlacklistProgress(entry: Pick<AgentTaskRouteFailureCount, "blacklisted" | "hardFailuresUntilBlacklist" | "transientFailuresUntilBlacklist">): string {
+  if (entry.blacklisted) return "Blacklisted for this task";
+  const hardLabel = entry.hardFailuresUntilBlacklist === 0
+    ? "hard blacklist reached"
+    : `${entry.hardFailuresUntilBlacklist} hard left`;
+  const transientLabel = entry.transientFailuresUntilBlacklist === 0
+    ? "transient blacklist reached"
+    : `${entry.transientFailuresUntilBlacklist} transient left`;
+  return `${hardLabel} / ${transientLabel}`;
+}
+
+function findBestKnownRoute(
+  diagnostics: AgentRouteDiagnostics | null,
+  provider: "remote" | "local"
+): AgentModelRouteDiagnostics | null {
+  return diagnostics?.routes.find((route) => route.provider === provider && route.successes > 0) ?? null;
+}
+
+function renderSettingsModelHealth(diagnostics: AgentRouteDiagnostics | null, task: AgentTask | null = null): void {
+  const el = document.getElementById("settings-model-health");
+  if (!(el instanceof HTMLElement)) return;
+
+  if (!settings) {
+    el.innerHTML = '<div class="settings-model-health-empty">Model health will appear after settings load.</div>';
+    return;
+  }
+
+  const activeCloudProvider = getCloudProviderModeFromSettings(settings);
+  const activeCloudProviderName = getProviderDisplayName(activeCloudProvider);
+  const cloudModels = getVisibleModelsForProvider(settings, activeCloudProvider);
+  const localModels = getVisibleModelsForProvider(settings, "ollama");
+  const configuredModels = [...cloudModels, ...localModels];
+  if (configuredModels.length === 0) {
+    el.innerHTML = '<div class="settings-model-health-empty">Add models in Settings first. After the app uses them, health signals will start appearing here.</div>';
+    return;
+  }
+
+  const routeByModel = getRouteDiagnosticsByModel(diagnostics);
+  const taskState = getEffectiveTaskRouteState(task, diagnostics);
+  const bestCloud = findBestKnownRoute(diagnostics, "remote");
+  const bestLocal = findBestKnownRoute(diagnostics, "local");
+  const summaryCards = [
+    {
+      title: "Implementation",
+      model: (settings.routing?.default ?? settings.defaultModel ?? "").trim(),
+      help: "Primary bias for normal coding and generation work."
+    },
+    {
+      title: "Repair",
+      model: (settings.routing?.think ?? settings.defaultModel ?? "").trim(),
+      help: "Preferred model when fix or recovery work is needed."
+    },
+    {
+      title: "Planning",
+      model: (settings.routing?.longContext ?? settings.defaultModel ?? "").trim(),
+      help: "Preferred model when broader task planning needs more context."
+    }
+  ];
+
+  el.innerHTML = `
+    <div class="settings-model-health-summary">
+      <div class="settings-model-health-card">
+        <div class="settings-model-health-head">
+          <div>
+            <div class="settings-model-health-title">Working now</div>
+            <div class="settings-model-health-help">Fast answer for which model is actually performing well.</div>
+          </div>
+          <div class="settings-model-health-badges">
+            <span class="agent-history-badge ${bestCloud ? "ok" : ""}">${escHtml(bestCloud ? `Best ${getCloudProviderLabelFromBaseUrl(bestCloud.baseUrl)}: ${bestCloud.model}` : `Best ${activeCloudProviderName}: no signal`)}</span>
+            <span class="agent-history-badge ${bestLocal ? "ok" : ""}">${escHtml(bestLocal ? `Best local: ${bestLocal.model}` : "Best local: no signal")}</span>
+          </div>
+        </div>
+        <div class="settings-model-health-badges">
+          ${summaryCards.map((entry) => {
+            const route = routeByModel.get(entry.model);
+            const status = describeModelHealth(entry.model, route, taskState);
+            return `<span class="agent-history-badge ${buildModelHealthBadgeTone(status.tone)}" title="${escHtml(entry.help)}">${escHtml(`${entry.title}: ${status.label}`)}</span>`;
+          }).join("")}
+        </div>
+        <div class="settings-model-health-help">${escHtml(taskState?.blacklistedModels.length ? `Active task blacklist: ${taskState.blacklistedModels.join(", ")}` : "No active task blacklist right now.")}</div>
+      </div>
+    </div>
+    <div class="settings-model-health-list">
+      ${configuredModels.map((model) => {
+        const route = routeByModel.get(model);
+        const status = describeModelHealth(model, route, taskState);
+        return `
+          <div class="settings-model-health-item status-${status.tone}">
+            <div class="settings-model-health-top">
+              <div class="settings-model-health-model">
+                <strong>${escHtml(model)}</strong>
+                <span>${escHtml(getCloudProviderLabelForModel(model, route))}</span>
+              </div>
+              <span class="agent-history-badge ${buildModelHealthBadgeTone(status.tone)}">${escHtml(status.label)}</span>
+            </div>
+            <div class="settings-model-health-meta">
+              ${renderModelCapabilityBadges(model)}
+              <span class="agent-history-badge">${escHtml(`Success ${route?.successes ?? 0}`)}</span>
+              <span class="agent-history-badge ${(route?.failures ?? 0) > 0 ? "err" : ""}">${escHtml(`Hard fail ${route?.failures ?? 0}`)}</span>
+              <span class="agent-history-badge ${(route?.transientFailures ?? 0) > 0 ? "err" : ""}">${escHtml(`Transient ${route?.transientFailures ?? 0}`)}</span>
+              <span class="agent-history-badge ${(route?.semanticFailures ?? 0) > 0 ? "err" : ""}">${escHtml(`Semantic ${route?.semanticFailures ?? 0}`)}</span>
+              ${typeof route?.score === "number" ? `<span class="agent-history-badge ${route.score >= 0 ? "ok" : "err"}">${escHtml(`Score ${route.score}`)}</span>` : ""}
+            </div>
+            ${route?.scoreFactors?.length ? `<div class="settings-model-health-meta">${renderRouteScoreFactors(route.scoreFactors)}</div>` : ""}
+            <div class="settings-model-health-footnote">${escHtml(status.detail)}${route?.lastUsedAt ? ` Last used: ${formatRouteDiagnosticTimestamp(route.lastUsedAt)}.` : ""}</div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function summarizeAgentPrompt(prompt: string): string {
@@ -5633,6 +7220,38 @@ function buildTaskPrimaryActions(task: AgentTask, variant: "main" | "panel"): st
   return `<div class="${variant === "main" ? "empty-agent-task-actions" : "agent-history-actions"}">${buttons.join("")}</div>`;
 }
 
+function canRestartAgentTask(task: AgentTask): boolean {
+  return task.status === "failed" || task.status === "stopped";
+}
+
+function getAgentRestartModeLabel(mode: AgentTaskRestartMode): string {
+  if (mode === "retry-clean") return "Retry Clean";
+  if (mode === "continue-fix") return "Continue Fix";
+  return "Retry";
+}
+
+function buildTaskRestartActions(task: AgentTask, variant: "main" | "panel"): string {
+  if (!canRestartAgentTask(task)) return "";
+  const attr = variant === "main" ? "data-main-agent-restart-task-id" : "data-agent-history-restart-task-id";
+  const buttons = (["retry", "retry-clean", "continue-fix"] as AgentTaskRestartMode[]).map((mode) => {
+    return `<button class="btn-ghost-sm" type="button" ${attr}="${escHtml(task.id)}" data-agent-restart-mode="${escHtml(mode)}">${escHtml(getAgentRestartModeLabel(mode))}</button>`;
+  });
+  return `<div class="${variant === "main" ? "empty-agent-task-actions" : "agent-history-actions"}">${buttons.join("")}</div>`;
+}
+
+function hasPackagingVerificationFailure(task: AgentTask): boolean {
+  return (task.verification?.checks ?? []).some((check) => {
+    if (check.status !== "failed") return false;
+    return check.label === "Windows packaging" || /windows installer packaging failed/i.test(check.details);
+  });
+}
+
+function buildPackagingRetryButton(task: AgentTask, variant: "main" | "panel"): string {
+  if (!canRestartAgentTask(task) || !hasPackagingVerificationFailure(task)) return "";
+  const attr = variant === "main" ? "data-main-agent-restart-task-id" : "data-agent-history-restart-task-id";
+  return `<button class="btn-ghost-sm task-result-overview-retry" type="button" ${attr}="${escHtml(task.id)}" data-agent-restart-mode="continue-fix">Retry</button>`;
+}
+
 function buildVerificationMiniBadges(checks: AgentVerificationReport["checks"] | undefined, limit = 3): string {
   if (!checks || checks.length === 0) return "";
   return checks
@@ -5656,7 +7275,96 @@ function buildExhaustedRouteBadges(summary: string | undefined): string {
   `;
 }
 
-function buildTaskResultOverview(task: AgentTask): string {
+function formatStarterProfileLabel(profile?: string): string {
+  const normalized = (profile ?? "").trim();
+  if (!normalized) return "Custom";
+  return normalized
+    .split("-")
+    .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : "")
+    .join(" ");
+}
+
+function formatDomainFocusLabel(domainFocus?: string): string {
+  const normalized = (domainFocus ?? "").trim();
+  if (!normalized) return "General";
+  if (normalized === "crm") return "CRM";
+  if (normalized === "admin") return "Internal Admin";
+  return normalized
+    .split("-")
+    .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : "")
+    .join(" ");
+}
+
+function buildExecutionSpecSection(spec?: AgentExecutionSpec): string {
+  if (!spec) return "";
+
+  const deliverables = spec.deliverables.slice(0, 4);
+  const acceptance = spec.acceptanceCriteria.slice(0, 4);
+  const qualityGates = spec.qualityGates.slice(0, 4);
+  const scriptGroups = spec.requiredScriptGroups.slice(0, 3).map((group) => `${group.label}: ${group.options.join(" / ")}`);
+  const fileBadges = spec.requiredFiles.slice(0, 4);
+
+  return `
+    <div class="task-result-overview-spec">
+      <div class="task-result-overview-spec-head">
+        <strong>Execution brief</strong>
+        <span class="agent-history-badge">${escHtml(formatStarterProfileLabel(spec.starterProfile))}</span>
+      </div>
+      <div class="task-result-overview-spec-summary">${escHtml(spec.summary)}</div>
+      ${spec.domainFocus ? `<div class="task-result-overview-spec-list"><strong>Domain focus</strong><span>${escHtml(formatDomainFocusLabel(spec.domainFocus))}</span></div>` : ""}
+      ${deliverables.length > 0 ? `<div class="task-result-overview-spec-list"><strong>Deliverables</strong><span>${escHtml(deliverables.join(" | "))}</span></div>` : ""}
+      ${acceptance.length > 0 ? `<div class="task-result-overview-spec-list"><strong>Acceptance</strong><span>${escHtml(acceptance.join(" | "))}</span></div>` : ""}
+      ${qualityGates.length > 0 ? `<div class="task-result-overview-spec-list"><strong>Quality gates</strong><span>${escHtml(qualityGates.join(" | "))}</span></div>` : ""}
+      ${scriptGroups.length > 0 ? `<div class="task-result-overview-spec-list"><strong>Required scripts</strong><span>${escHtml(scriptGroups.join(" | "))}</span></div>` : ""}
+      ${fileBadges.length > 0 ? `<div class="task-result-overview-meta">${fileBadges.map((item) => `<span class="agent-history-badge">${escHtml(item)}</span>`).join("")}</div>` : ""}
+    </div>
+  `;
+}
+
+function buildReviewList(title: string, items: string[], tone: "default" | "warn" | "err" = "default"): string {
+  if (items.length === 0) return "";
+  return `
+    <div class="task-review-card ${tone !== "default" ? `task-review-card-${tone}` : ""}">
+      <strong>${escHtml(title)}</strong>
+      <ul class="task-review-list">
+        ${items.map((item) => `<li>${escHtml(item)}</li>`).join("")}
+      </ul>
+    </div>
+  `;
+}
+
+function buildTaskReviewSection(task: AgentTask): string {
+  const plannedFiles = (task.executionSpec?.requiredFiles ?? []).slice(0, 8);
+  const fileOverflow = (task.executionSpec?.requiredFiles?.length ?? 0) - plannedFiles.length;
+  const verifierFindings = (task.verification?.checks ?? [])
+    .filter((check) => check.status !== "passed")
+    .slice(0, 5)
+    .map((check) => `${check.label}: ${check.status}. ${check.details}`);
+  const repairTrail = task.steps
+    .filter((step) => /fix|repair|recovery/i.test(step.title) || /fix|repair/i.test(step.summary ?? ""))
+    .slice(-4)
+    .map((step) => `${step.title} (${step.status})${step.summary ? `: ${step.summary}` : ""}`);
+  const memoryHints = (task.telemetry?.failureMemoryHints ?? []).slice(0, 3);
+
+  if (plannedFiles.length === 0 && verifierFindings.length === 0 && repairTrail.length === 0 && memoryHints.length === 0) {
+    return "";
+  }
+
+  const plannedItems = fileOverflow > 0
+    ? [...plannedFiles, `+${fileOverflow} more planned path${fileOverflow === 1 ? "" : "s"}`]
+    : plannedFiles;
+
+  return `
+    <div class="task-review-grid">
+      ${buildReviewList("Planned file map", plannedItems)}
+      ${buildReviewList("Verifier findings", verifierFindings, verifierFindings.some((item) => /failed/i.test(item)) ? "err" : "warn")}
+      ${buildReviewList("Repair trail", repairTrail)}
+      ${buildReviewList("Memory hints used", memoryHints, "warn")}
+    </div>
+  `;
+}
+
+function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): string {
   const artifactLabel = formatAgentArtifactType(task.artifactType);
   const resultTitle = getArtifactResultTitle(task.artifactType, task.output?.primaryAction);
   const usage = task.output?.usageTitle && task.output?.usageDetail
@@ -5683,6 +7391,7 @@ function buildTaskResultOverview(task: AgentTask): string {
   ].filter(Boolean);
   const verificationBadges = buildVerificationMiniBadges(task.verification?.checks);
   const exhaustedRouteBadges = buildExhaustedRouteBadges(task.summary);
+  const packagingRetryButton = buildPackagingRetryButton(task, variant);
 
   return `
     <div class="task-result-overview">
@@ -5691,8 +7400,10 @@ function buildTaskResultOverview(task: AgentTask): string {
         ${task.artifactType ? `<span class="agent-history-badge">${escHtml(artifactLabel)}</span>` : ""}
       </div>
       ${task.summary ? `<div class="task-result-overview-summary">${escHtml(summarizeAgentTaskSummary(task.summary, task.status))}</div>` : ""}
+      ${buildExecutionSpecSection(task.executionSpec)}
+      ${buildTaskReviewSection(task)}
       ${usage ? `<div class="task-result-overview-usage"><strong>${escHtml(usage.title)}</strong><span>${escHtml(usage.detail)}</span></div>` : ""}
-      ${task.verification?.summary ? `<div class="task-result-overview-verify"><strong>Verification</strong><span>${escHtml(task.verification.summary)}</span></div>` : ""}
+      ${task.verification?.summary ? `<div class="task-result-overview-verify"><div class="task-result-overview-verify-head"><strong>Verification</strong>${packagingRetryButton}</div><span>${escHtml(task.verification.summary)}</span></div>` : ""}
       ${exhaustedRouteBadges}
       ${meta.length > 0 ? `<div class="task-result-overview-meta">${meta.map((item) => `<span class="agent-history-badge">${escHtml(item)}</span>`).join("")}</div>` : ""}
       ${telemetryMeta.length > 0 ? `<div class="task-result-overview-meta">${telemetryMeta.map((item) => `<span class="agent-history-badge">${escHtml(item)}</span>`).join("")}</div>` : ""}
@@ -5780,7 +7491,7 @@ function buildMainAgentTaskCards(tasks: AgentTask[]): string {
           <strong>${escHtml(summarizeAgentPrompt(task.prompt))}</strong>
           <span>${escHtml(formatAgentTaskTimestamp(task.updatedAt))}</span>
         </div>
-        ${buildTaskResultOverview(task)}
+        ${buildTaskResultOverview(task, "main")}
         <div class="empty-agent-task-badges">
           <span class="agent-history-badge ${tone}">${escHtml(task.status)}</span>
           ${task.artifactType ? `<span class="agent-history-badge">${escHtml(formatAgentArtifactType(task.artifactType))}</span>` : ""}
@@ -5793,6 +7504,7 @@ function buildMainAgentTaskCards(tasks: AgentTask[]): string {
         ${buildTaskMissingTargetState(task)}
         ${buildTaskSnapshotHint(task)}
         ${buildTaskSnapshotDiff(task)}
+        ${buildTaskRestartActions(task, "main")}
         ${buildTaskPrimaryActions(task, "main")}
       </div>
     `;
@@ -5854,7 +7566,7 @@ function renderAgentHistory(tasks: AgentTask[]): void {
           <div class="agent-history-title">${escHtml(summarizeAgentPrompt(task.prompt))}</div>
           <div class="agent-history-meta">${escHtml(formatAgentTaskTimestamp(task.updatedAt))}</div>
         </div>
-        ${buildTaskResultOverview(task)}
+        ${buildTaskResultOverview(task, "panel")}
         ${failedReasons ? `<div class="agent-history-reasons">${failedReasons}</div>` : ""}
         <div class="agent-history-badges">
           <span class="agent-history-badge ${tone}">${escHtml(task.status)}</span>
@@ -5870,6 +7582,7 @@ function renderAgentHistory(tasks: AgentTask[]): void {
         ${buildTaskSnapshotHint(task)}
         ${buildTaskSnapshotDiff(task)}
         ${verificationStats}
+        ${buildTaskRestartActions(task, "panel")}
         ${buildTaskPrimaryActions(task, "panel")}
       </button>
     `;
@@ -5914,6 +7627,7 @@ function renderAgentRouteDiagnostics(diagnostics: AgentRouteDiagnostics | null, 
   const el = document.getElementById("agent-route-health");
   if (!(el instanceof HTMLElement)) return;
   cachedAgentRouteDiagnostics = diagnostics;
+  renderSettingsModelHealth(diagnostics, task);
 
   if (!diagnostics || diagnostics.routes.length === 0) {
     el.innerHTML = '<div class="agent-route-health-empty">Reliability stats will appear here after the agent has tried at least one model route.</div>';
@@ -5921,14 +7635,7 @@ function renderAgentRouteDiagnostics(diagnostics: AgentRouteDiagnostics | null, 
   }
 
   const topRoutes = diagnostics.routes.slice(0, 6);
-  const taskState = diagnostics.task ?? (task?.telemetry?.routeDiagnostics
-    ? {
-      taskId: task.id,
-      blacklistedModels: task.telemetry.routeDiagnostics.blacklistedModels,
-      failureCounts: task.telemetry.routeDiagnostics.failureCounts,
-      activeStageRoutes: task.telemetry.routeDiagnostics.activeStageRoutes
-    }
-    : undefined);
+  const taskState = getEffectiveTaskRouteState(task, diagnostics);
   const taskMarkup = taskState
     ? `
       <div class="agent-route-health-block">
@@ -5938,15 +7645,21 @@ function renderAgentRouteDiagnostics(diagnostics: AgentRouteDiagnostics | null, 
           <span class="agent-history-badge">${escHtml(`Task: ${taskState.taskId}`)}</span>
           <span class="agent-history-badge ${taskState.blacklistedModels.length > 0 ? "err" : "ok"}">${escHtml(taskState.blacklistedModels.length > 0 ? `${taskState.blacklistedModels.length} blacklisted` : "No blacklist")}</span>
           <span class="agent-history-badge ${taskState.activeStageRoutes.length > 0 ? "ok" : ""}">${escHtml(`${taskState.activeStageRoutes.length} stage routes`)}</span>
+          ${taskState.visionRequested ? '<span class="agent-history-badge ok">Vision input</span>' : ""}
         </div>
         ${taskState.blacklistedModels.length > 0 ? `<div class="agent-route-health-stats">${taskState.blacklistedModels.map((model) => `<span class="agent-history-badge err">${escHtml(`Blocked: ${model}`)}</span>`).join("")}</div>` : ""}
-        ${taskState.failureCounts.length > 0 ? `<div class="agent-route-health-stats">${taskState.failureCounts.map((entry) => `<span class="agent-history-badge">${escHtml(`${entry.model}: ${entry.count} failure${entry.count === 1 ? "" : "s"}`)}</span>`).join("")}</div>` : ""}
+        ${taskState.failureCounts.length > 0 ? `<div class="agent-route-health-stats">${taskState.failureCounts.map((entry) => `<span class="agent-history-badge ${entry.blacklisted ? "err" : ""}">${escHtml(`${entry.model}: ${entry.count} failure${entry.count === 1 ? "" : "s"} • ${formatBlacklistProgress(entry)}`)}</span>`).join("")}</div>` : ""}
         ${taskState.activeStageRoutes.length > 0 ? `<div class="agent-route-health-stage-list">${taskState.activeStageRoutes.map((entry) => `
           <div class="agent-route-health-stage">
             <span class="agent-history-badge ok">${escHtml(entry.stage)}</span>
             <span class="agent-history-badge">${escHtml(entry.model)}</span>
             <span class="agent-history-badge">${escHtml(`Route ${entry.routeIndex + 1}`)}</span>
             <span class="agent-history-badge">${escHtml(`Attempt ${entry.attempt}`)}</span>
+            <span class="agent-history-badge ${entry.score >= 0 ? "ok" : "err"}">${escHtml(`Score ${entry.score}`)}</span>
+            <span class="agent-history-badge ${entry.blacklisted ? "err" : ""}">${escHtml(formatBlacklistProgress(entry))}</span>
+            ${entry.visionRequested ? `<span class="agent-history-badge ${entry.visionCapable ? "ok" : "err"}">${escHtml(entry.visionCapable ? "Vision-selected" : "Vision fallback")}</span>` : ""}
+            ${renderRouteScoreFactors(entry.scoreFactors)}
+            <div class="agent-route-health-footnote">${escHtml(entry.selectionReason)}</div>
           </div>
         `).join("")}</div>` : '<div class="agent-route-health-help">No stage route is currently remembered for this task.</div>'}
       </div>
@@ -5962,7 +7675,7 @@ function renderAgentRouteDiagnostics(diagnostics: AgentRouteDiagnostics | null, 
     ${taskMarkup}
     <div class="agent-route-health-block">
       <div class="agent-route-health-title">Global route reliability</div>
-      <div class="agent-route-health-help">Higher scores move a model earlier in runtime route ordering. Semantic failures are penalized harder than transient failures.</div>
+      <div class="agent-route-health-help">Higher scores move a model earlier in runtime route ordering. Semantic failures are penalized harder than transient failures, and transient failures blacklist more slowly.</div>
       <div class="agent-route-health-grid">
         ${topRoutes.map((route) => `
           <div class="agent-route-health-item">
@@ -5975,11 +7688,13 @@ function renderAgentRouteDiagnostics(diagnostics: AgentRouteDiagnostics | null, 
             </div>
             <div class="agent-route-health-stats">
               <span class="agent-history-badge ${route.provider === "local" ? "ok" : ""}">${escHtml(route.provider === "local" ? "Local" : "Cloud")}</span>
+              ${renderModelCapabilityBadges(route.model)}
               <span class="agent-history-badge">${escHtml(`${route.successes} success`)}</span>
               <span class="agent-history-badge ${route.failures > 0 ? "err" : ""}">${escHtml(`${route.failures} hard fail`)}</span>
               <span class="agent-history-badge ${route.transientFailures > 0 ? "err" : ""}">${escHtml(`${route.transientFailures} transient`)}</span>
               <span class="agent-history-badge ${route.semanticFailures > 0 ? "err" : ""}">${escHtml(`${route.semanticFailures} semantic`)}</span>
             </div>
+            ${route.scoreFactors.length > 0 ? `<div class="agent-route-health-stats">${renderRouteScoreFactors(route.scoreFactors)}</div>` : ""}
             <div class="agent-route-health-footnote">${escHtml(`Last used: ${formatRouteDiagnosticTimestamp(route.lastUsedAt)}`)}</div>
           </div>
         `).join("")}
@@ -5996,9 +7711,14 @@ async function refreshAgentRouteDiagnostics(taskId?: string): Promise<void> {
     renderAgentRouteDiagnostics(diagnostics, task);
   } catch (err) {
     const el = document.getElementById("agent-route-health");
-    if (!(el instanceof HTMLElement)) return;
     const message = err instanceof Error ? err.message : "Unable to load route health.";
-    el.innerHTML = `<div class="agent-route-health-empty">${escHtml(message)}</div>`;
+    if (el instanceof HTMLElement) {
+      el.innerHTML = `<div class="agent-route-health-empty">${escHtml(message)}</div>`;
+    }
+    const settingsEl = document.getElementById("settings-model-health");
+    if (settingsEl instanceof HTMLElement) {
+      settingsEl.innerHTML = `<div class="settings-model-health-empty">${escHtml(message)}</div>`;
+    }
   }
 }
 
@@ -6027,7 +7747,15 @@ function renderAgentTask(task: AgentTask | null, logs: string[]): void {
     `Status: ${task.status}`,
     `Activity: ${activity}`,
     `Prompt: ${task.prompt}`,
+    ...(task.attachments?.length ? [`Attachments: ${task.attachments.map((attachment) => attachment.name).join(" | ")}`] : []),
     ...(task.artifactType ? [`Artifact: ${formatAgentArtifactType(task.artifactType)}`] : []),
+    ...(task.executionSpec?.starterProfile ? [`Starter profile: ${formatStarterProfileLabel(task.executionSpec.starterProfile)}`] : []),
+    ...(task.executionSpec?.domainFocus ? [`Domain focus: ${formatDomainFocusLabel(task.executionSpec.domainFocus)}`] : []),
+    ...(task.executionSpec?.summary ? [`Execution brief: ${task.executionSpec.summary}`] : []),
+    ...(task.executionSpec?.deliverables?.length ? [`Deliverables: ${task.executionSpec.deliverables.join(" | ")}`] : []),
+    ...(task.executionSpec?.acceptanceCriteria?.length ? [`Acceptance: ${task.executionSpec.acceptanceCriteria.join(" | ")}`] : []),
+    ...(task.executionSpec?.qualityGates?.length ? [`Quality gates: ${task.executionSpec.qualityGates.join(" | ")}`] : []),
+    ...(task.executionSpec?.requiredFiles?.length ? [`Planned file map: ${task.executionSpec.requiredFiles.slice(0, 8).join(" | ")}`] : []),
     ...(task.output?.primaryAction ? [`Primary action: ${formatAgentPrimaryAction(task.output.primaryAction)}`] : []),
     ...(task.output?.runCommand ? [`Run command: ${task.output.runCommand}`] : []),
     ...(task.output?.workingDirectory ? [`Working directory: ${task.output.workingDirectory}`] : []),
@@ -6040,6 +7768,7 @@ function renderAgentTask(task: AgentTask | null, logs: string[]): void {
     ...(task.completionSnapshotId ? [`After snapshot: ${task.completionSnapshotId}`] : []),
     ...(task.verification ? [`Verification: ${task.verification.summary}`] : []),
     ...(task.verification?.checks.map((check) => `Verification check: ${check.label} - ${check.status} - ${check.details}`) ?? []),
+    ...(task.telemetry?.failureMemoryHints?.length ? [`Memory hints used: ${task.telemetry.failureMemoryHints.join(" | ")}`] : []),
     ...(task.summary ? [`Summary: ${summarizeAgentTaskSummary(task.summary, task.status)}`] : []),
     ...buildExhaustedRouteText(task.summary),
     "",
@@ -6192,6 +7921,12 @@ function buildAgentChatContent(task: AgentTask, logs: string[]): string {
     `Activity: ${buildAgentActivityLabel(task)}`,
     ...(buildAgentLatestUpdateLabel(task) ? [`Latest update: ${buildAgentLatestUpdateLabel(task)}`] : []),
     ...(task.artifactType ? [`Artifact: ${formatAgentArtifactType(task.artifactType)}`] : []),
+    ...(task.executionSpec?.starterProfile ? [`Starter profile: ${formatStarterProfileLabel(task.executionSpec.starterProfile)}`] : []),
+    ...(task.executionSpec?.domainFocus ? [`Domain focus: ${formatDomainFocusLabel(task.executionSpec.domainFocus)}`] : []),
+    ...(task.executionSpec?.summary ? [`Execution brief: ${task.executionSpec.summary}`] : []),
+    ...(task.executionSpec?.deliverables?.length ? [`Deliverables: ${task.executionSpec.deliverables.join(" | ")}`] : []),
+    ...(task.executionSpec?.acceptanceCriteria?.length ? [`Acceptance: ${task.executionSpec.acceptanceCriteria.join(" | ")}`] : []),
+    ...(task.executionSpec?.qualityGates?.length ? [`Quality gates: ${task.executionSpec.qualityGates.join(" | ")}`] : []),
     ...(task.output?.primaryAction ? [`Primary action: ${formatAgentPrimaryAction(task.output.primaryAction)}`] : []),
     ...(task.output?.runCommand ? [`Run command: ${task.output.runCommand}`] : []),
     ...(task.output?.workingDirectory ? [`Working directory: ${task.output.workingDirectory}`] : []),
@@ -6273,9 +8008,9 @@ function canPromptToLaunchDesktopApp(task: AgentTask): boolean {
 }
 
 function completedTaskIsRecent(task: AgentTask, withinMs = 20_000): boolean {
-  const updatedAt = Date.parse(task.updatedAt ?? "");
-  if (!Number.isFinite(updatedAt)) return false;
-  return Math.abs(Date.now() - updatedAt) <= withinMs;
+  const completedAt = Date.parse(task.updatedAt);
+  if (Number.isNaN(completedAt)) return false;
+  return Date.now() - completedAt <= withinMs;
 }
 
 function shouldQueueDesktopLaunchPrompt(
@@ -6343,7 +8078,8 @@ async function appendAgentTaskToChat(prompt: string, task: AgentTask): Promise<v
     id: `agent-user-${task.id}`,
     role: "user",
     content: prompt,
-    createdAt: now
+    createdAt: now,
+    metadata: task.attachments?.length ? { attachmentNames: task.attachments.map((attachment) => attachment.name) } : undefined
   };
   const assistantMessage: Message = {
     id: `agent-assistant-${task.id}`,
@@ -6381,6 +8117,7 @@ async function updateAgentTaskInChat(task: AgentTask, logs: string[]): Promise<v
 
 async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
   const normalized = (prompt ?? "").trim();
+  const attachmentsToSend = [...activeAttachments];
   if (!normalized) {
     setAgentStatus("Agent prompt required.", "err");
     return false;
@@ -6392,7 +8129,10 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
       setAgentStatus("Agent task cancelled before start.");
       return false;
     }
-    const task = await window.api.agent.startTask(normalized);
+    const task = await window.api.agent.startTask({
+      prompt: normalized,
+      attachments: attachmentsToSend
+    });
     activeAgentRestoreState = null;
     activeAgentTaskId = task.id;
     pendingAutoOpenAgentPreviewTaskId = task.id;
@@ -6401,6 +8141,8 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
     cachedAgentTasks = [task, ...cachedAgentTasks.filter((item) => item.id !== task.id)];
     syncActiveAgentTaskSelectionUi();
     await appendAgentTaskToChat(normalized, task);
+    activeAttachments = [];
+    renderComposerAttachments();
     setStreamingUi(true, "Agent is starting...");
     setAgentStatus("Agent task started.");
     renderAgentTask(task, []);
@@ -6409,6 +8151,48 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
     return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start agent task.";
+    setAgentStatus(message, "err");
+    showToast(message, 3200);
+    return false;
+  }
+}
+
+async function restartAgentTaskPrompt(taskId: string, mode: AgentTaskRestartMode): Promise<boolean> {
+  const sourceTask = cachedAgentTasks.find((task) => task.id === taskId) ?? null;
+  if (!sourceTask) {
+    setAgentStatus("Agent task not found.", "err");
+    return false;
+  }
+
+  if (mode === "retry-clean") {
+    const confirmed = window.confirm(
+      "Retry Clean will restore the Before snapshot for this task and then start a new run. Current workspace files outside preserved folders will be replaced. Continue?"
+    );
+    if (!confirmed) {
+      setAgentStatus("Clean retry cancelled.");
+      return false;
+    }
+  }
+
+  try {
+    const restarted = await window.api.agent.restartTask(taskId, mode);
+    activeAgentRestoreState = null;
+    activeAgentTaskId = restarted.id;
+    pendingAutoOpenAgentPreviewTaskId = restarted.id;
+    pendingDesktopLaunchPromptTasks.add(restarted.id);
+    handledDesktopLaunchPromptTasks.delete(restarted.id);
+    cachedAgentTasks = [restarted, ...cachedAgentTasks.filter((item) => item.id !== restarted.id)];
+    syncActiveAgentTaskSelectionUi();
+    await appendAgentTaskToChat(restarted.prompt, restarted);
+    setStreamingUi(true, "Agent is starting...");
+    setAgentStatus(`${getAgentRestartModeLabel(mode)} started.`);
+    renderAgentTask(restarted, []);
+    ensureAgentPolling();
+    void refreshAgentTask(true);
+    showToast(`${getAgentRestartModeLabel(mode)} started.`, 1800);
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : `Failed to ${getAgentRestartModeLabel(mode).toLowerCase()}.`;
     setAgentStatus(message, "err");
     showToast(message, 3200);
     return false;
@@ -6494,6 +8278,9 @@ function setupAgentControls(): void {
   $("agent-refresh-route-health-btn").addEventListener("click", () => {
     void refreshAgentRouteDiagnostics(activeAgentTaskId ?? undefined);
   });
+  $("model-health-refresh-btn").addEventListener("click", () => {
+    void refreshAgentRouteDiagnostics(activeAgentTaskId ?? undefined);
+  });
 
   document.addEventListener("click", (event: Event) => {
     const target = event.target as HTMLElement | null;
@@ -6515,6 +8302,17 @@ function setupAgentControls(): void {
         event.preventDefault();
         event.stopPropagation();
         openSnapshotRestoreModal(snapshot);
+      }
+      return;
+    }
+    const restartBtn = target?.closest<HTMLElement>("[data-main-agent-restart-task-id]");
+    if (restartBtn) {
+      const taskId = restartBtn.dataset["mainAgentRestartTaskId"] ?? "";
+      const mode = (restartBtn.dataset["agentRestartMode"] ?? "retry") as AgentTaskRestartMode;
+      if (taskId) {
+        event.preventDefault();
+        event.stopPropagation();
+        void restartAgentTaskPrompt(taskId, mode);
       }
       return;
     }
@@ -6582,6 +8380,17 @@ function setupAgentControls(): void {
         event.preventDefault();
         event.stopPropagation();
         openSnapshotRestoreModal(snapshot);
+      }
+      return;
+    }
+    const restartBtn = target?.closest<HTMLElement>("[data-agent-history-restart-task-id]");
+    if (restartBtn) {
+      const taskId = restartBtn.dataset["agentHistoryRestartTaskId"] ?? "";
+      const mode = (restartBtn.dataset["agentRestartMode"] ?? "retry") as AgentTaskRestartMode;
+      if (taskId) {
+        event.preventDefault();
+        event.stopPropagation();
+        void restartAgentTaskPrompt(taskId, mode);
       }
       return;
     }
@@ -6735,12 +8544,13 @@ function openPanel(tab: string) {
   });
   setPanelBody(tab);
 
-  const settingsBtn = $("settings-toggle-btn");
-  const routerBtn = $("router-toggle-btn");
-  const agentBtn = $("agent-toggle-btn");
+  const settingsBtn = document.getElementById("settings-toggle-btn");
+  const routerBtn = document.getElementById(ROUTER_TOGGLE_BUTTON_ID);
+  const agentBtn = document.getElementById(AGENT_TOGGLE_BUTTON_ID);
+  if (!(settingsBtn instanceof HTMLElement)) return;
   settingsBtn.classList.toggle("active", tab === "settings");
-  routerBtn.classList.toggle("active", tab === "router");
-  agentBtn.classList.toggle("active", tab === "agent");
+  if (routerBtn instanceof HTMLElement) routerBtn.classList.toggle("active", tab === "router");
+  if (agentBtn instanceof HTMLElement) agentBtn.classList.toggle("active", tab === "agent");
 
   if (tab === "router") {
     void refreshRouterStatus();
@@ -6764,21 +8574,201 @@ function togglePanel(tab: string) {
 }
 
 // â”€â”€ Rename â”€â”€
-function openRenameModal() {
-  if (!currentChatId) return;
+function setupRightPanelResizeControls(): void {
+  const handle = document.getElementById("panel-resize-handle");
+  const smallerBtn = document.getElementById("panel-width-smaller-btn");
+  const largerBtn = document.getElementById("panel-width-larger-btn");
+  const resetBtn = document.getElementById("panel-width-reset-btn");
+
+  if (!(handle instanceof HTMLElement)) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startWidth = currentRightPanelWidth;
+
+  const finishResize = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("panel-resizing");
+    localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(currentRightPanelWidth));
+  };
+
+  const resizeToClientX = (clientX: number) => {
+    const nextWidth = startWidth + (startX - clientX);
+    applyRightPanelWidth(nextWidth, false);
+  };
+
+  handle.addEventListener("pointerdown", (event: PointerEvent) => {
+    dragging = true;
+    startX = event.clientX;
+    startWidth = currentRightPanelWidth;
+    document.body.classList.add("panel-resizing");
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointermove", (event: PointerEvent) => {
+    if (!dragging) return;
+    resizeToClientX(event.clientX);
+  });
+
+  handle.addEventListener("pointerup", finishResize);
+  handle.addEventListener("pointercancel", finishResize);
+  window.addEventListener("pointerup", finishResize);
+  window.addEventListener("resize", () => applyRightPanelWidth(currentRightPanelWidth, false));
+
+  handle.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      adjustRightPanelWidth(RIGHT_PANEL_WIDTH_STEP);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      adjustRightPanelWidth(-RIGHT_PANEL_WIDTH_STEP);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      applyRightPanelWidth(getRightPanelMaxWidth());
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      applyRightPanelWidth(RIGHT_PANEL_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetRightPanelWidth();
+    }
+  });
+
+  if (smallerBtn instanceof HTMLButtonElement) {
+    smallerBtn.addEventListener("click", () => adjustRightPanelWidth(-RIGHT_PANEL_WIDTH_STEP));
+  }
+  if (largerBtn instanceof HTMLButtonElement) {
+    largerBtn.addEventListener("click", () => adjustRightPanelWidth(RIGHT_PANEL_WIDTH_STEP));
+  }
+  if (resetBtn instanceof HTMLButtonElement) {
+    resetBtn.addEventListener("click", resetRightPanelWidth);
+  }
+}
+
+function setupSidebarResizeControls(): void {
+  const handle = document.getElementById("sidebar-resize-handle");
+  const smallerBtn = document.getElementById("sidebar-width-smaller-btn");
+  const largerBtn = document.getElementById("sidebar-width-larger-btn");
+  const resetBtn = document.getElementById("sidebar-width-reset-btn");
+
+  if (!(handle instanceof HTMLElement)) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startWidth = currentSidebarWidth;
+
+  const finishResize = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("sidebar-resizing");
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(currentSidebarWidth));
+  };
+
+  const resizeToClientX = (clientX: number) => {
+    const nextWidth = startWidth + (clientX - startX);
+    applySidebarWidth(nextWidth, false);
+  };
+
+  handle.addEventListener("pointerdown", (event: PointerEvent) => {
+    dragging = true;
+    startX = event.clientX;
+    startWidth = currentSidebarWidth;
+    document.body.classList.add("sidebar-resizing");
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointermove", (event: PointerEvent) => {
+    if (!dragging) return;
+    resizeToClientX(event.clientX);
+  });
+
+  handle.addEventListener("pointerup", finishResize);
+  handle.addEventListener("pointercancel", finishResize);
+  window.addEventListener("pointerup", finishResize);
+  window.addEventListener("resize", () => applySidebarWidth(currentSidebarWidth, false));
+
+  handle.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      adjustSidebarWidth(-SIDEBAR_WIDTH_STEP);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      adjustSidebarWidth(SIDEBAR_WIDTH_STEP);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      applySidebarWidth(getSidebarMaxWidth());
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      applySidebarWidth(SIDEBAR_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetSidebarWidth();
+    }
+  });
+
+  if (smallerBtn instanceof HTMLButtonElement) {
+    smallerBtn.addEventListener("click", () => adjustSidebarWidth(-SIDEBAR_WIDTH_STEP));
+  }
+  if (largerBtn instanceof HTMLButtonElement) {
+    largerBtn.addEventListener("click", () => adjustSidebarWidth(SIDEBAR_WIDTH_STEP));
+  }
+  if (resetBtn instanceof HTMLButtonElement) {
+    resetBtn.addEventListener("click", resetSidebarWidth);
+  }
+}
+
+function openRenameModalForChat(chatId: string, title: string): void {
+  pendingRenameChatId = chatId;
   const modal = $("rename-modal");
   modal.style.display = "flex";
-  ($("rename-input") as HTMLInputElement).value = $("chat-title-display").textContent ?? "";
+  ($("rename-input") as HTMLInputElement).value = title;
   ($("rename-input") as HTMLInputElement).focus();
 }
 
-async function confirmRename() {
+function openRenameModal() {
   if (!currentChatId) return;
+  openRenameModalForChat(currentChatId, $("chat-title-display").textContent ?? "");
+}
+
+function closeRenameModal(): void {
+  pendingRenameChatId = null;
+  $("rename-modal").style.display = "none";
+}
+
+async function exportChatById(chatId: string): Promise<void> {
+  const res = await window.api.chat.export(chatId);
+  showToast(res.message, res.ok ? 2200 : 3200);
+}
+
+async function confirmRename() {
+  const chatId = pendingRenameChatId ?? currentChatId;
+  if (!chatId) return;
   const title = ($("rename-input") as HTMLInputElement).value.trim();
   if (!title) return;
-  await window.api.chat.rename(currentChatId, title);
-  $("chat-title-display").textContent = title;
-  $("rename-modal").style.display = "none";
+  await window.api.chat.rename(chatId, title);
+  if (currentChatId === chatId) {
+      updateChatHeaderTitle(title);
+  }
+  closeRenameModal();
   await loadChatList();
 }
 
@@ -6849,13 +8839,19 @@ function setupComposer() {
   const composerInner = input.closest(".composer-inner") as HTMLElement | null;
   composerInner?.addEventListener("click", () => input.focus());
 
-  input.addEventListener("input", () => {
+  const resizeComposer = () => {
     input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 160) + "px";
+    input.style.height = `${Math.min(input.scrollHeight, 88)}px`;
+    input.style.overflowY = input.scrollHeight > 88 ? "auto" : "hidden";
+  };
+
+  input.addEventListener("input", () => {
+    resizeComposer();
     if (currentInteractionMode === "agent") {
       syncComposerAgentPrompts("composer");
     }
   });
+  resizeComposer();
   input.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -7016,7 +9012,7 @@ function setupVoiceInput() {
       return;
     }
     if (!hasConfiguredVoiceTranscription()) {
-      showToast("Voice transcription needs an OpenRouter key in Settings.", 3200);
+      showToast("Voice transcription needs a cloud API key in Settings.", 3200);
       return;
     }
 
@@ -7145,28 +9141,103 @@ function setupComposerTools() {
     showToast(`${picked.length} attachment${picked.length === 1 ? "" : "s"} added.`, 1800);
   });
 
-  $("templates-btn").addEventListener("click", async () => {
-    const dropdown = $("templates-dropdown");
-    const isOpen = dropdown.style.display !== "none";
-    if (isOpen) {
-      showTemplatesDropdown(false);
-      return;
-    }
-    await loadTemplates();
-    showTemplatesDropdown(true);
+  $("interaction-chat-btn").addEventListener("click", () => {
+    showChatProviderMenu(!chatProviderMenuOpen);
   });
 
-  $("save-template-btn").addEventListener("click", () => {
-    void saveCurrentAsTemplate();
+  document.getElementById("chat-provider-openrouter-btn")?.addEventListener("click", () => {
+    void selectChatProvider("openrouter");
   });
-  $("save-template-inline-btn").addEventListener("click", () => {
-    void saveCurrentAsTemplate();
+  document.getElementById("chat-provider-nvidia-btn")?.addEventListener("click", () => {
+    void selectChatProvider("nvidia");
+  });
+  document.getElementById("chat-provider-ollama-btn")?.addEventListener("click", () => {
+    void selectChatProvider("ollama");
+  });
+  document.getElementById("chat-provider-claude-btn")?.addEventListener("click", () => {
+    void selectChatProvider("claude");
   });
 
   document.addEventListener("click", (event: MouseEvent) => {
     const target = event.target as HTMLElement;
-    if (target.closest("#templates-dropdown") || target.closest("#templates-btn")) return;
-    showTemplatesDropdown(false);
+    const advancedShell = document.getElementById("composer-advanced-shell");
+    if (!target.closest("#chat-provider-menu") && !target.closest("#interaction-chat-btn")) {
+      showChatProviderMenu(false);
+    }
+    if (advancedShell instanceof HTMLDetailsElement && !target.closest("#composer-advanced-shell")) {
+      advancedShell.open = false;
+    }
+  });
+
+  $("header-tools-menu-btn").addEventListener("click", () => {
+    const dropdown = $("header-tools-menu");
+    const isOpen = dropdown.style.display !== "none";
+    showHeaderToolsMenu(!isOpen);
+  });
+
+  $("header-tools-menu-btn").addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      showHeaderToolsMenu(true);
+      focusHeaderToolsMenuItem("first");
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      showHeaderToolsMenu(true);
+      focusHeaderToolsMenuItem("last");
+    }
+  });
+
+  Array.from(document.querySelectorAll<HTMLElement>(".header-tools-menu-item")).forEach((menuItem) => {
+    menuItem.addEventListener("click", () => showHeaderToolsMenu(false));
+  });
+
+  $("header-tools-menu").addEventListener("keydown", (event: KeyboardEvent) => {
+    const items = getHeaderToolsMenuItems();
+    if (items.length === 0) return;
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      showHeaderToolsMenu(false);
+      $("header-tools-menu-btn").focus();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusHeaderToolsMenuItem(currentIndex < 0 ? 0 : (currentIndex + 1) % items.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusHeaderToolsMenuItem(currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      focusHeaderToolsMenuItem("first");
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      focusHeaderToolsMenuItem("last");
+      return;
+    }
+    if (event.key === "Tab") {
+      showHeaderToolsMenu(false);
+    }
+  });
+
+  document.addEventListener("click", (event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("#header-tools-menu") || target.closest("#header-tools-menu-btn")) return;
+    showHeaderToolsMenu(false);
+  });
+
+  document.addEventListener("click", (event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+    if (target.closest(".chat-item-menu") || target.closest(".chat-item-menu-btn")) return;
+    closeChatItemMenus();
   });
 }
 
@@ -7231,15 +9302,27 @@ function setupCompareControls() {
   $("compare-toggle-btn").addEventListener("click", () => {
     compareModeEnabled = !compareModeEnabled;
     refreshCompareUi();
+    void syncChatContextAfterUiChange();
   });
   refreshCompareUi();
 }
 
 function setupOllamaControls() {
   const openrouterBtn = document.getElementById("provider-openrouter-btn");
+  const nvidiaBtn = document.getElementById("provider-nvidia-btn");
   const ollamaBtn = document.getElementById("provider-ollama-btn");
-  openrouterBtn?.addEventListener("click", () => setProviderMode("openrouter"));
-  ollamaBtn?.addEventListener("click", () => setProviderMode("ollama"));
+  openrouterBtn?.addEventListener("click", () => {
+    setProviderMode("openrouter");
+    void syncChatContextAfterUiChange();
+  });
+  nvidiaBtn?.addEventListener("click", () => {
+    setProviderMode("nvidia");
+    void syncChatContextAfterUiChange();
+  });
+  ollamaBtn?.addEventListener("click", () => {
+    setProviderMode("ollama");
+    void syncChatContextAfterUiChange();
+  });
   $("refresh-ollama-models-btn").addEventListener("click", () => {
     void refreshOllamaModels();
   });
@@ -7284,6 +9367,26 @@ function setupMcpControls() {
 function setupMessageInteractions() {
   $("messages").addEventListener("click", async (event: Event) => {
     const target = event.target as HTMLElement;
+    const imageSaveBtn = target.closest(".message-image-save-btn") as HTMLButtonElement | null;
+    if (imageSaveBtn) {
+      const figure = imageSaveBtn.closest(".message-image-card");
+      const imageEl = figure?.querySelector<HTMLImageElement>(".message-image");
+      const dataUrl = imageEl?.src ?? "";
+      const suggestedName = imageSaveBtn.dataset["imageName"] ?? "cipher-generated-image";
+      const assetId = imageSaveBtn.dataset["imageAssetId"];
+      try {
+        const result = await window.api.images.save(dataUrl, suggestedName, assetId);
+        showToast(result.message, result.ok ? 2200 : 2800);
+        const historyModal = document.getElementById("image-history-modal");
+        if (result.ok && historyModal instanceof HTMLElement && historyModal.style.display !== "none") {
+          void refreshImageHistory();
+        }
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Image save failed.", 2800);
+      }
+      return;
+    }
+
     const actionBtn = target.closest(".msg-action-btn") as HTMLButtonElement | null;
     if (actionBtn) {
       const action = (actionBtn.dataset["action"] ?? "").toLowerCase();
@@ -7400,9 +9503,9 @@ function closeRightPanel() {
   $("panel-title").textContent = "Settings";
   document.querySelectorAll(".panel-tab").forEach((t) => t.classList.remove("active"));
   setPanelBody("none");
-  $("settings-toggle-btn").classList.remove("active");
-  $("router-toggle-btn").classList.remove("active");
-  $("agent-toggle-btn").classList.remove("active");
+  document.getElementById("settings-toggle-btn")?.classList.remove("active");
+  document.getElementById(ROUTER_TOGGLE_BUTTON_ID)?.classList.remove("active");
+  document.getElementById(AGENT_TOGGLE_BUTTON_ID)?.classList.remove("active");
 }
 
 function setupVirtualScrolling() {
@@ -7428,6 +9531,14 @@ function setupOnboardingControls(): void {
     setProviderMode("openrouter");
     openPanel("settings");
     showToast("Paste your OpenRouter key in Settings to continue.", 2800);
+  });
+  $("onboarding-nvidia-btn").addEventListener("click", () => {
+    markOnboardingSeen();
+    hideOnboarding();
+    applyUiExperience("simple");
+    setProviderMode("nvidia");
+    openPanel("settings");
+    showToast("Paste your NVIDIA key in Settings to continue.", 2800);
   });
   $("onboarding-local-btn").addEventListener("click", () => {
     markOnboardingSeen();
@@ -7496,9 +9607,17 @@ function setupKeyboardShortcuts() {
       const panel = document.getElementById("right-panel");
       const previewWorkspace = document.getElementById("preview-workspace");
       const renameModal = document.getElementById("rename-modal");
-      const templatesDropdown = document.getElementById("templates-dropdown");
+      const imageGenerationModal = document.getElementById("image-generation-modal");
+      const imageHistoryModal = document.getElementById("image-history-modal");
+      const imagePreviewModal = document.getElementById("image-preview-modal");
+      const chatProviderMenu = document.getElementById("chat-provider-menu");
+      const headerToolsMenu = document.getElementById("header-tools-menu");
       const codePreviewModal = document.getElementById("code-preview-modal");
       const statsModal = document.getElementById("stats-modal");
+      if (activeChatActionMenuId) {
+        closeChatItemMenus();
+        return;
+      }
       if (previewWorkspace instanceof HTMLElement && previewWorkspace.style.display !== "none") {
         closePreviewWorkspace();
         return;
@@ -7508,7 +9627,19 @@ function setupKeyboardShortcuts() {
         return;
       }
       if (renameModal instanceof HTMLElement && renameModal.style.display !== "none") {
-        renameModal.style.display = "none";
+        closeRenameModal();
+        return;
+      }
+      if (imageGenerationModal instanceof HTMLElement && imageGenerationModal.style.display !== "none") {
+        closeImageGenerationModal();
+        return;
+      }
+      if (imagePreviewModal instanceof HTMLElement && imagePreviewModal.style.display !== "none") {
+        closeImagePreviewModal();
+        return;
+      }
+      if (imageHistoryModal instanceof HTMLElement && imageHistoryModal.style.display !== "none") {
+        closeImageHistoryModal();
         return;
       }
       if (codePreviewModal instanceof HTMLElement && codePreviewModal.style.display !== "none") {
@@ -7519,8 +9650,12 @@ function setupKeyboardShortcuts() {
         closeStatsModal();
         return;
       }
-      if (templatesDropdown instanceof HTMLElement && templatesDropdown.style.display !== "none") {
-        showTemplatesDropdown(false);
+      if (chatProviderMenu instanceof HTMLElement && chatProviderMenu.style.display !== "none") {
+        showChatProviderMenu(false);
+        return;
+      }
+      if (headerToolsMenu instanceof HTMLElement && headerToolsMenu.style.display !== "none") {
+        showHeaderToolsMenu(false);
       }
     }
   });
@@ -7529,8 +9664,11 @@ function setupKeyboardShortcuts() {
 // â”€â”€ Init â”€â”€
 async function init() {
   $("theme-toggle-btn").onclick = toggleTheme;
+  applySidebarWidth(getInitialSidebarWidth(), false);
+  applyRightPanelWidth(getInitialRightPanelWidth(), false);
   applyTheme(getInitialTheme());
   applyUiExperience(getInitialUiExperience());
+  void loadAppInfo();
   $("panel-close-btn").onclick = closeRightPanel;
 
   $("settings-toggle-btn").onclick = () => {
@@ -7542,24 +9680,30 @@ async function init() {
     }
     openPanel("settings");
   };
-  $("router-toggle-btn").onclick = () => {
-    const panel = $("right-panel");
-    const openTab = panel.dataset["openTab"] ?? "";
-    if (panel.style.display !== "none" && openTab === "router") {
-      closeRightPanel();
-      return;
-    }
-    openPanel("router");
-  };
-  $("agent-toggle-btn").onclick = () => {
-    const panel = $("right-panel");
-    const openTab = panel.dataset["openTab"] ?? "";
-    if (panel.style.display !== "none" && openTab === "agent") {
-      closeRightPanel();
-      return;
-    }
-    openPanel("agent");
-  };
+  const routerToggleBtn = document.getElementById(ROUTER_TOGGLE_BUTTON_ID);
+  if (routerToggleBtn instanceof HTMLButtonElement) {
+    routerToggleBtn.onclick = () => {
+      const panel = $("right-panel");
+      const openTab = panel.dataset["openTab"] ?? "";
+      if (panel.style.display !== "none" && openTab === "router") {
+        closeRightPanel();
+        return;
+      }
+      openPanel("router");
+    };
+  }
+  const agentToggleBtn = document.getElementById(AGENT_TOGGLE_BUTTON_ID);
+  if (agentToggleBtn instanceof HTMLButtonElement) {
+    agentToggleBtn.onclick = () => {
+      const panel = $("right-panel");
+      const openTab = panel.dataset["openTab"] ?? "";
+      if (panel.style.display !== "none" && openTab === "agent") {
+        closeRightPanel();
+        return;
+      }
+      openPanel("agent");
+    };
+  }
   $("new-window-btn").onclick = () => {
     void openFreshWorkspaceWindow();
   };
@@ -7580,6 +9724,8 @@ async function init() {
     setupPreviewPanel();
     setupClaudePanel();
     setupModeSwitcher();
+    setupSidebarResizeControls();
+    setupRightPanelResizeControls();
     setupCompareControls();
     setupOllamaControls();
     setupMcpControls();
@@ -7593,7 +9739,6 @@ async function init() {
   }
 
   renderComposerAttachments();
-  showTemplatesDropdown(false);
   applyRawMode(rawModeEnabled);
   hideSummaryOverlay();
   updateScrollBottomButton();
@@ -7603,6 +9748,8 @@ async function init() {
       void refreshMcpStatus();
     }
   }, 2000);
+
+  mountTopbarControls();
 
   // New chat
   $("new-chat-btn").onclick = async () => {
@@ -7650,6 +9797,9 @@ async function init() {
   $("summarize-btn").onclick = () => {
     void summarizeCurrentChat();
   };
+  $("image-history-btn").onclick = () => {
+    void openImageHistoryModal();
+  };
   $("raw-toggle-btn").onclick = () => {
     applyRawMode(!rawModeEnabled);
   };
@@ -7657,18 +9807,19 @@ async function init() {
     void openStatsModal();
   };
   $("ui-mode-toggle-btn").onclick = toggleUiExperience;
-  const interactionChatBtn = document.getElementById("interaction-chat-btn");
-  if (interactionChatBtn instanceof HTMLButtonElement) {
-    interactionChatBtn.onclick = () => applyInteractionMode("chat");
-  }
   const interactionAgentBtn = document.getElementById("interaction-agent-btn");
   if (interactionAgentBtn instanceof HTMLButtonElement) {
     interactionAgentBtn.onclick = () => applyInteractionMode("agent");
+  }
+  const interactionImageBtn = document.getElementById("generate-image-btn");
+  if (interactionImageBtn instanceof HTMLButtonElement) {
+    interactionImageBtn.onclick = () => applyInteractionMode("image");
   }
   const quickOllamaBtn = document.getElementById("quick-ollama-btn");
   if (quickOllamaBtn instanceof HTMLButtonElement) {
     quickOllamaBtn.onclick = () => {
       setProviderMode("ollama");
+      void syncChatContextAfterUiChange();
       openPanel("settings");
     };
   }
@@ -7676,6 +9827,15 @@ async function init() {
   if (quickOpenRouterBtn instanceof HTMLButtonElement) {
     quickOpenRouterBtn.onclick = () => {
       setProviderMode("openrouter");
+      void syncChatContextAfterUiChange();
+      openPanel("settings");
+    };
+  }
+  const quickNvidiaBtn = document.getElementById("quick-nvidia-btn");
+  if (quickNvidiaBtn instanceof HTMLButtonElement) {
+    quickNvidiaBtn.onclick = () => {
+      setProviderMode("nvidia");
+      void syncChatContextAfterUiChange();
       openPanel("settings");
     };
   }
@@ -7697,9 +9857,11 @@ async function init() {
           showToast(msg, 3200);
         }
         applyMode("write");
+        void syncChatContextAfterUiChange();
         return;
       }
       applyMode("claude");
+      void syncChatContextAfterUiChange();
     };
   }
   const statsCloseBtn = document.getElementById("stats-close-btn");
@@ -7713,6 +9875,91 @@ async function init() {
   $("managed-save-preview-close-btn").onclick = cancelManagedSavePreview;
   $("managed-save-preview-modal").addEventListener("click", (event: Event) => {
     if (event.target === event.currentTarget) cancelManagedSavePreview();
+  });
+  $("image-generation-submit-btn").onclick = () => {
+    void submitImageGeneration();
+  };
+  $("image-generation-cancel-btn").onclick = () => {
+    closeImageGenerationModal();
+  };
+  $("image-generation-close-btn").onclick = () => {
+    closeImageGenerationModal();
+  };
+  $("image-generation-modal").addEventListener("click", (event: Event) => {
+    if (event.target === event.currentTarget) closeImageGenerationModal();
+  });
+  $("image-generation-prompt-input").addEventListener("keydown", (event: Event) => {
+    const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.key === "Escape") {
+      keyboardEvent.preventDefault();
+      closeImageGenerationModal();
+      return;
+    }
+    if (keyboardEvent.key === "Enter" && (keyboardEvent.ctrlKey || keyboardEvent.metaKey)) {
+      keyboardEvent.preventDefault();
+      void submitImageGeneration();
+    }
+  });
+  const imageGenerationModelInput = document.getElementById("image-generation-model-input");
+  const imageStudioPromptInput = document.getElementById("image-studio-prompt-input");
+  const imageStudioGenerateBtn = document.getElementById("image-studio-generate-btn");
+  const imageStudioRefreshBtn = document.getElementById("image-studio-refresh-btn");
+  const imageStudioClearBtn = document.getElementById("image-studio-clear-btn");
+  const initialImageProvider = getActiveImageGenerationProvider();
+  populateImageGenerationAspectRatioOptions();
+  refreshImageGenerationModelOptions(initialImageProvider);
+  updateImageGenerationModalHelp(initialImageProvider);
+  if (imageGenerationModelInput instanceof HTMLInputElement) {
+    imageGenerationModelInput.value = getDefaultImageGenerationModel(initialImageProvider);
+  }
+  syncImageStudioControls(false);
+  document.getElementById("image-provider-openrouter-btn")?.addEventListener("click", () => {
+    void setImageProvider("openrouter");
+  });
+  document.getElementById("image-provider-nvidia-btn")?.addEventListener("click", () => {
+    void setImageProvider("nvidia");
+  });
+  document.getElementById("image-provider-comfyui-btn")?.addEventListener("click", () => {
+    void setImageProvider("comfyui");
+  });
+  if (imageStudioGenerateBtn instanceof HTMLButtonElement) {
+    imageStudioGenerateBtn.onclick = () => {
+      void submitImageStudioGeneration();
+    };
+  }
+  if (imageStudioRefreshBtn instanceof HTMLButtonElement) {
+    imageStudioRefreshBtn.onclick = () => {
+      void refreshImageHistory();
+    };
+  }
+  if (imageStudioClearBtn instanceof HTMLButtonElement) {
+    imageStudioClearBtn.onclick = () => {
+      if (imageStudioPromptInput instanceof HTMLTextAreaElement) {
+        imageStudioPromptInput.value = "";
+        imageStudioPromptInput.focus();
+      }
+      setImageStudioStatus("Prompt cleared.");
+    };
+  }
+  if (imageStudioPromptInput instanceof HTMLTextAreaElement) {
+    imageStudioPromptInput.addEventListener("keydown", (event: Event) => {
+      const keyboardEvent = event as KeyboardEvent;
+      if (keyboardEvent.key === "Enter" && (keyboardEvent.ctrlKey || keyboardEvent.metaKey)) {
+        keyboardEvent.preventDefault();
+        void submitImageStudioGeneration();
+      }
+    });
+  }
+  $("image-history-refresh-btn").onclick = () => {
+    void refreshImageHistory();
+  };
+  $("image-history-close-btn").onclick = closeImageHistoryModal;
+  $("image-history-modal").addEventListener("click", (event: Event) => {
+    if (event.target === event.currentTarget) closeImageHistoryModal();
+  });
+  $("image-preview-close-btn").onclick = closeImagePreviewModal;
+  $("image-preview-modal").addEventListener("click", (event: Event) => {
+    if (event.target === event.currentTarget) closeImagePreviewModal();
   });
   $("snapshot-restore-confirm-btn").onclick = async () => {
     const snapshotId = pendingSnapshotRestoreId;
@@ -7756,8 +10003,7 @@ async function init() {
   }
   $("export-btn").onclick = async () => {
     if (!currentChatId) return;
-    const res = await window.api.chat.export(currentChatId);
-    showToast(res.message, res.ok ? 2200 : 3200);
+    await exportChatById(currentChatId);
   };
   $("system-prompt-toggle-btn").onclick = () => {
     if (!currentChatId) return;
@@ -7773,14 +10019,20 @@ async function init() {
     showToast(ok ? "System prompt saved." : "Failed to save system prompt.", ok ? 1800 : 2800);
   };
   $("rename-confirm-btn").onclick = confirmRename;
-  $("rename-cancel-btn").onclick = () => { $("rename-modal").style.display = "none"; };
+  $("rename-cancel-btn").onclick = closeRenameModal;
   $("rename-input").addEventListener("keydown", (e: Event) => {
     if ((e as KeyboardEvent).key === "Enter") confirmRename();
-    if ((e as KeyboardEvent).key === "Escape") $("rename-modal").style.display = "none";
+    if ((e as KeyboardEvent).key === "Escape") closeRenameModal();
   });
 
   // Settings
   $("save-settings-btn").onclick = saveSettings;
+  $("model-select").addEventListener("change", () => {
+    void syncChatContextAfterUiChange();
+  });
+  $("compare-model-select").addEventListener("change", () => {
+    void syncChatContextAfterUiChange();
+  });
   const defaultModelSelect = document.getElementById("default-model-select");
   defaultModelSelect?.addEventListener("change", () => {
     const select = defaultModelSelect as HTMLSelectElement;
@@ -7811,6 +10063,16 @@ async function init() {
       showToast(ollamaModels.length > 0 ? "Ollama models list updated. Save Settings dabao." : "No Ollama models found. Refresh first.", 2500);
       return;
     }
+    if (providerMode === "nvidia") {
+      area.value = NVIDIA_RECOMMENDED_MODELS.join("\n");
+      if (!defaultInput.value.trim() || defaultInput.value.trim().startsWith("ollama/")) {
+        defaultInput.value = NVIDIA_RECOMMENDED_MODELS[0];
+      }
+      populateSettingsDefaultModelSelect();
+      refreshRouteStrategyUi();
+      showToast("NVIDIA recommended models add ho gaye. Save Settings dabao.", 2600);
+      return;
+    }
 
     area.value = RECOMMENDED_MODELS.join("\n");
     if (!defaultInput.value.trim() || defaultInput.value.trim().startsWith("ollama/")) {
@@ -7822,13 +10084,15 @@ async function init() {
   };
   $("test-conn-btn").onclick = async () => {
     if (providerMode === "ollama") {
-      setStatus("Switch to OpenRouter mode to test connection.", "");
-      showToast("Provider is Ollama. OpenRouter connection test is disabled.", 2200);
+      setStatus("Switch to a cloud provider to test connection.", "");
+      showToast("Provider is Ollama. Cloud connection test is disabled.", 2200);
       return;
     }
-    setStatus("Testing...", "");
+    const providerName = getProviderDisplayName(providerMode);
+    setStatus(`Testing ${providerName}...`, "");
     const res = await window.api.router.test();
     setStatus(res.message, res.ok ? "ok" : "err");
+    showToast(res.ok ? `${providerName} connection passed.` : `${providerName} connection failed.`, res.ok ? 2200 : 3200);
   };
   $("toggle-key-btn").onclick = () => {
     const input = $("api-key-input") as HTMLInputElement;
@@ -7854,7 +10118,6 @@ async function init() {
   try {
     await loadSettings();
     applyInteractionMode("chat");
-    await loadTemplates();
     await refreshMcpStatus();
     const agentTasks = await window.api.agent.listTasks();
     activeAgentRestoreState = await window.api.agent.getRestoreState();

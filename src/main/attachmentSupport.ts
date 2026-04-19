@@ -19,6 +19,10 @@ type ClaudeInputImageBlock = {
 
 export type ClaudeMessageContent = string | Array<ClaudeInputTextBlock | ClaudeInputImageBlock>;
 
+interface ClaudeAttachmentBuildOptions {
+  includeFullTextAttachments?: boolean;
+}
+
 const TEXT_EXTENSIONS = new Set([".txt", ".md", ".js", ".ts", ".py", ".json", ".html", ".css", ".cpp", ".c", ".rs", ".go"]);
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".png": "image/png",
@@ -97,7 +101,12 @@ function toClaudeImageMediaType(mediaType: string): ClaudeInputImageBlock["sourc
   return null;
 }
 
-function buildClaudePromptWithAttachments(prompt: string, attachments: AttachmentPayload[], enabledTools: string[] = []): string {
+function buildClaudePromptWithAttachments(
+  prompt: string,
+  attachments: AttachmentPayload[],
+  enabledTools: string[] = [],
+  options: ClaudeAttachmentBuildOptions = {}
+): string {
   if (attachments.length === 0) return prompt;
 
   const sections: string[] = [];
@@ -106,6 +115,7 @@ function buildClaudePromptWithAttachments(prompt: string, attachments: Attachmen
   let skipped = 0;
   let usedTextChars = 0;
   const limited = attachments.slice(0, MAX_CLAUDE_ATTACHMENTS);
+  const includeFullTextAttachments = options.includeFullTextAttachments === true;
   const editablePaths = limited
     .filter((attachment) => attachment.type === "text" && attachment.sourcePath)
     .map((attachment) => attachment.sourcePath!.trim())
@@ -123,18 +133,22 @@ function buildClaudePromptWithAttachments(prompt: string, attachments: Attachmen
         : "[Binary image payload omitted in Claude mode to keep responses fast.]";
       sections.push("", `--- IMAGE: ${label} (${attachment.mimeType ?? "image"}) ---`, locationHint);
       continue;
-    }
+      }
 
-    const remaining = MAX_CLAUDE_TOTAL_ATTACHMENT_CHARS - usedTextChars;
-    if (remaining <= 0) {
-      skipped += 1;
-      continue;
-    }
+      const remaining = includeFullTextAttachments
+        ? Number.MAX_SAFE_INTEGER
+        : MAX_CLAUDE_TOTAL_ATTACHMENT_CHARS - usedTextChars;
+      if (remaining <= 0) {
+        skipped += 1;
+        continue;
+      }
 
-    const perFileLimit = Math.min(MAX_CLAUDE_TEXT_ATTACHMENT_CHARS, remaining);
-    let body = attachment.content;
-    if (body.length > perFileLimit) {
-      body = body.slice(0, perFileLimit);
+      const perFileLimit = includeFullTextAttachments
+        ? attachment.content.length
+        : Math.min(MAX_CLAUDE_TEXT_ATTACHMENT_CHARS, remaining);
+      let body = attachment.content;
+      if (body.length > perFileLimit) {
+        body = body.slice(0, perFileLimit);
       trimmed += 1;
     }
     usedTextChars += body.length;
@@ -159,7 +173,9 @@ function buildClaudePromptWithAttachments(prompt: string, attachments: Attachmen
   const header = [
     prompt,
     "",
-    "[Attached context follows. Large content is trimmed in Claude mode for faster responses.]",
+    includeFullTextAttachments
+      ? "[Attached context follows. Full attached text is included for Edit & Save.]"
+      : "[Attached context follows. Large content is trimmed in Claude mode for faster responses.]",
     `Attachment summary: included ${included}/${attachments.length}, trimmed ${trimmed}, skipped ${skipped}.`
   ];
 
@@ -516,13 +532,19 @@ export function normalizeAttachments(raw: AttachmentPayload[] | undefined): Atta
     .filter((item) => item.name && item.content);
 }
 
-export function buildClaudeMessageContent(prompt: string, attachments: AttachmentPayload[], enabledTools: string[] = []): ClaudeMessageContent {
+export function buildClaudeMessageContent(
+  prompt: string,
+  attachments: AttachmentPayload[],
+  enabledTools: string[] = [],
+  options: ClaudeAttachmentBuildOptions = {}
+): ClaudeMessageContent {
   if (attachments.length === 0) return prompt;
 
   const promptWithTextAttachments = buildClaudePromptWithAttachments(
     prompt,
     attachments.filter((attachment) => attachment.type !== "image"),
-    enabledTools
+    enabledTools,
+    options
   );
   const blocks: Array<ClaudeInputTextBlock | ClaudeInputImageBlock> = [
     { type: "text", text: promptWithTextAttachments }

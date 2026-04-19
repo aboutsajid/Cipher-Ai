@@ -68,3 +68,24 @@ test("buildClaudeMessageContent reports skipped unsupported images in the text b
   assert.equal(content[0]?.type, "text");
   assert.match(content[0]?.text ?? "", /Skipped images: bad\.bmp/);
 });
+
+test("buildClaudeMessageContent keeps full text attachments when requested", () => {
+  const largeContent = "A".repeat(20_000);
+  const content = buildClaudeMessageContent(
+    "Edit this",
+    [{
+      name: "src/large.txt",
+      type: "text",
+      content: largeContent,
+      sourcePath: "src/large.txt"
+    }],
+    [],
+    { includeFullTextAttachments: true }
+  );
+
+  assert.ok(Array.isArray(content));
+  assert.equal(content[0]?.type, "text");
+  assert.match(content[0]?.text ?? "", /Full attached text is included for Edit & Save/);
+  assert.match(content[0]?.text ?? "", /A{20000}/);
+  assert.doesNotMatch(content[0]?.text ?? "", /\[File truncated for speed\.\]/);
+});

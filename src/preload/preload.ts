@@ -1,8 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AgentTaskRequest,
+  AgentTaskRestartMode,
   AgentRouteDiagnostics,
   AgentSnapshotRestoreResult,
+  ChatContext,
   ClaudeManagedEditPermissions,
+  GeneratedImageHistoryItem,
+  ImageGenerationRequest,
+  ImageGenerationResult,
+  ImageHistoryMutationResult,
+  ImageSaveResult,
   ManagedWriteRepairResult,
   ManagedWriteVerificationReport
 } from "../shared/types";
@@ -10,6 +18,7 @@ import type {
 const api = {
   app: {
     workspacePath: () => ipcRenderer.invoke("app:workspacePath"),
+    info: (): Promise<{ name: string; version: string }> => ipcRenderer.invoke("app:getInfo"),
     newWindow: () => ipcRenderer.invoke("app:newWindow"),
     openExternal: (targetUrl: string) => ipcRenderer.invoke("app:openExternal", targetUrl),
     openPreview: (targetPath: string, preferredUrl?: string) => ipcRenderer.invoke("app:openPreview", targetPath, preferredUrl),
@@ -18,13 +27,14 @@ const api = {
   chat: {
     list: () => ipcRenderer.invoke("chat:list"),
     get: (id: string) => ipcRenderer.invoke("chat:get", id),
-    create: () => ipcRenderer.invoke("chat:create"),
+    create: (context?: ChatContext) => ipcRenderer.invoke("chat:create", context),
     delete: (id: string) => ipcRenderer.invoke("chat:delete", id),
     rename: (id: string, title: string) => ipcRenderer.invoke("chat:rename", id, title),
     export: (id: string) => ipcRenderer.invoke("chat:export", id),
     import: () => ipcRenderer.invoke("chat:import"),
     appendMessage: (chatId: string, message: unknown) => ipcRenderer.invoke("chat:appendMessage", chatId, message),
     updateMessage: (chatId: string, messageId: string, patch: unknown) => ipcRenderer.invoke("chat:updateMessage", chatId, messageId, patch),
+    setContext: (id: string, context: ChatContext) => ipcRenderer.invoke("chat:setContext", id, context),
     setSystemPrompt: (id: string, systemPrompt: string) => ipcRenderer.invoke("chat:setSystemPrompt", id, systemPrompt),
     summarize: (messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) => ipcRenderer.invoke("chat:summarize", messages),
     generateTitle: (chatId: string, firstUserMessage: string) => ipcRenderer.invoke("chat:generateTitle", chatId, firstUserMessage),
@@ -36,6 +46,7 @@ const api = {
       options?: {
         attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string; sourcePath?: string }>;
         compareModel?: string;
+        context?: ChatContext;
         enabledTools?: string[];
       }
     ) => ipcRenderer.invoke("chat:send", chatId, content, model, options),
@@ -55,6 +66,13 @@ const api = {
     onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => {
       ipcRenderer.on("chat:storeChanged", (_e, payload) => cb(payload));
     }
+  },
+  images: {
+    generate: (request: ImageGenerationRequest): Promise<ImageGenerationResult> => ipcRenderer.invoke("images:generate", request),
+    listHistory: (): Promise<GeneratedImageHistoryItem[]> => ipcRenderer.invoke("images:listHistory"),
+    save: (dataUrl: string, suggestedName?: string, historyId?: string): Promise<ImageSaveResult> =>
+      ipcRenderer.invoke("images:save", dataUrl, suggestedName, historyId),
+    deleteHistory: (historyId: string): Promise<ImageHistoryMutationResult> => ipcRenderer.invoke("images:deleteHistory", historyId)
   },
   attachments: {
     pick: () => ipcRenderer.invoke("attachments:pick"),
@@ -85,10 +103,19 @@ const api = {
         options?: {
           attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string; sourcePath?: string }>;
           enabledTools?: string[];
+          includeFullTextAttachments?: boolean;
         }
       ) => ipcRenderer.invoke("claude:send", prompt, options),
-      applyEdits: (edits: Array<{ path: string; content: string }>, permissions: ClaudeManagedEditPermissions) =>
-        ipcRenderer.invoke("claude:applyEdits", edits, permissions),
+      inspectEdits: (
+        edits: Array<{ path: string; content: string }>,
+        permissions: ClaudeManagedEditPermissions,
+        baselineContents?: Array<{ path: string; content: string }>
+      ) => ipcRenderer.invoke("claude:inspectEdits", edits, permissions, baselineContents),
+      applyEdits: (
+        edits: Array<{ path: string; content: string }>,
+        permissions: ClaudeManagedEditPermissions,
+        baselineContents?: Array<{ path: string; content: string }>
+      ) => ipcRenderer.invoke("claude:applyEdits", edits, permissions, baselineContents),
       verifyManagedEdits: (edits: Array<{ path: string; content: string }>): Promise<ManagedWriteVerificationReport> =>
         ipcRenderer.invoke("claude:verifyManagedEdits", edits),
       repairManagedEdits: (
@@ -111,7 +138,8 @@ const api = {
     getTask: (taskId: string) => ipcRenderer.invoke("agent:getTask", taskId),
     getLogs: (taskId: string) => ipcRenderer.invoke("agent:getLogs", taskId),
     getRouteDiagnostics: (taskId?: string): Promise<AgentRouteDiagnostics> => ipcRenderer.invoke("agent:getRouteDiagnostics", taskId),
-    startTask: (prompt: string) => ipcRenderer.invoke("agent:startTask", prompt),
+    startTask: (request: string | AgentTaskRequest) => ipcRenderer.invoke("agent:startTask", request),
+    restartTask: (taskId: string, mode: AgentTaskRestartMode) => ipcRenderer.invoke("agent:restartTask", taskId, mode),
     stopTask: (taskId: string) => ipcRenderer.invoke("agent:stopTask", taskId),
     listSnapshots: () => ipcRenderer.invoke("agent:listSnapshots"),
     getRestoreState: (): Promise<AgentSnapshotRestoreResult | null> => ipcRenderer.invoke("agent:getRestoreState"),

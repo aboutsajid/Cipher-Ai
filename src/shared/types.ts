@@ -9,8 +9,19 @@ export interface Message {
     attachmentNames?: string[];
     compareGroup?: string;
     compareSlot?: "A" | "B";
+    generatedImageAssetIds?: string[];
   };
 }
+
+export type ChatProvider = "openrouter" | "nvidia" | "ollama" | "claude";
+
+export interface ChatContext {
+  provider: ChatProvider;
+  selectedModel?: string;
+  compareModel?: string;
+  compareEnabled?: boolean;
+}
+
 export interface Chat {
   id: string;
   title: string;
@@ -18,6 +29,7 @@ export interface Chat {
   updatedAt: string;
   messages: Message[];
   systemPrompt?: string;
+  context?: ChatContext;
 }
 
 export interface ChatSummary {
@@ -31,6 +43,8 @@ export interface ChatSummary {
 export interface Settings {
   apiKey: string;
   baseUrl: string;
+  cloudProvider?: "openrouter" | "nvidia";
+  imageProvider?: ImageProvider;
   defaultModel: string;
   routerPort: number;
   models: string[];
@@ -38,6 +52,7 @@ export interface Settings {
   ollamaEnabled: boolean;
   ollamaBaseUrl: string;
   ollamaModels: string[];
+  comfyuiBaseUrl?: string;
   localVoiceEnabled: boolean;
   localVoiceModel: string;
   mcpServers: McpServerConfig[];
@@ -66,6 +81,71 @@ export interface AttachmentPayload {
   mimeType?: string;
   sourcePath?: string;
   writableRoot?: string;
+}
+
+export type ImageGenerationAspectRatio =
+  | "1:1"
+  | "1:2"
+  | "2:1"
+  | "2:3"
+  | "3:2"
+  | "3:4"
+  | "4:3"
+  | "4:5"
+  | "5:4"
+  | "9:16"
+  | "16:9"
+  | "21:9";
+
+export interface GeneratedImageAsset {
+  id?: string;
+  dataUrl: string;
+  mimeType: string;
+}
+
+export type ImageProvider = "openrouter" | "nvidia" | "comfyui";
+
+export interface ImageGenerationRequest {
+  prompt: string;
+  provider?: ImageProvider;
+  model?: string;
+  aspectRatio?: ImageGenerationAspectRatio;
+}
+
+export interface ImageGenerationResult {
+  provider: ImageProvider;
+  model: string;
+  prompt: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  text: string;
+  images: GeneratedImageAsset[];
+}
+
+export interface ImageSaveResult {
+  ok: boolean;
+  message: string;
+  path?: string;
+}
+
+export interface GeneratedImageHistoryItem {
+  id: string;
+  generationId: string;
+  prompt: string;
+  model: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  text: string;
+  mimeType: string;
+  dataUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  saveCount: number;
+  lastSavedAt?: string;
+  lastSavedPath?: string;
+}
+
+export interface ImageHistoryMutationResult {
+  ok: boolean;
+  message: string;
 }
 
 export interface RouterStatus {
@@ -123,6 +203,7 @@ export interface ManagedWriteRepairResult {
 }
 
 export type AgentTaskStatus = "running" | "completed" | "failed" | "stopped";
+export type AgentTaskRestartMode = "retry" | "retry-clean" | "continue-fix";
 export type AgentArtifactType = "web-app" | "api-service" | "script-tool" | "library" | "desktop-app" | "workspace-change" | "unknown";
 export type AgentVerificationStatus = "passed" | "failed" | "skipped";
 export type AgentOutputPrimaryAction =
@@ -158,6 +239,23 @@ export interface AgentVerificationReport {
   summary: string;
   checks: AgentVerificationCheck[];
   previewReady: boolean;
+}
+
+export interface AgentExecutionSpecScriptGroup {
+  label: string;
+  options: string[];
+}
+
+export interface AgentExecutionSpec {
+  summary: string;
+  starterProfile: string;
+  domainFocus?: string;
+  deliverables: string[];
+  acceptanceCriteria: string[];
+  qualityGates: string[];
+  requiredFiles: string[];
+  requiredScriptGroups: AgentExecutionSpecScriptGroup[];
+  expectsReadme: boolean;
 }
 
 export type AgentTaskModelAttemptOutcome = "success" | "transient-error" | "error" | "semantic-error";
@@ -196,6 +294,7 @@ export interface AgentTaskTelemetry {
   finalVerificationResult?: AgentTaskFinalVerificationResult;
   verificationSummary?: string;
   lastStage?: string;
+  failureMemoryHints?: string[];
   routeDiagnostics?: AgentTaskRouteTelemetrySummary;
   modelAttempts: AgentTaskModelAttempt[];
 }
@@ -206,6 +305,7 @@ export interface AgentModelRouteDiagnostics {
   baseUrl: string;
   provider: "local" | "remote";
   score: number;
+  scoreFactors: AgentModelRouteScoreFactor[];
   successes: number;
   failures: number;
   transientFailures: number;
@@ -213,9 +313,17 @@ export interface AgentModelRouteDiagnostics {
   lastUsedAt?: string;
 }
 
+export interface AgentModelRouteScoreFactor {
+  label: string;
+  delta: number;
+}
+
 export interface AgentTaskRouteFailureCount {
   model: string;
   count: number;
+  blacklisted: boolean;
+  hardFailuresUntilBlacklist: number;
+  transientFailuresUntilBlacklist: number;
 }
 
 export interface AgentTaskStageRouteDiagnostics {
@@ -225,24 +333,40 @@ export interface AgentTaskStageRouteDiagnostics {
   provider: "local" | "remote";
   routeIndex: number;
   attempt: number;
+  score: number;
+  scoreFactors: AgentModelRouteScoreFactor[];
+  failureCount: number;
+  blacklisted: boolean;
+  hardFailuresUntilBlacklist: number;
+  transientFailuresUntilBlacklist: number;
+  visionRequested: boolean;
+  visionCapable: boolean;
+  selectionReason: string;
 }
 
 export interface AgentTaskRouteDiagnostics {
   taskId: string;
   blacklistedModels: string[];
   failureCounts: AgentTaskRouteFailureCount[];
+  visionRequested: boolean;
   activeStageRoutes: AgentTaskStageRouteDiagnostics[];
 }
 
 export interface AgentTaskRouteTelemetrySummary {
   blacklistedModels: string[];
   failureCounts: AgentTaskRouteFailureCount[];
+  visionRequested: boolean;
   activeStageRoutes: AgentTaskStageRouteDiagnostics[];
 }
 
 export interface AgentRouteDiagnostics {
   routes: AgentModelRouteDiagnostics[];
   task?: AgentTaskRouteDiagnostics;
+}
+
+export interface AgentTaskRequest {
+  prompt: string;
+  attachments?: AttachmentPayload[];
 }
 
 export interface AgentTaskOutput {
@@ -257,6 +381,7 @@ export interface AgentTaskOutput {
 export interface AgentTask {
   id: string;
   prompt: string;
+  attachments?: AttachmentPayload[];
   status: AgentTaskStatus;
   createdAt: string;
   updatedAt: string;
@@ -268,6 +393,7 @@ export interface AgentTask {
   artifactType?: AgentArtifactType;
   output?: AgentTaskOutput;
   verification?: AgentVerificationReport;
+  executionSpec?: AgentExecutionSpec;
   telemetry?: AgentTaskTelemetry;
 }
 
@@ -334,6 +460,7 @@ export interface WorkspaceFileSearchResult {
 
 export type IpcChannel =
   | "app:workspacePath"
+  | "app:getInfo"
   | "app:newWindow"
   | "app:openExternal"
   | "app:openPreview"
@@ -347,6 +474,7 @@ export type IpcChannel =
   | "chat:import"
   | "chat:appendMessage"
   | "chat:updateMessage"
+  | "chat:setContext"
   | "chat:setSystemPrompt"
   | "chat:summarize"
   | "chat:generateTitle"
@@ -354,6 +482,10 @@ export type IpcChannel =
   | "chat:send"
   | "chat:stop"
   | "stats:get"
+  | "images:generate"
+  | "images:listHistory"
+  | "images:save"
+  | "images:deleteHistory"
   | "settings:get"
   | "settings:save"
   | "attachments:pick"
@@ -372,6 +504,7 @@ export type IpcChannel =
   | "claude:status"
   | "claude:start"
   | "claude:send"
+  | "claude:inspectEdits"
   | "claude:applyEdits"
   | "claude:verifyManagedEdits"
   | "claude:repairManagedEdits"
@@ -380,6 +513,7 @@ export type IpcChannel =
   | "agent:getTask"
   | "agent:getLogs"
   | "agent:startTask"
+  | "agent:restartTask"
   | "agent:stopTask"
   | "agent:listSnapshots"
   | "agent:getRouteDiagnostics"
