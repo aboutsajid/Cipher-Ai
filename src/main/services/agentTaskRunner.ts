@@ -4,10 +4,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import type { CcrService } from "./ccrService";
 import type { SettingsStore } from "./settingsStore";
 import type {
+  AttachmentPayload,
+  AgentExecutionSpec,
   AgentArtifactType,
+  AgentModelRouteScoreFactor,
+  AgentRouteDiagnostics,
+  AgentTaskRestartMode,
   AgentTaskFinalVerificationResult,
   AgentTaskFailureCategory,
   AgentTaskModelAttempt,
@@ -27,6 +33,14 @@ import type {
   WorkspaceFileReadResult,
   WorkspaceFileSearchResult
 } from "../../shared/types";
+import { normalizeAttachments } from "../attachmentSupport";
+import { buildAttachmentAwarePromptMessages, type ChatHistoryEntry } from "../chatSendSupport";
+import {
+  buildStagePreferredCloudModelList,
+  getDefaultBaseUrlForCloudProvider,
+  getModelCapabilityHints,
+  inferCloudProvider
+} from "../../shared/modelCatalog";
 
 const MAX_LOG_LINES = 400;
 const MAX_MODEL_ATTEMPTS = 60;
@@ -38,11 +52,26 @@ const MAX_CONTEXT_FILES = 8;
 const STARTUP_VERIFY_MS = 12_000;
 const AGENT_MODEL_REQUEST_TIMEOUT_MS = 120_000;
 const AGENT_MODEL_TRANSIENT_RETRY_LIMIT = 2;
+const AGENT_MODEL_BLACKLIST_THRESHOLD = 2;
+const AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD = 3;
+const MAX_FAILURE_MEMORY_ENTRIES = 48;
+const MAX_UNREFERENCED_AUTO_SNAPSHOTS = 24;
 const TEXT_FILE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".txt", ".html", ".css", ".scss", ".mjs", ".cjs", ".yml", ".yaml"
 ]);
-const IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "release", "release-stage", "build", "coverage", ".next", ".cache", "tmp", ".cipher-snapshots"]);
-const SNAPSHOT_PRESERVE_FOLDERS = new Set([".git", "node_modules", ".cipher-snapshots"]);
+// Preserve local runtime assets like model checkpoints instead of copying them into rollback snapshots.
+const IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "release", "release-stage", "release-package", "build", "coverage", ".next", ".cache", "tmp", ".cipher-snapshots", "models"]);
+const SNAPSHOT_PRESERVE_FOLDERS = new Set([".git", "node_modules", ".cipher-snapshots", "models", "release-package"]);
+
+function isIgnoredWorkspaceFolder(name: string): boolean {
+  const normalized = (name ?? "").trim().toLowerCase();
+  return IGNORED_FOLDERS.has(name) || normalized.startsWith("release-package-");
+}
+
+function isSnapshotPreserveFolder(name: string): boolean {
+  const normalized = (name ?? "").trim().toLowerCase();
+  return SNAPSHOT_PRESERVE_FOLDERS.has(name) || normalized.startsWith("release-package-");
+}
 
 interface PackageScripts {
   build?: string;
@@ -56,7 +85,11 @@ interface PackageScripts {
 interface PackageManifest {
   name?: string;
   description?: string;
+  private?: boolean;
+  version?: string;
+  type?: string;
   main?: string;
+  exports?: string | Record<string, string>;
   scripts?: PackageScripts;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -115,6 +148,63 @@ interface BrowserSmokeResult {
   details: string;
 }
 
+interface StartupVerificationProbe {
+  label: string;
+  run: (result: TerminalCommandResult) => Promise<StartupProbeResult>;
+}
+
+type StarterProfile =
+  | "react-web-app"
+  | "react-dashboard"
+  | "react-crud"
+  | "react-kanban"
+  | "react-notes"
+  | "static-marketing"
+  | "electron-desktop"
+  | "node-api-service"
+  | "node-cli"
+  | "node-library"
+  | "workspace-change";
+
+type DomainFocus =
+  | "operations"
+  | "crm"
+  | "inventory"
+  | "scheduling"
+  | "finance"
+  | "admin"
+  | "generic";
+
+interface TaskExecutionSpecScriptGroup {
+  label: string;
+  options: string[];
+}
+
+interface TaskExecutionSpec extends AgentExecutionSpec {
+  summary: string;
+  starterProfile: StarterProfile;
+  domainFocus: DomainFocus;
+  deliverables: string[];
+  acceptanceCriteria: string[];
+  qualityGates: string[];
+  requiredFiles: string[];
+  requiredScriptGroups: TaskExecutionSpecScriptGroup[];
+  expectsReadme: boolean;
+}
+
+interface TaskRepositoryContext {
+  summary: string;
+  workspaceShape: "single-package" | "monorepo" | "static-site" | "unknown";
+  packageManager: "npm" | "pnpm" | "yarn" | "unknown";
+  languageStyle: "typescript" | "javascript" | "mixed" | "unknown";
+  moduleFormat: "esm" | "commonjs" | "mixed" | "unknown";
+  uiFramework: "react" | "nextjs" | "none" | "unknown";
+  styling: "css" | "tailwind" | "mixed" | "unknown";
+  testing: "vitest" | "jest" | "node:test" | "none" | "unknown";
+  linting: "eslint" | "biome" | "none" | "unknown";
+  conventions: string[];
+}
+
 interface TaskExecutionPlan {
   summary: string;
   candidateFiles: string[];
@@ -122,7 +212,9 @@ interface TaskExecutionPlan {
   promptTerms: string[];
   workingDirectory: string;
   workspaceManifest: string[];
+  repositoryContext: TaskRepositoryContext;
   workItems: TaskWorkItem[];
+  spec: TaskExecutionSpec;
   promptRequirements: PromptRequirement[];
   workspaceKind: "static" | "react" | "generic";
   builderMode: "notes" | "landing" | "dashboard" | "crud" | "kanban" | null;
@@ -153,6 +245,8 @@ interface BootstrapPlan {
   targetDirectory: string;
   template: "react-vite" | "nextjs" | "static" | "node-package";
   artifactType?: AgentArtifactType;
+  starterProfile: StarterProfile;
+  domainFocus: DomainFocus;
   projectName: string;
   summary: string;
   commands: TerminalCommandRequest[];
@@ -166,10 +260,29 @@ interface ModelRouteStats {
   lastUsedAt?: string;
 }
 
+interface FailureMemoryEntry {
+  key: string;
+  artifactType: AgentArtifactType | "unknown";
+  category: AgentTaskFailureCategory;
+  stage: string;
+  signature: string;
+  guidance: string;
+  example: string;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
 interface TaskStageRouteState {
   route: ModelRoute;
   routeIndex: number;
   attempt: number;
+}
+
+interface StoredSnapshotEntry {
+  directoryName: string;
+  directoryPath: string;
+  snapshot: WorkspaceSnapshot | null;
 }
 
 type AgentRoutingStage = "planner" | "generator" | "repair";
@@ -184,6 +297,7 @@ export class AgentTaskRunner {
   private readonly taskLogs = new Map<string, string[]>();
   private readonly activeProcesses = new Map<string, ChildProcessWithoutNullStreams>();
   private readonly modelRouteStats = new Map<string, ModelRouteStats>();
+  private readonly failureMemory = new Map<string, FailureMemoryEntry>();
   private readonly taskModelFailureCounts = new Map<string, Map<string, number>>();
   private readonly taskModelBlacklist = new Map<string, Set<string>>();
   private readonly taskStageRoutes = new Map<string, Map<string, TaskStageRouteState>>();
@@ -227,6 +341,12 @@ export class AgentTaskRunner {
     return code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY";
   }
 
+  private isNoSpaceLeftError(error: unknown): boolean {
+    const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return code === "ENOSPC" || /\bENOSPC\b|no space left on device/i.test(message);
+  }
+
   private async withWorkspaceFsRetry<T>(operation: () => Promise<T>, attempts = 4, delayMs = 150): Promise<T> {
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -267,6 +387,11 @@ export class AgentTaskRunner {
             baseUrl,
             skipAuth: provider === "local"
           }),
+          scoreFactors: this.buildModelRouteScoreFactors({
+            model,
+            baseUrl,
+            skipAuth: provider === "local"
+          }),
           successes: stats.successes,
           failures: stats.failures,
           transientFailures: stats.transientFailures,
@@ -283,29 +408,16 @@ export class AgentTaskRunner {
     if (!normalizedTaskId) {
       return { routes };
     }
-
-    const failureCounts = [...(this.taskModelFailureCounts.get(normalizedTaskId)?.entries() ?? [])]
-      .map(([model, count]) => ({ model, count }))
-      .sort((a, b) => b.count - a.count || a.model.localeCompare(b.model));
-    const blacklistedModels = [...(this.taskModelBlacklist.get(normalizedTaskId) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
-    const activeStageRoutes = [...(this.taskStageRoutes.get(normalizedTaskId)?.entries() ?? [])]
-      .map(([stage, state]) => ({
-        stage,
-        model: state.route.model,
-        baseUrl: state.route.baseUrl,
-        provider: state.route.skipAuth ? "local" as const : "remote" as const,
-        routeIndex: state.routeIndex,
-        attempt: state.attempt
-      }))
-      .sort((a, b) => a.stage.localeCompare(b.stage));
+    const taskSummary = this.buildTaskRouteTelemetrySummary(normalizedTaskId);
 
     return {
       routes,
       task: {
         taskId: normalizedTaskId,
-        blacklistedModels,
-        failureCounts,
-        activeStageRoutes
+        blacklistedModels: taskSummary.blacklistedModels,
+        failureCounts: taskSummary.failureCounts,
+        visionRequested: taskSummary.visionRequested,
+        activeStageRoutes: taskSummary.activeStageRoutes
       }
     };
   }
@@ -319,6 +431,7 @@ export class AgentTaskRunner {
         logs?: Record<string, string[]>;
         lastRestoreState?: AgentSnapshotRestoreResult | null;
         modelRouteStats?: Record<string, ModelRouteStats>;
+        failureMemory?: FailureMemoryEntry[];
       };
       let recoveredInterruptedTasks = false;
 
@@ -353,6 +466,22 @@ export class AgentTaskRunner {
           transientFailures: Math.max(0, Number(stats.transientFailures) || 0),
           semanticFailures: Math.max(0, Number(stats.semanticFailures) || 0),
           lastUsedAt: typeof stats.lastUsedAt === "string" ? stats.lastUsedAt : undefined
+        });
+      }
+
+      for (const entry of parsed.failureMemory ?? []) {
+        if (!entry?.key || !entry?.category || !entry?.stage || !entry?.guidance) continue;
+        this.failureMemory.set(entry.key, {
+          key: entry.key,
+          artifactType: entry.artifactType ?? "unknown",
+          category: entry.category,
+          stage: entry.stage,
+          signature: entry.signature ?? "general",
+          guidance: entry.guidance,
+          example: entry.example ?? "",
+          count: Math.max(1, Number(entry.count) || 1),
+          firstSeenAt: typeof entry.firstSeenAt === "string" ? entry.firstSeenAt : new Date().toISOString(),
+          lastSeenAt: typeof entry.lastSeenAt === "string" ? entry.lastSeenAt : new Date().toISOString()
         });
       }
 
@@ -394,7 +523,11 @@ export class AgentTaskRunner {
         tasks: [...this.tasks.values()].map((task) => this.cloneTask(task)),
         logs: Object.fromEntries([...this.taskLogs.entries()].map(([taskId, logs]) => [taskId, [...logs]])),
         lastRestoreState: this.lastRestoreState ? { ...this.lastRestoreState } : null,
-        modelRouteStats: Object.fromEntries([...this.modelRouteStats.entries()].map(([key, value]) => [key, { ...value }]))
+        modelRouteStats: Object.fromEntries([...this.modelRouteStats.entries()].map(([key, value]) => [key, { ...value }])),
+        failureMemory: [...this.failureMemory.values()]
+          .sort((a, b) => b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt))
+          .slice(0, MAX_FAILURE_MEMORY_ENTRIES)
+          .map((entry) => ({ ...entry }))
       };
       writeFileSync(this.taskStatePath, JSON.stringify(payload, null, 2), "utf8");
     } catch {
@@ -449,6 +582,96 @@ export class AgentTaskRunner {
     }
   }
 
+  private collectReferencedSnapshotIds(): Set<string> {
+    const referencedIds = new Set<string>();
+
+    for (const task of this.tasks.values()) {
+      const rollbackSnapshotId = (task.rollbackSnapshotId ?? "").trim();
+      const completionSnapshotId = (task.completionSnapshotId ?? "").trim();
+      if (rollbackSnapshotId) referencedIds.add(rollbackSnapshotId);
+      if (completionSnapshotId) referencedIds.add(completionSnapshotId);
+    }
+
+    const restoredSnapshotId = (this.lastRestoreState?.snapshotId ?? "").trim();
+    if (restoredSnapshotId) referencedIds.add(restoredSnapshotId);
+
+    return referencedIds;
+  }
+
+  private async listStoredSnapshotEntries(): Promise<StoredSnapshotEntry[]> {
+    try {
+      const entries = await readdir(this.snapshotRoot, { withFileTypes: true });
+      const snapshots: StoredSnapshotEntry[] = [];
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        const directoryPath = join(this.snapshotRoot, entry.name);
+        const metaPath = join(directoryPath, "meta.json");
+        let snapshot: WorkspaceSnapshot | null = null;
+
+        try {
+          const raw = await readFile(metaPath, "utf8");
+          const parsed = JSON.parse(raw) as WorkspaceSnapshot;
+          if (parsed?.id) {
+            snapshot = parsed;
+          }
+        } catch {
+          snapshot = null;
+        }
+
+        snapshots.push({
+          directoryName: entry.name,
+          directoryPath,
+          snapshot
+        });
+      }
+
+      return snapshots;
+    } catch {
+      return [];
+    }
+  }
+
+  private async removeSnapshotDirectory(directoryPath: string): Promise<void> {
+    await this.withWorkspaceFsRetry(
+      () => rm(directoryPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
+    );
+  }
+
+  private async pruneStoredSnapshots(options?: { aggressive?: boolean }): Promise<number> {
+    const referencedIds = this.collectReferencedSnapshotIds();
+    const entries = await this.listStoredSnapshotEntries();
+    const keepUnreferenced = options?.aggressive ? 4 : MAX_UNREFERENCED_AUTO_SNAPSHOTS;
+    let removed = 0;
+
+    const invalidEntries = entries.filter((entry) => !entry.snapshot);
+    for (const entry of invalidEntries) {
+      await this.removeSnapshotDirectory(entry.directoryPath);
+      removed += 1;
+    }
+
+    const autoUnreferenced = entries
+      .filter((entry) => {
+        const snapshot = entry.snapshot;
+        if (!snapshot?.id) return false;
+        if (referencedIds.has(snapshot.id)) return false;
+        return snapshot.kind !== "manual";
+      })
+      .sort((a, b) => {
+        const left = a.snapshot?.createdAt ?? "";
+        const right = b.snapshot?.createdAt ?? "";
+        return right.localeCompare(left);
+      });
+
+    for (const entry of autoUnreferenced.slice(keepUnreferenced)) {
+      await this.removeSnapshotDirectory(entry.directoryPath);
+      removed += 1;
+    }
+
+    return removed;
+  }
+
   async restoreSnapshot(snapshotId: string): Promise<AgentSnapshotRestoreResult> {
     const normalizedId = (snapshotId ?? "").trim();
     if (!normalizedId) return { ok: false, message: "Snapshot ID is required." };
@@ -494,7 +717,7 @@ export class AgentTaskRunner {
       } else {
         const rootEntries = await readdir(this.workspaceRoot, { withFileTypes: true });
         for (const entry of rootEntries) {
-          if (SNAPSHOT_PRESERVE_FOLDERS.has(entry.name) || IGNORED_FOLDERS.has(entry.name)) continue;
+          if (isSnapshotPreserveFolder(entry.name) || isIgnoredWorkspaceFolder(entry.name)) continue;
           try {
             await this.withWorkspaceFsRetry(
               () => rm(join(this.workspaceRoot, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
@@ -540,20 +763,17 @@ export class AgentTaskRunner {
     return result;
   }
 
-  async startTask(prompt: string): Promise<AgentTask> {
-    if (this.activeTaskId) {
-      const active = this.tasks.get(this.activeTaskId);
-      if (active && active.status === "running") {
-        throw new Error("Another agent task is already running.");
-      }
-    }
+  async startTask(prompt: string, attachments: AttachmentPayload[] = []): Promise<AgentTask> {
+    this.ensureNoRunningTask();
 
     const taskId = `agent_${randomUUID()}`;
     const now = new Date().toISOString();
+    const normalizedAttachments = normalizeAttachments(attachments);
     const initialArtifactType = this.classifyArtifactType((prompt ?? "").trim());
     const task: AgentTask = {
       id: taskId,
       prompt: (prompt ?? "").trim(),
+      attachments: normalizedAttachments,
       status: "running",
       createdAt: now,
       updatedAt: now,
@@ -561,6 +781,7 @@ export class AgentTaskRunner {
       steps: [],
       artifactType: initialArtifactType,
       output: this.buildTaskOutput(initialArtifactType, undefined, (prompt ?? "").trim()),
+      executionSpec: undefined,
       telemetry: {
         fallbackUsed: false,
         modelAttempts: []
@@ -581,10 +802,42 @@ export class AgentTaskRunner {
     this.activeTaskId = taskId;
     this.lastRestoreState = null;
     this.appendLog(taskId, `Agent task started. Rollback snapshot: ${snapshot.id}`);
+    if (normalizedAttachments.length > 0) {
+      this.appendLog(taskId, `Task attachments: ${normalizedAttachments.map((attachment) => attachment.name).join(", ")}`);
+    }
     this.persistTaskState();
 
     void this.runTask(taskId);
     return this.cloneTask(task);
+  }
+
+  async restartTask(taskId: string, mode: AgentTaskRestartMode): Promise<AgentTask> {
+    const normalizedTaskId = (taskId ?? "").trim();
+    const task = this.tasks.get(normalizedTaskId);
+    if (!task) {
+      throw new Error("Agent task not found.");
+    }
+    if (task.status === "running") {
+      throw new Error("Cannot restart a running task. Stop it first.");
+    }
+
+    this.ensureNoRunningTask();
+
+    if (mode === "retry-clean") {
+      const rollbackSnapshotId = (task.rollbackSnapshotId ?? "").trim();
+      if (!rollbackSnapshotId) {
+        throw new Error("Rollback snapshot is not available for a clean retry.");
+      }
+      const restored = await this.restoreSnapshot(rollbackSnapshotId);
+      if (!restored.ok) {
+        throw new Error(restored.message || "Clean retry could not restore the rollback snapshot.");
+      }
+    }
+
+    const nextPrompt = this.buildRestartPrompt(task, mode);
+    const restarted = await this.startTask(nextPrompt, task.attachments ?? []);
+    this.appendLog(restarted.id, `Restarted from ${task.id} using ${this.describeRestartMode(mode)}.`);
+    return restarted;
   }
 
   async stopTask(taskId: string): Promise<boolean> {
@@ -740,7 +993,7 @@ export class AgentTaskRunner {
       }
 
       const plan = await this.runStep(task, "Plan task execution", async () => {
-        const executionPlan = await this.buildExecutionPlan(task.prompt, workingDirectory);
+        const executionPlan = await this.buildExecutionPlan(task.prompt, workingDirectory, task.attachments ?? []);
         const packageManifest = await this.tryReadPackageJson(executionPlan.workingDirectory);
         const scripts = this.resolveVerificationScripts(packageManifest, executionPlan);
         task.artifactType = this.classifyArtifactType(task.prompt, executionPlan, undefined, packageManifest ?? inspection.packageManifest);
@@ -749,8 +1002,10 @@ export class AgentTaskRunner {
           scripts,
           workingDirectory: executionPlan.workingDirectory
         }, task.prompt);
+        task.executionSpec = this.cloneExecutionSpec(executionPlan.spec);
         this.appendLog(task.id, `Planned files: ${executionPlan.candidateFiles.join(", ") || "(none)"}`);
         this.appendLog(task.id, `Planned work items: ${executionPlan.workItems.map((item) => item.title).join(", ") || "(none)"}`);
+        this.appendLog(task.id, `Execution spec: ${executionPlan.spec.summary}`);
         return {
           summary: executionPlan.summary,
           plan: executionPlan
@@ -957,6 +1212,16 @@ export class AgentTaskRunner {
               throw new Error(servedPage.details || "Served web page verification failed.");
             }
           }
+          if (this.shouldVerifyRuntimeDepth(verificationArtifactType)) {
+            const runtimeDepth = await this.verifyRuntimeDepth(plan.plan, verificationArtifactType, scripts, runtimeScript, launch);
+            if (runtimeDepth) {
+              checks.push(runtimeDepth);
+              this.updateTaskVerification(task, checks);
+              if (runtimeDepth.status === "failed") {
+                throw new Error(runtimeDepth.details || "Runtime depth verification failed.");
+              }
+            }
+          }
         } else if (this.shouldVerifyLaunch(verificationArtifactType)) {
           this.appendLog(task.id, `No ${runtimeLabel.toLowerCase()} script found.`);
           checks.push({
@@ -1009,116 +1274,42 @@ export class AgentTaskRunner {
           }
         }
 
+        const specChecks = await this.verifyExecutionSpec(plan.plan, verificationArtifactType, scripts);
+        checks.push(...specChecks);
+        this.updateTaskVerification(task, checks);
+        if (specChecks.some((check) => check.status === "failed")) {
+          const repaired = await this.tryAutoFixExecutionSpec(task, plan.plan, verificationArtifactType, specChecks);
+          if (repaired) {
+            await this.rerunVerificationAfterContentRepair(task, plan.plan, checks, verificationArtifactType, {
+              buildLabel,
+              lintLabel,
+              testLabel,
+              runtimeLabel
+            });
+            checks = checks.filter((check) => check.id !== "spec-deliverables" && check.id !== "spec-hygiene");
+            const rerunSpecChecks = await this.verifyExecutionSpec(plan.plan, verificationArtifactType, this.resolveVerificationScripts(await this.tryReadPackageJson(plan.plan.workingDirectory), plan.plan));
+            checks.push(...rerunSpecChecks);
+            this.updateTaskVerification(task, checks);
+            if (rerunSpecChecks.some((check) => check.status === "failed")) {
+              throw new Error(rerunSpecChecks.find((check) => check.status === "failed")?.details || "Execution spec verification failed after repair.");
+            }
+          } else {
+            throw new Error(specChecks.find((check) => check.status === "failed")?.details || "Execution spec verification failed.");
+          }
+        }
+
         let requirementChecks = await this.verifyPromptRequirements(plan.plan);
         checks.push(...requirementChecks);
         this.updateTaskVerification(task, checks);
         if (requirementChecks.some((check) => check.status === "failed")) {
           const repaired = await this.tryAutoFixPromptRequirements(task, plan.plan, requirementChecks);
           if (repaired) {
-            if (scripts.build) {
-              const build = await this.executeCommand(task.id, this.buildNpmScriptRequest("build", 120_000, plan.plan.workingDirectory));
-              this.upsertVerificationCheck(checks, {
-                id: "build",
-                label: buildLabel,
-                status: build.ok ? "passed" : "failed",
-                details: build.ok ? `${buildLabel} completed successfully after requirement repair.` : `${buildLabel} failed after requirement repair.`
-              });
-              if (!build.ok) {
-                this.updateTaskVerification(task, checks);
-                throw new Error(this.buildCommandFailureMessage(buildLabel, build, "failed after prompt-repair attempt"));
-              }
-            }
-
-            if (scripts.lint) {
-              const lint = await this.executeCommand(task.id, this.buildNpmScriptRequest("lint", 120_000, plan.plan.workingDirectory));
-              this.upsertVerificationCheck(checks, {
-                id: "lint",
-                label: lintLabel,
-                status: lint.ok ? "passed" : "failed",
-                details: lint.ok ? `${lintLabel} completed successfully after requirement repair.` : `${lintLabel} failed after requirement repair.`
-              });
-              if (!lint.ok) {
-                this.updateTaskVerification(task, checks);
-                throw new Error(this.buildCommandFailureMessage(lintLabel, lint, "failed after prompt-repair attempt"));
-              }
-            }
-
-            if (scripts.test && !/no test specified/i.test(scripts.test)) {
-              const test = await this.executeCommand(task.id, this.buildNpmScriptRequest("test", 120_000, plan.plan.workingDirectory));
-              this.upsertVerificationCheck(checks, {
-                id: "test",
-                label: testLabel,
-                status: test.ok ? "passed" : "failed",
-                details: test.ok ? `${testLabel} completed successfully after requirement repair.` : `${testLabel} failed after requirement repair.`
-              });
-              if (!test.ok) {
-                this.updateTaskVerification(task, checks);
-                throw new Error(this.buildCommandFailureMessage(testLabel, test, "failed after prompt-repair attempt"));
-              }
-            }
-
-            if (runtimeScript && this.shouldVerifyLaunch(verificationArtifactType)) {
-              const launch = await this.executeArtifactRuntimeVerification(task.id, runtimeScript, verificationArtifactType, plan.plan, scripts);
-              this.upsertVerificationCheck(checks, {
-                id: "launch",
-                label: runtimeLabel,
-                status: launch.ok ? "passed" : "failed",
-                details: launch.ok
-                  ? this.buildRuntimeVerificationAfterRepairDetails(verificationArtifactType, runtimeScript)
-                  : `${runtimeLabel} failed after requirement repair.`
-              });
-              if (!launch.ok) {
-                this.updateTaskVerification(task, checks);
-                throw new Error(this.buildCommandFailureMessage(runtimeLabel, launch, "failed after prompt-repair attempt"));
-              }
-              if (this.shouldVerifyServedWebPage(verificationArtifactType)) {
-                const servedPage = await this.verifyServedWebPage(plan.plan, scripts, runtimeScript, launch);
-                this.upsertVerificationCheck(checks, servedPage);
-                if (servedPage.status === "failed") {
-                  this.updateTaskVerification(task, checks);
-                  throw new Error(servedPage.details || "Served web page failed after prompt-repair attempt.");
-                }
-              }
-            }
-
-            if (this.shouldVerifyWindowsPackaging(verificationArtifactType, plan.plan)) {
-              const packaging = await this.verifyWindowsDesktopPackaging(task.id, plan.plan, scripts);
-              this.upsertVerificationCheck(checks, packaging);
-              if (packaging.status === "failed") {
-                this.updateTaskVerification(task, checks);
-                throw new Error(packaging.details || "Windows packaging failed after requirement repair.");
-              }
-            }
-
-            if (this.shouldVerifyPreviewHealth(verificationArtifactType)) {
-              let previewHealth = await this.verifyPreviewHealth(plan.plan, scripts);
-              if (previewHealth.status === "failed") {
-                const repaired = await this.tryAutoFixPreviewHealth(task, previewHealth, plan.plan, scripts, buildLabel);
-                if (repaired) {
-                  previewHealth = await this.verifyPreviewHealth(plan.plan, scripts);
-                }
-              }
-              this.upsertVerificationCheck(checks, previewHealth);
-              if (previewHealth.status === "failed") {
-                this.updateTaskVerification(task, checks);
-                throw new Error(previewHealth.details || "Preview health failed after prompt-repair attempt.");
-              }
-            }
-
-            if (this.shouldVerifyUiSmoke(verificationArtifactType)) {
-              let uiSmoke = await this.verifyBasicUiSmoke(plan.plan);
-              if (uiSmoke.status === "failed") {
-                const repaired = await this.tryAutoFixUiSmoke(task, uiSmoke, plan.plan, scripts, buildLabel, lintLabel, testLabel);
-                if (repaired) {
-                  uiSmoke = await this.verifyBasicUiSmoke(plan.plan);
-                }
-              }
-              this.upsertVerificationCheck(checks, uiSmoke);
-              if (uiSmoke.status === "failed") {
-                this.updateTaskVerification(task, checks);
-                throw new Error(uiSmoke.details || "Basic UI smoke failed after prompt-repair attempt.");
-              }
-            }
+            await this.rerunVerificationAfterContentRepair(task, plan.plan, checks, verificationArtifactType, {
+              buildLabel,
+              lintLabel,
+              testLabel,
+              runtimeLabel
+            });
 
             requirementChecks = await this.verifyPromptRequirements(plan.plan);
             checks = checks.filter((check) => !check.id.startsWith("req-") && check.id !== "requirements");
@@ -1137,16 +1328,28 @@ export class AgentTaskRunner {
           throw new Error(finalEntryCheck.details || "Required entry files are still missing.");
         }
 
+        const finalPackageJson = await this.tryReadPackageJson(plan.plan.workingDirectory);
+        const finalScripts = this.resolveVerificationScripts(finalPackageJson, plan.plan);
         const report = this.buildVerificationReport(checks, verificationArtifactType);
         task.verification = report;
-        task.artifactType = this.classifyArtifactType(task.prompt, plan.plan, report, packageJson ?? inspection.packageManifest);
+        task.artifactType = this.classifyArtifactType(task.prompt, plan.plan, report, finalPackageJson ?? packageJson ?? inspection.packageManifest);
         task.output = this.buildTaskOutput(task.artifactType, {
-          packageName: packageJson?.name,
-          scripts,
+          packageName: finalPackageJson?.name ?? packageJson?.name,
+          scripts: finalScripts,
           workingDirectory: plan.plan.workingDirectory,
           verification: report
         }, task.prompt);
         return { summary: `Verification finished: ${report.summary}.` };
+      });
+
+      await this.runStep(task, "Approve generated output", async () => {
+        const finalPackageJson = await this.tryReadPackageJson(plan.plan.workingDirectory);
+        const finalScripts = this.resolveVerificationScripts(finalPackageJson, plan.plan);
+        const approval = this.buildTaskApproval(plan.plan, task, finalPackageJson, finalScripts);
+        if (!approval.ok) {
+          throw new Error(approval.summary);
+        }
+        return { summary: approval.summary };
       });
 
       this.ensureVerificationRequired(task);
@@ -1199,11 +1402,78 @@ export class AgentTaskRunner {
     if (!verificationStep || verificationStep.status !== "completed") {
       throw new Error("Verification is required before completing an agent task.");
     }
+    const approvalStep = task.steps.find((step) => step.title === "Approve generated output");
+    if (!approvalStep || approvalStep.status !== "completed") {
+      throw new Error("Approval is required before completing an agent task.");
+    }
 
     const verification = task.verification;
     if (!verification || verification.checks.length === 0) {
       throw new Error("Verification report is required before completing an agent task.");
     }
+  }
+
+  private buildTaskApproval(
+    plan: TaskExecutionPlan,
+    task: AgentTask,
+    packageManifest: PackageManifest | null,
+    scripts: PackageScripts
+  ): { ok: boolean; summary: string } {
+    const verification = task.verification;
+    if (!verification || verification.checks.length === 0) {
+      return {
+        ok: false,
+        summary: "Approval failed: verification report is missing."
+      };
+    }
+
+    const failedChecks = verification.checks.filter((check) => check.status === "failed");
+    if (failedChecks.length > 0) {
+      return {
+        ok: false,
+        summary: `Approval failed: verification still has failing checks (${failedChecks.map((check) => check.label).join(", ")}).`
+      };
+    }
+
+    const requiresDesktopApproval = plan.spec.starterProfile === "electron-desktop" || task.artifactType === "desktop-app";
+    if (!requiresDesktopApproval) {
+      return {
+        ok: true,
+        summary: "Approval passed: verification checks are clear."
+      };
+    }
+
+    const findings: string[] = [];
+    if (task.artifactType !== "desktop-app") {
+      findings.push("artifact was not classified as a desktop app");
+    }
+    if (!packageManifest) {
+      findings.push("package.json is missing");
+    }
+    if (packageManifest && (!packageManifest.main || !packageManifest.main.trim())) {
+      findings.push("package.json is missing the Electron main entry");
+    }
+    if (!scripts.build) {
+      findings.push("build script is missing");
+    }
+    if (!scripts.start && !scripts.dev) {
+      findings.push("runtime launch script is missing");
+    }
+    if (typeof scripts["package:win"] !== "string" || !scripts["package:win"]?.trim()) {
+      findings.push("package:win script is missing");
+    }
+
+    if (findings.length > 0) {
+      return {
+        ok: false,
+        summary: `Approval failed for desktop output: ${findings.join("; ")}.`
+      };
+    }
+
+    return {
+      ok: true,
+      summary: "Approval passed for desktop output: verification cleared and packaging signals are present."
+    };
   }
 
   private buildCompletedTaskSummary(task: AgentTask): string {
@@ -1298,6 +1568,126 @@ export class AgentTaskRunner {
       await this.prepareGeneratedWorkspace(task.id, plan);
       return {
         summary: `${heuristic.summary} Repaired prompt mismatches. Files changed: ${applied.join(", ") || "none"}.`
+      };
+    });
+
+    return repair.summary.length > 0;
+  }
+
+  private ensureNoRunningTask(): void {
+    if (!this.activeTaskId) return;
+    const active = this.tasks.get(this.activeTaskId);
+    if (active && active.status === "running") {
+      throw new Error("Another agent task is already running.");
+    }
+  }
+
+  private buildRestartPrompt(task: AgentTask, mode: AgentTaskRestartMode): string {
+    const originalPrompt = (task.prompt ?? "").trim();
+    const targetPath = (task.targetPath ?? "").trim();
+    const targetHint = targetPath
+      ? `\n\nUse the same target path: ${targetPath}.`
+      : "";
+
+    if (mode === "retry") {
+      return `${originalPrompt}${targetHint}`.trim();
+    }
+
+    if (mode === "retry-clean") {
+      return `${originalPrompt}${targetHint}\n\nThis is a clean retry from the Before snapshot. Rebuild the task from a fresh pre-task workspace state.`.trim();
+    }
+
+    const failureSummary = (task.summary ?? "").trim();
+    const verificationFailures = (task.verification?.checks ?? [])
+      .filter((check) => check.status === "failed")
+      .slice(0, 4)
+      .map((check) => `${check.label}: ${check.details}`);
+
+    return [
+      targetPath
+        ? `Continue fixing the existing task output in ${targetPath}.`
+        : "Continue fixing the existing task output.",
+      `Original request:\n${originalPrompt}`,
+      failureSummary ? `Previous task result:\n${failureSummary}` : "",
+      verificationFailures.length > 0
+        ? `Verification failures to fix:\n- ${verificationFailures.join("\n- ")}`
+        : "",
+      "Reuse and repair the current files when possible. Keep scope focused on fixing the failed output and getting verification to pass."
+    ].filter(Boolean).join("\n\n");
+  }
+
+  private describeRestartMode(mode: AgentTaskRestartMode): string {
+    if (mode === "retry-clean") return "Retry Clean";
+    if (mode === "continue-fix") return "Continue Fix";
+    return "Retry";
+  }
+
+  private async tryAutoFixExecutionSpec(
+    task: AgentTask,
+    plan: TaskExecutionPlan,
+    artifactType: AgentArtifactType,
+    specChecks: AgentVerificationCheck[]
+  ): Promise<boolean> {
+    const failedChecks = specChecks.filter((check) => check.status === "failed");
+    if (failedChecks.length === 0) return false;
+
+    const failureOutput = failedChecks.map((check) => `${check.label}: ${check.details}`).join("\n");
+    const commandResult: TerminalCommandResult = {
+      ok: false,
+      code: 1,
+      signal: null,
+      stdout: "",
+      stderr: failureOutput,
+      combinedOutput: failureOutput,
+      durationMs: 0,
+      timedOut: false,
+      commandLine: "execution-spec-verification",
+      cwd: this.resolveWorkspacePath(plan.workingDirectory)
+    };
+
+    const repair = await this.runStep(task, "Fix execution brief mismatch", async () => {
+      const contextFiles = await this.collectFixContextFiles(failureOutput, plan);
+      if (contextFiles.length === 0) {
+        throw new Error("Execution brief repair could not continue because no useful context files were found.");
+      }
+
+      let fix: FixResponse;
+      try {
+        fix = await this.requestStructuredFix(
+          task.id,
+          `${task.prompt}\nRepair the execution brief mismatches for ${artifactType}. Required deliverables: ${plan.spec.deliverables.join(", ")}. Acceptance criteria: ${plan.spec.acceptanceCriteria.join(" ")}. Quality gates: ${plan.spec.qualityGates.join(" ")}`,
+          commandResult,
+          contextFiles,
+          1,
+          "Execution spec",
+          plan
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown execution brief repair failure.";
+        this.appendLog(task.id, `Model-based execution brief repair failed: ${message}`);
+        const heuristic = await this.tryHeuristicImplementation(
+          task.id,
+          `${task.prompt}\nRepair these execution brief failures: ${failedChecks.map((check) => check.details).join(" ")}`,
+          plan
+        );
+        if (!heuristic || heuristic.edits.length === 0) {
+          throw error;
+        }
+        fix = {
+          summary: heuristic.summary,
+          edits: heuristic.edits
+        };
+      }
+
+      const scopedEdits = this.filterValidEdits(fix.edits, plan);
+      if (scopedEdits.length === 0) {
+        throw new Error("Execution brief repair produced no scoped edits.");
+      }
+
+      const applied = await this.applyStructuredEdits(task.id, MAX_FIX_ATTEMPTS + 4, scopedEdits);
+      await this.prepareGeneratedWorkspace(task.id, plan);
+      return {
+        summary: `${fix.summary || "Applied execution brief fixes."} Files changed: ${applied.join(", ") || "none"}.`
       };
     });
 
@@ -1780,12 +2170,6 @@ export class AgentTaskRunner {
       requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
     }
 
-    for (const requestedPath of plan.requestedPaths ?? []) {
-      if (this.isPathInsideWorkingDirectory(requestedPath, workingDirectory)) {
-        requiredPaths.add(requestedPath);
-      }
-    }
-
     const conflictingPaths = await this.collectConflictingWorkspaceFiles(plan);
 
     const present: string[] = [];
@@ -1796,6 +2180,15 @@ export class AgentTaskRunner {
         present.push(path);
       } catch {
         missing.push(path);
+      }
+    }
+
+    for (const requestedPath of plan.requestedPaths ?? []) {
+      if (!this.isPathInsideWorkingDirectory(requestedPath, workingDirectory)) continue;
+      if (await this.isRequestedEntryPathSatisfied(requestedPath, plan, artifactType)) {
+        present.push(requestedPath);
+      } else {
+        missing.push(requestedPath);
       }
     }
 
@@ -1823,6 +2216,72 @@ export class AgentTaskRunner {
       status: "passed",
       details: `Found required files: ${present.join(", ")}.`
     };
+  }
+
+  private async isRequestedEntryPathSatisfied(
+    requestedPath: string,
+    plan: TaskExecutionPlan,
+    artifactType: AgentArtifactType
+  ): Promise<boolean> {
+    try {
+      await stat(this.resolveWorkspacePath(requestedPath));
+      return true;
+    } catch {
+      // allow compatible modern desktop scaffold aliases below
+    }
+
+    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
+    for (const aliasGroup of this.getRequestedEntryPathAliasGroups(requestedPath, workingDirectory, plan, artifactType)) {
+      if (await this.allFilesExist(aliasGroup)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private getRequestedEntryPathAliasGroups(
+    requestedPath: string,
+    workingDirectory: string,
+    plan: TaskExecutionPlan,
+    artifactType: AgentArtifactType
+  ): string[][] {
+    if (artifactType !== "desktop-app" || plan.workspaceKind !== "react") {
+      return [];
+    }
+
+    const fileName = requestedPath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+    switch (fileName) {
+      case "main.js":
+        return [
+          [this.joinWorkspacePath(workingDirectory, "electron/main.mjs")],
+          [this.joinWorkspacePath(workingDirectory, "electron/main.js")],
+          [this.joinWorkspacePath(workingDirectory, "electron/main.ts")]
+        ];
+      case "preload.js":
+        return [
+          [this.joinWorkspacePath(workingDirectory, "electron/preload.mjs")],
+          [this.joinWorkspacePath(workingDirectory, "electron/preload.js")],
+          // Modern Electron React shells can wire preload behavior directly from the main process.
+          [this.joinWorkspacePath(workingDirectory, "electron/main.mjs")]
+        ];
+      case "renderer.js":
+        return [
+          [this.joinWorkspacePath(workingDirectory, "src/main.tsx")],
+          [this.joinWorkspacePath(workingDirectory, "src/main.jsx")],
+          [this.joinWorkspacePath(workingDirectory, "src/App.tsx"), this.joinWorkspacePath(workingDirectory, "index.html")],
+          [this.joinWorkspacePath(workingDirectory, "src/App.jsx"), this.joinWorkspacePath(workingDirectory, "index.html")]
+        ];
+      case "styles.css":
+        return [
+          [this.joinWorkspacePath(workingDirectory, "src/index.css")],
+          [this.joinWorkspacePath(workingDirectory, "src/App.css")],
+          [this.joinWorkspacePath(workingDirectory, "src/styles.css")],
+          [this.joinWorkspacePath(workingDirectory, "dist/assets")]
+        ];
+      default:
+        return [];
+    }
   }
 
   private getEntryVerificationLabel(artifactType: AgentArtifactType): string {
@@ -1933,14 +2392,63 @@ export class AgentTaskRunner {
   }
 
   private async findGeneratedDesktopInstaller(workingDirectory: string): Promise<string | null> {
-    const releaseDirectory = this.resolveWorkspacePath(this.joinWorkspacePath(workingDirectory, "release"));
+    const baseDirectory = this.resolveWorkspacePath(workingDirectory);
+    const preferredOutputDirectories = ["release", "release-package"];
     try {
-      const entries = await readdir(releaseDirectory, { withFileTypes: true });
-      const installer = entries.find((entry) => entry.isFile() && /\.exe$/i.test(entry.name));
-      return installer ? this.joinWorkspacePath(workingDirectory, "release", installer.name) : null;
+      const rootEntries = await readdir(baseDirectory, { withFileTypes: true });
+      const dynamicFallbackDirectories = rootEntries
+        .filter((entry) => entry.isDirectory() && /^release-package-/i.test(entry.name))
+        .map((entry) => entry.name)
+        .sort((a, b) => b.localeCompare(a));
+      for (const outputDirectory of [...preferredOutputDirectories, ...dynamicFallbackDirectories]) {
+        const releaseDirectory = this.resolveWorkspacePath(this.joinWorkspacePath(workingDirectory, outputDirectory));
+        try {
+          const entries = await readdir(releaseDirectory, { withFileTypes: true });
+          const installer = entries.find((entry) => entry.isFile() && /\.exe$/i.test(entry.name));
+          if (installer) {
+            return this.joinWorkspacePath(workingDirectory, outputDirectory, installer.name);
+          }
+        } catch {
+          // continue searching fallback output directories
+        }
+      }
     } catch {
       return null;
     }
+    return null;
+  }
+
+  private parseCommandArgs(command: string): string[] {
+    const tokens = command.match(/"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|\S+/g) ?? [];
+    return tokens.map((token) => {
+      const trimmed = token.trim();
+      if (
+        (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+        || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ) {
+        return trimmed.slice(1, -1);
+      }
+      return trimmed;
+    });
+  }
+
+  private buildElectronBuilderPackagingRequest(
+    script: string,
+    workingDirectory: string,
+    outputDirectory: string
+  ): TerminalCommandRequest | null {
+    const normalizedScript = (script ?? "").trim();
+    if (!/^electron-builder(?:\s|$)/i.test(normalizedScript)) return null;
+
+    const scriptArgs = this.parseCommandArgs(normalizedScript.replace(/^electron-builder(?:\s+)?/i, ""))
+      .filter((arg) => !/^--config\.directories\.output=/i.test(arg));
+
+    return {
+      command: process.platform === "win32" ? "npm.cmd" : "npm",
+      args: ["exec", "electron-builder", "--", ...scriptArgs, `--config.directories.output=${outputDirectory}`],
+      cwd: workingDirectory,
+      timeoutMs: 300_000
+    };
   }
 
   private async verifyWindowsDesktopPackaging(
@@ -1960,14 +2468,47 @@ export class AgentTaskRunner {
       };
     }
 
-    await rm(this.resolveWorkspacePath(this.joinWorkspacePath(workingDirectory, "release")), { recursive: true, force: true }).catch(() => {});
-    const packaging = await this.executeCommand(taskId, this.buildNpmScriptRequest(scriptName, 300_000, workingDirectory));
-    if (!packaging.ok) {
+    const maxPackagingAttempts = 3;
+    await this.cleanupGeneratedDesktopPackagingState(taskId, workingDirectory);
+
+    let packaging: TerminalCommandResult | null = null;
+
+    for (let attempt = 1; attempt <= maxPackagingAttempts; attempt += 1) {
+      packaging = await this.executeCommand(taskId, this.buildNpmScriptRequest(scriptName, 300_000, workingDirectory));
+      if (packaging.ok) {
+        break;
+      }
+      if (!this.isTransientGeneratedPackagingLockFailure(packaging) || attempt === maxPackagingAttempts) {
+        break;
+      }
+
+      this.appendLog(
+        taskId,
+        `Windows packaging hit a transient workspace lock in ${workingDirectory}; retry ${attempt + 1}/${maxPackagingAttempts} after cleanup.`
+      );
+      await this.cleanupGeneratedDesktopPackagingState(taskId, workingDirectory);
+      await delay(400 * attempt);
+    }
+    if (!packaging?.ok && packaging && this.isTransientGeneratedPackagingLockFailure(packaging)) {
+      const isolatedOutputDirectory = `release-package-${Date.now().toString(36)}`;
+      const isolatedPackagingRequest = this.buildElectronBuilderPackagingRequest(scripts[scriptName], workingDirectory, isolatedOutputDirectory);
+      if (isolatedPackagingRequest) {
+        this.appendLog(
+          taskId,
+          `Windows packaging is retrying in isolated output ${isolatedOutputDirectory} for ${workingDirectory} after repeated file-lock failures.`
+        );
+        await this.cleanupGeneratedDesktopPackagingState(taskId, workingDirectory);
+        packaging = await this.executeCommand(taskId, isolatedPackagingRequest);
+      }
+    }
+    if (!packaging?.ok) {
       return {
         id: "packaging",
         label,
         status: "failed",
-        details: "Windows installer packaging failed."
+        details: packaging && this.isTransientGeneratedPackagingLockFailure(packaging)
+          ? "Windows installer packaging failed after retrying through release cleanup for a transient file lock."
+          : "Windows installer packaging failed."
       };
     }
 
@@ -2020,17 +2561,30 @@ export class AgentTaskRunner {
     const normalizedWorkingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     if (!normalizedWorkingDirectory.startsWith("generated-apps/")) return;
     if (plan.workspaceKind === "static") return;
-    const dependencyInstallTimeoutMs = this.tasks.get(taskId)?.artifactType === "desktop-app" ? 300_000 : 180_000;
+    const artifactType = this.tasks.get(taskId)?.artifactType;
+    const dependencyInstallTimeoutMs = artifactType === "desktop-app" ? 300_000 : 180_000;
 
     if (!(await this.generatedNodePackageNeedsInstall(normalizedWorkingDirectory))) return;
 
+    await this.cleanupGeneratedWorkspaceInstallLocks(taskId, normalizedWorkingDirectory, artifactType);
     this.appendLog(taskId, `Installing generated node-package dependencies in ${normalizedWorkingDirectory}.`);
-    const install = await this.executeCommand(taskId, {
+    let install = await this.executeCommand(taskId, {
       command: process.platform === "win32" ? "npm.cmd" : "npm",
       args: ["install"],
       cwd: normalizedWorkingDirectory,
       timeoutMs: dependencyInstallTimeoutMs
     });
+    if (!install.ok && this.isTransientGeneratedInstallLockFailure(install)) {
+      this.appendLog(taskId, `Dependency install hit a transient workspace lock in ${normalizedWorkingDirectory}; retrying after cleanup.`);
+      await this.cleanupGeneratedWorkspaceInstallLocks(taskId, normalizedWorkingDirectory, artifactType);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      install = await this.executeCommand(taskId, {
+        command: process.platform === "win32" ? "npm.cmd" : "npm",
+        args: ["install"],
+        cwd: normalizedWorkingDirectory,
+        timeoutMs: dependencyInstallTimeoutMs
+      });
+    }
     if (!install.ok) {
       if (this.isRecoverableGeneratedInstallFailure(install)) {
         const recovered = await this.tryAutoFixGeneratedNodePackageInstall(taskId, plan, install);
@@ -2053,6 +2607,97 @@ export class AgentTaskRunner {
     ].some((term) => normalized.includes(term));
   }
 
+  private isTransientGeneratedInstallLockFailure(result: TerminalCommandResult): boolean {
+    const normalized = `${result.combinedOutput || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
+    return normalized.includes("error code ebusy")
+      || normalized.includes("resource busy or locked")
+      || normalized.includes("default_app.asar")
+      || normalized.includes("errno -4082");
+  }
+
+  private isTransientGeneratedPackagingLockFailure(result: TerminalCommandResult): boolean {
+    const normalized = `${result.combinedOutput || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
+    return normalized.includes("error code ebusy")
+      || normalized.includes("error code eperm")
+      || normalized.includes("errno -4082")
+      || normalized.includes("resource busy or locked")
+      || normalized.includes("the process cannot access the file because it is being used by another process")
+      || normalized.includes("win-unpacked\\resources\\app.asar")
+      || normalized.includes("win-unpacked/resources/app.asar")
+      || normalized.includes("operation not permitted, unlink")
+      || normalized.includes("cannot unlink")
+      || normalized.includes("err_electron_builder_cannot_execute");
+  }
+
+  private async cleanupGeneratedDesktopPackagingState(taskId: string, workingDirectory: string): Promise<void> {
+    await this.cleanupGeneratedWorkspaceInstallLocks(taskId, workingDirectory, "desktop-app");
+
+    const cleanupPaths = [
+      this.joinWorkspacePath(workingDirectory, "release/win-unpacked/resources/app.asar"),
+      this.joinWorkspacePath(workingDirectory, "release/win-unpacked/resources/app.asar.unpacked"),
+      this.joinWorkspacePath(workingDirectory, "release/win-unpacked/resources"),
+      this.joinWorkspacePath(workingDirectory, "release/win-unpacked"),
+      this.joinWorkspacePath(workingDirectory, "release"),
+      this.joinWorkspacePath(workingDirectory, "release-package/win-unpacked/resources/app.asar"),
+      this.joinWorkspacePath(workingDirectory, "release-package/win-unpacked/resources/app.asar.unpacked"),
+      this.joinWorkspacePath(workingDirectory, "release-package/win-unpacked/resources"),
+      this.joinWorkspacePath(workingDirectory, "release-package/win-unpacked"),
+      this.joinWorkspacePath(workingDirectory, "release-package"),
+      this.joinWorkspacePath(workingDirectory, "release-stage/win-unpacked/resources/app.asar"),
+      this.joinWorkspacePath(workingDirectory, "release-stage/win-unpacked/resources/app.asar.unpacked"),
+      this.joinWorkspacePath(workingDirectory, "release-stage")
+    ];
+
+    for (const cleanupPath of cleanupPaths) {
+      try {
+        await this.withWorkspaceFsRetry(
+          () => rm(this.resolveWorkspacePath(cleanupPath), { recursive: true, force: true }),
+          5,
+          200
+        );
+      } catch {
+        this.appendLog(taskId, `Generated desktop packaging cleanup could not fully remove ${cleanupPath}.`);
+      }
+    }
+  }
+
+  private async cleanupGeneratedWorkspaceInstallLocks(
+    taskId: string,
+    workingDirectory: string,
+    artifactType?: AgentArtifactType
+  ): Promise<void> {
+    if (artifactType !== "desktop-app" || process.platform !== "win32") return;
+
+    const absoluteWorkingDirectory = this.resolveWorkspacePath(workingDirectory).replace(/\//g, "\\");
+    const escapedAbsoluteWorkingDirectory = absoluteWorkingDirectory.replace(/'/g, "''");
+    const command = [
+      `$workspace = '${escapedAbsoluteWorkingDirectory}'`,
+      "$processes = Get-CimInstance Win32_Process | Where-Object {",
+      "  $_.ProcessId -ne $PID -and (",
+      "    (($_.CommandLine -as [string]) -like \"*$workspace*\") -or",
+      "    (($_.ExecutablePath -as [string]) -like \"*$workspace*\")",
+      "  )",
+      "}",
+      "foreach ($proc in $processes) {",
+      "  try {",
+      "    Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop",
+      "  } catch {",
+      "  }",
+      "}"
+    ].join("\n");
+    const encodedCommand = Buffer.from(command, "utf16le").toString("base64");
+
+    const cleanup = await this.executeCommand(taskId, {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+      cwd: workingDirectory,
+      timeoutMs: 15_000
+    });
+    if (!cleanup.ok) {
+      this.appendLog(taskId, `Generated workspace lock cleanup finished with warnings for ${workingDirectory}.`);
+    }
+  }
+
   private async tryAutoFixGeneratedNodePackageInstall(
     taskId: string,
     plan: TaskExecutionPlan,
@@ -2069,7 +2714,7 @@ export class AgentTaskRunner {
     if (contextFiles.length > 0) {
       this.appendLog(taskId, `Preparing ${contextFiles.length} context file(s) for dependency-install repair.`);
       try {
-        fix = await this.requestStructuredFix(taskId, task.prompt, installResult, contextFiles, 1, "Dependency install");
+        fix = await this.requestStructuredFix(taskId, task.prompt, installResult, contextFiles, 1, "Dependency install", plan);
         usedModelFix = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown dependency-install repair failure.";
@@ -2125,7 +2770,109 @@ export class AgentTaskRunner {
     const artifactType = this.tasks.get(taskId)?.artifactType;
     await this.ensureGeneratedAppPackageJson(plan, artifactType);
     await this.ensureGeneratedReactProjectFiles(plan, artifactType);
+    await this.ensureGeneratedProjectReadme(plan, artifactType);
     await this.ensureGeneratedNodePackageDependencies(taskId, plan);
+  }
+
+  private async ensureGeneratedProjectReadme(
+    plan: TaskExecutionPlan,
+    artifactType?: AgentArtifactType
+  ): Promise<void> {
+    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
+    if (!workingDirectory.startsWith("generated-apps/")) return;
+    const spec = plan.spec ?? this.buildTaskExecutionSpec(
+      "",
+      workingDirectory,
+      plan.workspaceKind ?? "generic",
+      plan.builderMode ?? null,
+      artifactType ?? null,
+      plan.requestedPaths ?? []
+    );
+    if (!spec.expectsReadme) return;
+
+    const readmePath = this.joinWorkspacePath(workingDirectory, "README.md");
+    if (await this.pathExists(this.resolveWorkspacePath(readmePath))) {
+      return;
+    }
+
+    await this.writeWorkspaceFile(readmePath, this.buildProjectReadme(
+      this.toDisplayNameFromDirectory(workingDirectory),
+      artifactType ?? null,
+      spec,
+      plan.workingDirectory
+    ));
+  }
+
+  private async ensureBootstrapProjectReadme(plan: BootstrapPlan): Promise<void> {
+    const readmePath = this.joinWorkspacePath(plan.targetDirectory, "README.md");
+    if (await this.pathExists(this.resolveWorkspacePath(readmePath))) {
+      return;
+    }
+
+    const spec = this.buildTaskExecutionSpec(
+      `Create ${plan.projectName}`,
+      plan.targetDirectory,
+      plan.template === "static" ? "static" : (plan.template === "node-package" ? "generic" : "react"),
+      null,
+      plan.artifactType ?? null,
+      []
+    );
+    await this.writeWorkspaceFile(
+      readmePath,
+      this.buildProjectReadme(this.toDisplayNameFromDirectory(plan.targetDirectory), plan.artifactType, {
+        ...spec,
+        starterProfile: plan.starterProfile
+      }, plan.targetDirectory)
+    );
+  }
+
+  private buildProjectReadme(
+    projectName: string,
+    artifactType: AgentArtifactType | null | undefined,
+    spec: TaskExecutionSpec,
+    workingDirectory: string
+  ): string {
+    const runLines: string[] = [];
+    if (artifactType === "desktop-app") {
+      runLines.push("- `npm install`");
+      runLines.push("- `npm start`");
+      runLines.push("- `npm run build`");
+      runLines.push("- `npm run package:win`");
+    } else if (artifactType === "api-service" || artifactType === "script-tool") {
+      runLines.push("- `npm install`");
+      runLines.push("- `npm start`");
+      runLines.push("- `npm run build`");
+    } else if (artifactType === "library") {
+      runLines.push("- `npm install`");
+      runLines.push("- `npm run build`");
+    } else if (spec.starterProfile === "static-marketing") {
+      runLines.push("- `npm run build`");
+      runLines.push("- `npm start`");
+    } else {
+      runLines.push("- `npm install`");
+      runLines.push("- `npm run dev`");
+      runLines.push("- `npm run build`");
+    }
+
+    return [
+      `# ${projectName}`,
+      "",
+      `Starter profile: ${this.describeStarterProfile(spec.starterProfile)}.`,
+      `Target folder: \`${workingDirectory}\`.`,
+      "",
+      "## Deliverables",
+      ...spec.deliverables.map((item) => `- ${item}`),
+      "",
+      "## Acceptance Criteria",
+      ...spec.acceptanceCriteria.map((item) => `- ${item}`),
+      "",
+      "## Quality Gates",
+      ...spec.qualityGates.map((item) => `- ${item}`),
+      "",
+      "## Run",
+      ...runLines,
+      ""
+    ].join("\n");
   }
 
   private usesStartupVerification(artifactType: AgentArtifactType): boolean {
@@ -2146,6 +2893,10 @@ export class AgentTaskRunner {
 
   private shouldVerifyServedWebPage(artifactType: AgentArtifactType): boolean {
     return artifactType === "web-app";
+  }
+
+  private shouldVerifyRuntimeDepth(artifactType: AgentArtifactType): boolean {
+    return artifactType === "api-service" || artifactType === "script-tool" || artifactType === "desktop-app";
   }
 
   private async executeArtifactRuntimeVerification(
@@ -2171,9 +2922,17 @@ export class AgentTaskRunner {
 
     const request = this.buildNpmScriptRequest(scriptName, 45_000, cwd);
     if (this.usesStartupVerification(artifactType)) {
-      const startupProbe = artifactType === "web-app"
-        ? async (result: TerminalCommandResult) => this.probeServedWebPage(plan, scripts, scriptName, result)
-        : undefined;
+      const startupProbe: StartupVerificationProbe | undefined = artifactType === "web-app"
+        ? {
+          label: "served-page",
+          run: async (result: TerminalCommandResult) => this.probeServedWebPage(plan, scripts, scriptName, result)
+        }
+        : artifactType === "api-service"
+          ? {
+            label: "api-probe",
+            run: async (result: TerminalCommandResult) => this.probeApiService(plan, scripts, scriptName, result)
+          }
+          : undefined;
       return this.executeStartupVerification(taskId, request, STARTUP_VERIFY_MS, startupProbe);
     }
     return this.executeCommand(taskId, request);
@@ -2204,6 +2963,141 @@ export class AgentTaskRunner {
     return `${scriptName} completed successfully after requirement repair.`;
   }
 
+  private async rerunVerificationAfterContentRepair(
+    task: AgentTask,
+    plan: TaskExecutionPlan,
+    checks: AgentVerificationCheck[],
+    artifactType: AgentArtifactType,
+    labels: {
+      buildLabel: string;
+      lintLabel: string;
+      testLabel: string;
+      runtimeLabel: string;
+    }
+  ): Promise<{ scripts: PackageScripts; runtimeScript: "start" | "dev" | null }> {
+    const packageJson = await this.tryReadPackageJson(plan.workingDirectory);
+    const scripts = this.resolveVerificationScripts(packageJson, plan);
+    const runtimeScript = this.resolveRuntimeVerificationScript(scripts);
+
+    if (scripts.build) {
+      const build = await this.executeCommand(task.id, this.buildNpmScriptRequest("build", 120_000, plan.workingDirectory));
+      this.upsertVerificationCheck(checks, {
+        id: "build",
+        label: labels.buildLabel,
+        status: build.ok ? "passed" : "failed",
+        details: build.ok ? `${labels.buildLabel} completed successfully after repair.` : `${labels.buildLabel} failed after repair.`
+      });
+      if (!build.ok) {
+        this.updateTaskVerification(task, checks);
+        throw new Error(this.buildCommandFailureMessage(labels.buildLabel, build, "failed after repair"));
+      }
+    }
+
+    if (scripts.lint) {
+      const lint = await this.executeCommand(task.id, this.buildNpmScriptRequest("lint", 120_000, plan.workingDirectory));
+      this.upsertVerificationCheck(checks, {
+        id: "lint",
+        label: labels.lintLabel,
+        status: lint.ok ? "passed" : "failed",
+        details: lint.ok ? `${labels.lintLabel} completed successfully after repair.` : `${labels.lintLabel} failed after repair.`
+      });
+      if (!lint.ok) {
+        this.updateTaskVerification(task, checks);
+        throw new Error(this.buildCommandFailureMessage(labels.lintLabel, lint, "failed after repair"));
+      }
+    }
+
+    if (scripts.test && !/no test specified/i.test(scripts.test)) {
+      const test = await this.executeCommand(task.id, this.buildNpmScriptRequest("test", 120_000, plan.workingDirectory));
+      this.upsertVerificationCheck(checks, {
+        id: "test",
+        label: labels.testLabel,
+        status: test.ok ? "passed" : "failed",
+        details: test.ok ? `${labels.testLabel} completed successfully after repair.` : `${labels.testLabel} failed after repair.`
+      });
+      if (!test.ok) {
+        this.updateTaskVerification(task, checks);
+        throw new Error(this.buildCommandFailureMessage(labels.testLabel, test, "failed after repair"));
+      }
+    }
+
+    if (runtimeScript && this.shouldVerifyLaunch(artifactType)) {
+      const launch = await this.executeArtifactRuntimeVerification(task.id, runtimeScript, artifactType, plan, scripts);
+      this.upsertVerificationCheck(checks, {
+        id: "launch",
+        label: labels.runtimeLabel,
+        status: launch.ok ? "passed" : "failed",
+        details: launch.ok
+          ? this.buildRuntimeVerificationAfterRepairDetails(artifactType, runtimeScript)
+          : `${labels.runtimeLabel} failed after repair.`
+      });
+      if (!launch.ok) {
+        this.updateTaskVerification(task, checks);
+        throw new Error(this.buildCommandFailureMessage(labels.runtimeLabel, launch, "failed after repair"));
+      }
+      if (this.shouldVerifyServedWebPage(artifactType)) {
+        const servedPage = await this.verifyServedWebPage(plan, scripts, runtimeScript, launch);
+        this.upsertVerificationCheck(checks, servedPage);
+        if (servedPage.status === "failed") {
+          this.updateTaskVerification(task, checks);
+          throw new Error(servedPage.details || "Served web page failed after repair.");
+        }
+      }
+      if (this.shouldVerifyRuntimeDepth(artifactType)) {
+        const runtimeDepth = await this.verifyRuntimeDepth(plan, artifactType, scripts, runtimeScript, launch);
+        if (runtimeDepth) {
+          this.upsertVerificationCheck(checks, runtimeDepth);
+          if (runtimeDepth.status === "failed") {
+            this.updateTaskVerification(task, checks);
+            throw new Error(runtimeDepth.details || "Runtime depth verification failed after repair.");
+          }
+        }
+      }
+    }
+
+    if (this.shouldVerifyWindowsPackaging(artifactType, plan)) {
+      const packaging = await this.verifyWindowsDesktopPackaging(task.id, plan, scripts);
+      this.upsertVerificationCheck(checks, packaging);
+      if (packaging.status === "failed") {
+        this.updateTaskVerification(task, checks);
+        throw new Error(packaging.details || "Windows packaging failed after repair.");
+      }
+    }
+
+    if (this.shouldVerifyPreviewHealth(artifactType)) {
+      let previewHealth = await this.verifyPreviewHealth(plan, scripts);
+      if (previewHealth.status === "failed") {
+        const repaired = await this.tryAutoFixPreviewHealth(task, previewHealth, plan, scripts, labels.buildLabel);
+        if (repaired) {
+          previewHealth = await this.verifyPreviewHealth(plan, scripts);
+        }
+      }
+      this.upsertVerificationCheck(checks, previewHealth);
+      if (previewHealth.status === "failed") {
+        this.updateTaskVerification(task, checks);
+        throw new Error(previewHealth.details || "Preview health failed after repair.");
+      }
+    }
+
+    if (this.shouldVerifyUiSmoke(artifactType)) {
+      let uiSmoke = await this.verifyBasicUiSmoke(plan);
+      if (uiSmoke.status === "failed") {
+        const repaired = await this.tryAutoFixUiSmoke(task, uiSmoke, plan, scripts, labels.buildLabel, labels.lintLabel, labels.testLabel);
+        if (repaired) {
+          uiSmoke = await this.verifyBasicUiSmoke(plan);
+        }
+      }
+      this.upsertVerificationCheck(checks, uiSmoke);
+      if (uiSmoke.status === "failed") {
+        this.updateTaskVerification(task, checks);
+        throw new Error(uiSmoke.details || "Basic UI smoke failed after repair.");
+      }
+    }
+
+    this.updateTaskVerification(task, checks);
+    return { scripts, runtimeScript };
+  }
+
   private async verifyServedWebPage(
     plan: TaskExecutionPlan,
     scripts: PackageScripts,
@@ -2226,6 +3120,229 @@ export class AgentTaskRunner {
       label: "Served page",
       status: probeResult.status,
       details: probeResult.details
+    };
+  }
+
+  private async verifyRuntimeDepth(
+    plan: TaskExecutionPlan,
+    artifactType: AgentArtifactType,
+    scripts: PackageScripts,
+    runtimeScript: "start" | "dev",
+    launch: TerminalCommandResult
+  ): Promise<AgentVerificationCheck | null> {
+    switch (artifactType) {
+      case "api-service":
+        return this.verifyApiRuntimeDepth(launch);
+      case "script-tool":
+        return this.verifyCliRuntimeDepth(plan, launch);
+      case "desktop-app":
+        return this.verifyDesktopInteractionProbe(plan, scripts);
+      default:
+        return null;
+    }
+  }
+
+  private verifyApiRuntimeDepth(launch: TerminalCommandResult): AgentVerificationCheck {
+    const cachedProbe = this.extractApiProbeResult(launch.combinedOutput || "");
+    if (!cachedProbe) {
+      return {
+        id: "api-probe",
+        label: "API probe",
+        status: "failed",
+        details: "API runtime probe did not return a structured result during startup verification."
+      };
+    }
+
+    return {
+      id: "api-probe",
+      label: "API probe",
+      status: cachedProbe.status,
+      details: cachedProbe.details
+    };
+  }
+
+  private async verifyCliRuntimeDepth(
+    plan: TaskExecutionPlan,
+    launch: TerminalCommandResult
+  ): Promise<AgentVerificationCheck> {
+    const output = this.stripAnsiControlSequences(launch.combinedOutput || "").trim();
+    if (!output) {
+      return {
+        id: "cli-probe",
+        label: "CLI probe",
+        status: "failed",
+        details: "CLI runtime verification produced no output."
+      };
+    }
+
+    if (this.looksLikeCliUsageFailure(output)) {
+      return {
+        id: "cli-probe",
+        label: "CLI probe",
+        status: "failed",
+        details: "CLI runtime still returned usage guidance instead of completing a real probe run."
+      };
+    }
+
+    const expectsJson = await this.cliProbeExpectsJson(plan);
+    if (!expectsJson) {
+      return {
+        id: "cli-probe",
+        label: "CLI probe",
+        status: "passed",
+        details: `CLI runtime produced ${output.length} characters of output during the verification run.`
+      };
+    }
+
+    const parsed = this.parseJsonFromOutput(output);
+    if (!parsed || (typeof parsed !== "object" && !Array.isArray(parsed))) {
+      return {
+        id: "cli-probe",
+        label: "CLI probe",
+        status: "failed",
+        details: "CLI runtime did not emit parseable JSON output during the verification probe."
+      };
+    }
+
+    return {
+      id: "cli-probe",
+      label: "CLI probe",
+      status: "passed",
+      details: "CLI runtime emitted parseable JSON output during the verification probe."
+    };
+  }
+
+  private async verifyDesktopInteractionProbe(
+    plan: TaskExecutionPlan,
+    scripts: PackageScripts
+  ): Promise<AgentVerificationCheck> {
+    const previewRoot = await this.resolvePreviewRoot(plan, scripts);
+    const indexPath = this.joinWorkspacePath(previewRoot, "index.html");
+    if (!(await this.pathExists(this.resolveWorkspacePath(indexPath)))) {
+      return {
+        id: "desktop-interaction",
+        label: "Desktop interaction",
+        status: "failed",
+        details: `Desktop preview entry is missing: ${indexPath}.`
+      };
+    }
+
+    const previewUrl = pathToFileURL(this.resolveWorkspacePath(indexPath)).toString();
+    const smoke = await this.runServedPageBrowserSmoke(previewUrl, plan);
+    return {
+      id: "desktop-interaction",
+      label: "Desktop interaction",
+      status: smoke.status,
+      details: smoke.status === "passed"
+        ? `Desktop preview interaction passed against ${indexPath}. ${smoke.details}`
+        : smoke.status === "skipped"
+          ? `Desktop preview interaction was skipped for ${indexPath}. ${smoke.details}`
+          : `Desktop preview interaction failed for ${indexPath}. ${smoke.details}`
+    };
+  }
+
+  private async probeApiService(
+    plan: TaskExecutionPlan,
+    scripts: PackageScripts,
+    runtimeScript: "start" | "dev",
+    launch: TerminalCommandResult
+  ): Promise<StartupProbeResult> {
+    const baseUrl = await this.resolveApiServiceBaseUrl(plan, scripts, runtimeScript, launch);
+    if (!baseUrl) {
+      return {
+        status: "failed",
+        details: "Could not determine a reachable API base URL from runtime output or generated source files."
+      };
+    }
+
+    const routes = await this.collectApiProbeRoutes(plan);
+    const healthUrl = new URL(routes.healthPath, baseUrl).toString();
+    const health = await this.fetchJsonWithTimeout(healthUrl);
+    if (!health.ok) {
+      return {
+        status: "failed",
+        details: `Health probe failed at ${healthUrl}: ${health.error}`
+      };
+    }
+
+    const healthPayload = health.payload;
+    if (!healthPayload || typeof healthPayload !== "object" || Array.isArray(healthPayload)) {
+      return {
+        status: "failed",
+        details: `Health probe at ${healthUrl} did not return a JSON object payload.`
+      };
+    }
+
+    const statusValue = String((healthPayload as Record<string, unknown>).status ?? "").toLowerCase();
+    if (statusValue && !["ok", "healthy", "up", "ready"].includes(statusValue)) {
+      return {
+        status: "failed",
+        details: `Health probe at ${healthUrl} returned an unexpected status value: ${statusValue}.`
+      };
+    }
+
+    if (!routes.collectionPath) {
+      return {
+        status: "passed",
+        details: `Health endpoint responded with JSON from ${healthUrl}. No collection endpoint was inferred from the generated service sources.`
+      };
+    }
+
+    const collectionUrl = new URL(routes.collectionPath, baseUrl).toString();
+    const collection = await this.fetchJsonWithTimeout(collectionUrl);
+    if (!collection.ok) {
+      return {
+        status: "failed",
+        details: `Collection probe failed at ${collectionUrl}: ${collection.error}`
+      };
+    }
+
+    if (!this.isApiCollectionPayload(collection.payload)) {
+      return {
+        status: "failed",
+        details: `Collection probe at ${collectionUrl} did not return a recognizable JSON collection payload.`
+      };
+    }
+
+    if (!routes.supportsCreate) {
+      return {
+        status: "passed",
+        details: `Health and collection endpoints responded with JSON at ${healthUrl} and ${collectionUrl}.`
+      };
+    }
+
+    const createPayload = this.buildApiProbeCreatePayload(routes.primaryField, plan.spec?.domainFocus ?? "generic");
+    const create = await this.fetchJsonWithTimeout(collectionUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(createPayload)
+    });
+    if (!create.ok) {
+      return {
+        status: "failed",
+        details: `Create probe failed at ${collectionUrl}: ${create.error}`
+      };
+    }
+
+    if (!create.payload || typeof create.payload !== "object" || Array.isArray(create.payload)) {
+      return {
+        status: "failed",
+        details: `Create probe at ${collectionUrl} did not return a JSON object payload.`
+      };
+    }
+
+    const createdRecord = create.payload as Record<string, unknown>;
+    const createdPrimaryValue = String(createdRecord[routes.primaryField] ?? "").trim();
+    if (!createdPrimaryValue) {
+      return {
+        status: "failed",
+        details: `Create probe at ${collectionUrl} returned JSON but did not include the expected ${routes.primaryField} field.`
+      };
+    }
+
+    return {
+      status: "passed",
+      details: `Health, collection, and create probes responded with JSON at ${healthUrl} and ${collectionUrl}.`
     };
   }
 
@@ -2329,6 +3446,9 @@ export class AgentTaskRunner {
       };
     }
 
+    const promptRequirementArgs = [...new Set((plan.promptRequirements ?? []).map((requirement) => requirement.id.trim()).filter(Boolean))]
+      .flatMap((requirement) => ["--prompt-requirement", requirement]);
+
     const result = await this.executeDetachedCommand("manual", {
       command: electronBinary,
       args: [
@@ -2339,6 +3459,7 @@ export class AgentTaskRunner {
         plan.workspaceKind,
         "--builder-mode",
         plan.builderMode ?? "",
+        ...promptRequirementArgs,
         "--timeout-ms",
         "15000"
       ],
@@ -2443,6 +3564,19 @@ export class AgentTaskRunner {
     };
   }
 
+  private extractApiProbeResult(output: string): StartupProbeResult | null {
+    const match = /\[api-probe\]\s+(passed|failed|skipped)\s+\|\s+([^\n\r]+)/i.exec(output ?? "");
+    if (!match) return null;
+    const status = match[1]?.toLowerCase();
+    if (status !== "passed" && status !== "failed" && status !== "skipped") {
+      return null;
+    }
+    return {
+      status,
+      details: match[2]?.trim() ?? ""
+    };
+  }
+
   private resolveElectronBinary(): string | null {
     try {
       const electronBinary = require("electron");
@@ -2497,6 +3631,223 @@ export class AgentTaskRunner {
     return fixtureName;
   }
 
+  private async cliProbeExpectsJson(plan: TaskExecutionPlan): Promise<boolean> {
+    const promptTerms = plan.promptTerms.join(" ").toLowerCase();
+    if (
+      /\b(json output|output json|emit json|return json|returns json|print json|prints json|json report|json summary)\b/.test(promptTerms)
+    ) {
+      return true;
+    }
+    const source = await this.safeReadFirstContextFile([
+      this.joinWorkspacePath(plan.workingDirectory, "src/index.js"),
+      this.joinWorkspacePath(plan.workingDirectory, "src/index.mjs"),
+      this.joinWorkspacePath(plan.workingDirectory, "bin/cli.mjs")
+    ]);
+    const normalized = (source ?? "").toLowerCase();
+    return normalized.includes("json.stringify");
+  }
+
+  private parseJsonFromOutput(output: string): unknown {
+    const trimmed = (output ?? "").trim();
+    if (!trimmed) return null;
+    const candidates = [trimmed];
+    const firstObject = trimmed.indexOf("{");
+    const lastObject = trimmed.lastIndexOf("}");
+    if (firstObject !== -1 && lastObject > firstObject) {
+      candidates.push(trimmed.slice(firstObject, lastObject + 1));
+    }
+    const firstArray = trimmed.indexOf("[");
+    const lastArray = trimmed.lastIndexOf("]");
+    if (firstArray !== -1 && lastArray > firstArray) {
+      candidates.push(trimmed.slice(firstArray, lastArray + 1));
+    }
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // keep trying looser slices
+      }
+    }
+    return null;
+  }
+
+  private buildFetchHeaders(init?: RequestInit): HeadersInit {
+    const headers = new Headers(init?.headers ?? undefined);
+    if (!headers.has("Accept")) {
+      headers.set("Accept", "application/json");
+    }
+    return headers;
+  }
+
+  private async fetchJsonWithTimeout(url: string, init?: RequestInit): Promise<{
+    ok: boolean;
+    error?: string;
+    payload?: unknown;
+  }> {
+    let response: Response;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8_000);
+      try {
+        response = await fetch(url, {
+          headers: this.buildFetchHeaders(init),
+          method: init?.method,
+          body: init?.body,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `HTTP ${response.status}`
+      };
+    }
+
+    try {
+      return {
+        ok: true,
+        payload: await response.json()
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: `Invalid JSON response: ${message}` };
+    }
+  }
+
+  private isApiCollectionPayload(payload: unknown): boolean {
+    if (Array.isArray(payload)) {
+      return true;
+    }
+    if (!payload || typeof payload !== "object") {
+      return false;
+    }
+    return Object.values(payload as Record<string, unknown>).some((value) => Array.isArray(value));
+  }
+
+  private async resolveApiServiceBaseUrl(
+    plan: TaskExecutionPlan,
+    scripts: PackageScripts,
+    runtimeScript: "start" | "dev",
+    launch: TerminalCommandResult
+  ): Promise<string | null> {
+    const explicit = this.resolveServedWebPageUrl(plan, scripts, runtimeScript, launch);
+    if (explicit) {
+      try {
+        const parsed = new URL(explicit);
+        return `${parsed.origin}/`;
+      } catch {
+        // fall through to source inference
+      }
+    }
+
+    const port = await this.inferApiServicePort(plan);
+    return port ? `http://127.0.0.1:${port}/` : null;
+  }
+
+  private async inferApiServicePort(plan: TaskExecutionPlan): Promise<number | null> {
+    const source = await this.safeReadFirstContextFile([
+      this.joinWorkspacePath(plan.workingDirectory, "src/server.js"),
+      this.joinWorkspacePath(plan.workingDirectory, "src/index.js")
+    ]);
+    if (!source) return 3000;
+
+    const envPortMatch = /process\.env\.PORT\s*(?:\|\||\?\?)\s*(\d{2,5})/i.exec(source);
+    if (envPortMatch) {
+      const port = Number.parseInt(envPortMatch[1] ?? "", 10);
+      if (Number.isFinite(port) && port > 0) return port;
+    }
+
+    const listenMatch = /listen\(\s*(\d{2,5})\s*(?:[,)]|\))/i.exec(source);
+    if (listenMatch) {
+      const port = Number.parseInt(listenMatch[1] ?? "", 10);
+      if (Number.isFinite(port) && port > 0) return port;
+    }
+
+    return 3000;
+  }
+
+  private async collectApiProbeRoutes(plan: TaskExecutionPlan): Promise<{
+    healthPath: string;
+    collectionPath: string | null;
+    supportsCreate: boolean;
+    primaryField: string;
+  }> {
+    const source = await this.safeReadFirstContextFile([
+      this.joinWorkspacePath(plan.workingDirectory, "src/server.js"),
+      this.joinWorkspacePath(plan.workingDirectory, "src/index.js")
+    ]);
+    const normalized = source ?? "";
+    const getRoutes = [...normalized.matchAll(/req\.method\s*===\s*['"]GET['"]\s*&&\s*(?:url\.pathname|pathname)\s*===\s*['"]([^'"]+)['"]/gi)]
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => Boolean(value) && value.startsWith("/"));
+    const postRoutes = [...normalized.matchAll(/req\.method\s*===\s*['"]POST['"]\s*&&\s*(?:url\.pathname|pathname)\s*===\s*['"]([^'"]+)['"]/gi)]
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => Boolean(value) && value.startsWith("/"));
+
+    const healthPath = getRoutes.find((value) => /^\/health\/?$/i.test(value)) ?? "/health";
+    const collectionPath = getRoutes.find((value) => value !== healthPath && value !== "/");
+    const supportsCreate = Boolean(collectionPath && postRoutes.includes(collectionPath));
+    const primaryField = this.inferApiProbePrimaryField(normalized, plan.spec?.domainFocus ?? "generic");
+    return {
+      healthPath,
+      collectionPath: collectionPath ?? null,
+      supportsCreate,
+      primaryField
+    };
+  }
+
+  private inferApiProbePrimaryField(source: string, domainFocus: DomainFocus): string {
+    const bodyFieldMatches = [...(source ?? "").matchAll(/body\.(\w+)/g)]
+      .map((match) => match[1])
+      .filter((value): value is string => Boolean(value) && !["status", "owner", "amount", "id"].includes(value));
+    if (bodyFieldMatches.length > 0) {
+      return bodyFieldMatches[0];
+    }
+
+    switch (domainFocus) {
+      case "finance":
+        return "customer";
+      case "operations":
+        return "subject";
+      case "scheduling":
+        return "guest";
+      default:
+        return "title";
+    }
+  }
+
+  private buildApiProbeCreatePayload(primaryField: string, domainFocus: DomainFocus): Record<string, unknown> {
+    const primaryValue = domainFocus === "finance"
+      ? "Cipher Probe Account"
+      : domainFocus === "operations"
+        ? "Cipher Probe Incident"
+        : domainFocus === "scheduling"
+          ? "Cipher Probe Booking"
+          : "Cipher Probe Item";
+    return {
+      [primaryField]: primaryValue,
+      status: "active",
+      owner: "agent-smoke"
+    };
+  }
+
+  private async safeReadFirstContextFile(paths: string[]): Promise<string | null> {
+    for (const path of paths) {
+      const file = await this.safeReadContextFile(path);
+      if (file?.content) {
+        return file.content;
+      }
+    }
+    return null;
+  }
+
   private async verifyPromptRequirements(plan: TaskExecutionPlan): Promise<AgentVerificationCheck[]> {
     if (plan.promptRequirements.length === 0) {
       return [{
@@ -2524,6 +3875,112 @@ export class AgentTaskRunner {
           : `Missing prompt evidence for: ${normalizedTerms.filter((term) => !matchedTerms.includes(term)).join(", ")}.`
       };
     });
+  }
+
+  private async verifyExecutionSpec(
+    plan: TaskExecutionPlan,
+    artifactType: AgentArtifactType,
+    scripts: PackageScripts
+  ): Promise<AgentVerificationCheck[]> {
+    const deliverableCheck = await this.verifySpecDeliverables(plan);
+    const hygieneCheck = await this.verifySpecProjectHygiene(plan, artifactType, scripts);
+    return [deliverableCheck, hygieneCheck];
+  }
+
+  private async verifySpecDeliverables(plan: TaskExecutionPlan): Promise<AgentVerificationCheck> {
+    if (plan.spec.requiredFiles.length === 0) {
+      return {
+        id: "spec-deliverables",
+        label: "Plan deliverables",
+        status: "skipped",
+        details: "No additional deliverables were required by the execution spec."
+      };
+    }
+
+    const missing: string[] = [];
+    const present: string[] = [];
+    for (const file of plan.spec.requiredFiles) {
+      if (await this.pathExists(this.resolveWorkspacePath(file))) {
+        present.push(file);
+      } else {
+        missing.push(file);
+      }
+    }
+
+    if (missing.length > 0) {
+      return {
+        id: "spec-deliverables",
+        label: "Plan deliverables",
+        status: "failed",
+        details: `Missing expected deliverables for ${plan.spec.starterProfile}: ${missing.join(", ")}.`
+      };
+    }
+
+    return {
+      id: "spec-deliverables",
+      label: "Plan deliverables",
+      status: "passed",
+      details: `Confirmed ${present.length} spec deliverable file(s) for ${plan.spec.starterProfile}.`
+    };
+  }
+
+  private async verifySpecProjectHygiene(
+    plan: TaskExecutionPlan,
+    artifactType: AgentArtifactType,
+    scripts: PackageScripts
+  ): Promise<AgentVerificationCheck> {
+    const issues: string[] = [];
+    const packageJsonPath = this.joinWorkspacePath(plan.workingDirectory, "package.json");
+    const hasPackageJson = await this.pathExists(this.resolveWorkspacePath(packageJsonPath));
+
+    if (plan.workspaceKind !== "static" || hasPackageJson) {
+      if (!hasPackageJson) {
+        issues.push(`Missing package manifest: ${packageJsonPath}.`);
+      } else {
+        const rawManifest = await this.safeReadContextFile(packageJsonPath);
+        const parsedManifest = rawManifest ? this.parseLoosePackageManifest(rawManifest.content) : null;
+        if (!parsedManifest) {
+          issues.push(`Malformed package manifest: ${packageJsonPath}.`);
+        } else {
+          if (!parsedManifest.name?.trim()) {
+            issues.push("package.json is missing a package name.");
+          }
+          if (!parsedManifest.version?.trim()) {
+            issues.push("package.json is missing a version.");
+          }
+        }
+      }
+    }
+
+    for (const group of plan.spec.requiredScriptGroups) {
+      const matched = group.options.find((name) => Boolean(scripts[name]));
+      if (!matched) {
+        issues.push(`Missing ${group.label} script. Expected one of: ${group.options.join(", ")}.`);
+      }
+    }
+
+    if (plan.spec.expectsReadme) {
+      const readmePath = this.joinWorkspacePath(plan.workingDirectory, "README.md");
+      if (!(await this.pathExists(this.resolveWorkspacePath(readmePath)))) {
+        issues.push(`Missing README: ${readmePath}.`);
+      }
+    }
+
+    if (issues.length > 0) {
+      return {
+        id: "spec-hygiene",
+        label: "Project hygiene",
+        status: "failed",
+        details: issues.join(" ")
+      };
+    }
+
+    return {
+      id: "spec-hygiene",
+      label: "Project hygiene",
+      status: "passed",
+      details: `Project hygiene passed for ${artifactType} using the ${plan.spec.starterProfile} profile.`
+    };
   }
 
   private async verifyPreviewHealth(
@@ -2622,15 +4079,27 @@ export class AgentTaskRunner {
   private async verifyBasicUiSmoke(plan: TaskExecutionPlan): Promise<AgentVerificationCheck> {
     const sources = await this.collectUiSmokeSources(plan);
     const joined = sources.join("\n").toLowerCase();
+    const promptRequirements = plan.promptRequirements ?? [];
     const hasHeading = /<h1|<h2|<h3/.test(joined);
     const hasPrimaryAction = /<button|type="submit"|type='submit'|href="#/.test(joined);
+    const placeholderMarkers = this.detectStarterPlaceholderSignals(joined);
     const requiresInputFlow = plan.builderMode === "notes" || plan.builderMode === "crud" || plan.builderMode === "kanban";
+    const requiresCoreProductInputs = promptRequirements.some((requirement) => /^(req-summary|req-transcript|req-video-source|req-search-filter|req-persistence|req-export|req-ingest|req-auth|req-settings)$/.test(requirement.id));
+    const requiresSummaryOutput = promptRequirements.some((requirement) => requirement.id === "req-summary");
     const hasInputs = /<form|<input|<textarea|onchange=|onchange\s*=|onchange\{|value=\{/.test(joined);
     const hasInteraction = /onsubmit=|onclick=|addeventlistener\("submit"|addeventlistener\('submit'|addeventlistener\("click"|addeventlistener\('click'|set[a-z0-9_]+\(/.test(joined);
     const hasStatefulFlow = /localstorage|usestate|set[a-z0-9_]+\(|\.push\(|\.splice\(|\.filter\(|\.map\(|replacechildren|appendchild|render[a-z0-9_]*\(|json\.stringify|new formdata|notes\s*=|records\s*=/.test(joined);
     const hasCollectionView = /<ul|<ol|<table|<tbody|role="list"|role='list'|notes-list|records-list|note-card|record-row|recent activity|kanban-grid|kanban-lane|kanban-card|board-column|task-card/.test(joined);
+    const hasSummaryOutput = /\bsummary|takeaways?|chapters?|key points?|insights?|brief|generated brief|action items\b/.test(joined);
+    const requiresNotesPersistenceFlow = plan.builderMode === "notes";
+    const hasNotesPersistenceFlow = /notes-list|note-card|note-date|note-actions|data-note-delete|setnotes|state\.notes|createdat|search notes|save note/.test(joined);
+    const requiresCrudMutationFlow = plan.builderMode === "crud";
+    const hasCrudMutationFlow = /edit|update|delete|remove|mark paid|archive|approve|reject|status-badge|data-record-edit|data-record-delete|handlemarkpaid|handleedit|handledelete/.test(joined);
 
     const failures: string[] = [];
+    if (placeholderMarkers.length > 0) {
+      failures.push(`Starter placeholder markers were detected: ${placeholderMarkers.join(", ")}.`);
+    }
     if (!hasHeading) failures.push("No visible heading was detected.");
     if (!hasPrimaryAction) failures.push("No primary action button or call-to-action was detected.");
     if (requiresInputFlow && (!hasInputs || !hasInteraction)) {
@@ -2638,6 +4107,21 @@ export class AgentTaskRunner {
     }
     if (requiresInputFlow && (!hasStatefulFlow || !hasCollectionView)) {
       failures.push("Expected stateful save/update flow markers were not detected for this app type.");
+    }
+    if (requiresNotesPersistenceFlow && !hasNotesPersistenceFlow) {
+      failures.push("Expected note persistence markers like notes lists, note metadata, or save-note flows were not detected.");
+    }
+    if (requiresCrudMutationFlow && !hasCrudMutationFlow) {
+      failures.push("Expected CRUD mutation markers like edit, delete, update, or status actions were not detected.");
+    }
+    if (requiresCoreProductInputs && (!hasInputs || !hasInteraction)) {
+      failures.push("Expected core product input markers were not detected for this prompt.");
+    }
+    if (requiresCoreProductInputs && !hasStatefulFlow && !hasCollectionView) {
+      failures.push("Expected product workflow or result-surface markers were not detected for this prompt.");
+    }
+    if (requiresSummaryOutput && !hasSummaryOutput) {
+      failures.push("Expected summary result markers were not detected for this prompt.");
     }
 
     if (failures.length > 0) {
@@ -2653,7 +4137,9 @@ export class AgentTaskRunner {
       hasHeading ? "heading" : "",
       hasPrimaryAction ? "primary action" : "",
       requiresInputFlow ? "input flow" : "",
-      requiresInputFlow && hasStatefulFlow ? "stateful flow" : ""
+      requiresInputFlow && hasStatefulFlow ? "stateful flow" : "",
+      requiresNotesPersistenceFlow && hasNotesPersistenceFlow ? "notes persistence flow" : "",
+      requiresCrudMutationFlow && hasCrudMutationFlow ? "crud mutation flow" : ""
     ].filter(Boolean);
     return {
       id: "ui-smoke",
@@ -3179,7 +4665,7 @@ export class AgentTaskRunner {
     taskId: string,
     request: TerminalCommandRequest,
     verifyMs: number,
-    probe?: (result: TerminalCommandResult) => Promise<StartupProbeResult>
+    probe?: StartupVerificationProbe
   ): Promise<TerminalCommandResult> {
     const startedAt = Date.now();
     const command = request.command.trim();
@@ -3196,6 +4682,9 @@ export class AgentTaskRunner {
       let stderr = "";
       let settled = false;
       let successTimer: NodeJS.Timeout | null = null;
+      let verificationResult: TerminalCommandResult | null = null;
+      let cleanupPromise: Promise<void> | null = null;
+      let awaitingCleanupExit = false;
 
       const proc = this.spawnTaskProcess(command, args, cwd);
 
@@ -3234,6 +4723,12 @@ export class AgentTaskRunner {
 
       proc.once("exit", async (code, signal) => {
         if (successTimer) clearTimeout(successTimer);
+        if (awaitingCleanupExit && verificationResult) {
+          if (cleanupPromise) await cleanupPromise;
+          await finish(verificationResult);
+          return;
+        }
+
         const combinedOutput = `${stdout}${stderr}`.trim();
         await finish({
           ok: code === 0 && !this.hasStartupFailureSignal(combinedOutput),
@@ -3252,7 +4747,7 @@ export class AgentTaskRunner {
       successTimer = setTimeout(async () => {
         const combinedOutput = `${stdout}${stderr}`.trim();
         const hasFailure = this.hasStartupFailureSignal(combinedOutput);
-        const result: TerminalCommandResult = {
+        verificationResult = {
           ok: !hasFailure,
           code: null,
           signal: "VERIFIED",
@@ -3265,16 +4760,18 @@ export class AgentTaskRunner {
           cwd
         };
         if (!hasFailure && probe) {
-          const probeResult = await probe(result);
-          const marker = `[served-page] ${probeResult.status} | ${probeResult.details}`;
-          result.combinedOutput = [result.combinedOutput, marker].filter(Boolean).join("\n");
-          result.stderr = [result.stderr, marker].filter(Boolean).join("\n");
+          const probeResult = await probe.run(verificationResult);
+          const marker = `[${probe.label}] ${probeResult.status} | ${probeResult.details}`;
+          verificationResult.combinedOutput = [verificationResult.combinedOutput, marker].filter(Boolean).join("\n");
+          verificationResult.stderr = [verificationResult.stderr, marker].filter(Boolean).join("\n");
           if (probeResult.status === "failed") {
-            result.ok = false;
+            verificationResult.ok = false;
           }
         }
-        await finish(result);
-        await this.terminateProcessTree(proc);
+        awaitingCleanupExit = true;
+        cleanupPromise = this.terminateProcessTree(proc).catch(() => {});
+        await cleanupPromise;
+        await finish(verificationResult);
       }, verifyMs);
     });
   }
@@ -3320,7 +4817,7 @@ export class AgentTaskRunner {
         let fix: FixResponse;
         let usedModelFix = false;
         try {
-          fix = await this.requestStructuredFix(task.id, task.prompt, currentResult, contextFiles, attempt, "Build");
+          fix = await this.requestStructuredFix(task.id, task.prompt, currentResult, contextFiles, attempt, "Build", plan);
           usedModelFix = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unknown model fix failure.";
@@ -3462,7 +4959,7 @@ export class AgentTaskRunner {
         let fix: FixResponse;
         let usedModelFix = false;
         try {
-          fix = await this.requestStructuredFix(task.id, task.prompt, currentResult, contextFiles, attempt, runtimeLabel);
+          fix = await this.requestStructuredFix(task.id, task.prompt, currentResult, contextFiles, attempt, runtimeLabel, plan);
           usedModelFix = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : `Unknown model ${runtimeNoun}-fix failure.`;
@@ -3619,7 +5116,7 @@ export class AgentTaskRunner {
         let fix: FixResponse;
         let usedModelFix = false;
         try {
-          fix = await this.requestStructuredFix(task.id, task.prompt, currentResult, contextFiles, attempt, "Lint");
+          fix = await this.requestStructuredFix(task.id, task.prompt, currentResult, contextFiles, attempt, "Lint", plan);
           usedModelFix = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unknown model lint-fix failure.";
@@ -3699,13 +5196,40 @@ export class AgentTaskRunner {
     return currentResult;
   }
 
-  private async buildExecutionPlan(prompt: string, workingDirectory = "."): Promise<TaskExecutionPlan> {
-    const promptTerms = this.extractPromptTerms(prompt);
+  private getWorkspaceAttachmentPaths(attachments: AttachmentPayload[]): string[] {
+    const paths: string[] = [];
+    for (const attachment of attachments) {
+      const sourcePath = (attachment.sourcePath ?? "").trim();
+      if (!sourcePath) continue;
+      const fullPath = isAbsolute(sourcePath) ? resolve(sourcePath) : resolve(this.workspaceRoot, sourcePath);
+      const relativePath = relative(this.workspaceRoot, fullPath);
+      if (!relativePath || relativePath.startsWith("..") || normalize(relativePath) === "..") continue;
+      paths.push(relativePath.split("\\").join("/"));
+    }
+    return [...new Set(paths)];
+  }
+
+  private async buildExecutionPlan(
+    prompt: string,
+    workingDirectory = ".",
+    attachments: AttachmentPayload[] = []
+  ): Promise<TaskExecutionPlan> {
+    const attachmentTerms = attachments
+      .flatMap((attachment) => [(attachment.name ?? "").trim(), (attachment.sourcePath ?? "").trim()])
+      .flatMap((value) => this.extractPromptTerms(value))
+      .slice(0, 6);
+    const promptTerms = [...new Set([...this.extractPromptTerms(prompt), ...attachmentTerms])].slice(0, 10);
     const candidateFiles = new Set<string>();
     const detectedWorkspaceKind = await this.detectWorkspaceKind(workingDirectory);
-    const requestedPaths = this.extractExplicitPromptFilePaths(prompt, workingDirectory);
+    const requestedPaths = [
+      ...this.extractExplicitPromptFilePaths(prompt, workingDirectory),
+      ...this.getWorkspaceAttachmentPaths(attachments)
+    ];
     const workspaceKind = this.resolveWorkspaceKindForPrompt(prompt, detectedWorkspaceKind, requestedPaths);
+    const builderMode = this.detectBuilderMode(prompt);
     const promptArtifact = this.inferArtifactTypeFromPrompt((prompt ?? "").trim().toLowerCase());
+    const packageManifest = await this.tryReadPackageJson(workingDirectory);
+    const spec = this.buildTaskExecutionSpec(prompt, workingDirectory, workspaceKind, builderMode, promptArtifact, requestedPaths);
     const directCandidates = workspaceKind === "static"
       ? [
         this.joinWorkspacePath(workingDirectory, "package.json"),
@@ -3786,26 +5310,979 @@ export class AgentTaskRunner {
 
     const initialFiles = [...candidateFiles];
     const workspaceManifest = await this.buildWorkspaceManifest(workingDirectory);
-    const workItems = this.buildTaskWorkItems(prompt, workingDirectory, workspaceKind, requestedPaths);
-    const builderMode = this.detectBuilderMode(prompt);
+    const repositoryContext = await this.buildRepositoryContext(workingDirectory, workspaceKind, packageManifest);
+    const workItems = this.buildTaskWorkItems(prompt, workingDirectory, workspaceKind, requestedPaths, spec, repositoryContext);
     const scopedPaths = new Set(workItems.flatMap((item) => item.allowedPaths ?? []));
     const files = (scopedPaths.size > 0
       ? initialFiles.filter((file) => scopedPaths.has(file))
       : initialFiles).slice(0, MAX_CONTEXT_FILES);
     return {
       summary: files.length > 0
-        ? `Planned execution around ${files.length} likely file(s): ${files.join(", ")}. Work items: ${workItems.map((item) => item.title).join(", ")}.`
-        : "No prompt-specific files identified; using default workspace entrypoints.",
+        ? `Planned ${spec.starterProfile} execution around ${files.length} likely file(s): ${files.join(", ")}. Work items: ${workItems.map((item) => item.title).join(", ")}.`
+        : `No prompt-specific files identified; using the ${spec.starterProfile} starter profile.`,
       candidateFiles: files,
       requestedPaths,
       promptTerms,
       workingDirectory,
       workspaceManifest,
+      repositoryContext,
       workItems,
+      spec,
       promptRequirements: this.extractPromptRequirements(prompt),
       workspaceKind,
       builderMode
     };
+  }
+
+  private buildTaskExecutionSpec(
+    prompt: string,
+    workingDirectory: string,
+    workspaceKind: "static" | "react" | "generic",
+    builderMode: TaskExecutionPlan["builderMode"],
+    promptArtifact: AgentArtifactType | null,
+    requestedPaths: string[]
+  ): TaskExecutionSpec {
+    const starterProfile = this.inferStarterProfile(promptArtifact, builderMode, workspaceKind);
+    const domainFocus = this.inferDomainFocus(prompt, starterProfile, promptArtifact);
+    const expectsReadme = this.looksLikeNewProjectPrompt((prompt ?? "").trim().toLowerCase())
+      || requestedPaths.length > 0
+      || this.joinWorkspacePath(workingDirectory).startsWith("generated-apps/");
+    const requiredFiles = this.buildSpecRequiredFiles(workingDirectory, workspaceKind, starterProfile, expectsReadme, requestedPaths);
+    const requiredScriptGroups = this.buildSpecRequiredScriptGroups(starterProfile, workspaceKind);
+    const deliverables = this.buildSpecDeliverables(starterProfile, workspaceKind, expectsReadme);
+    const acceptanceCriteria = this.buildSpecAcceptanceCriteria(starterProfile, builderMode, promptArtifact, domainFocus);
+    const qualityGates = this.buildSpecQualityGates(starterProfile, workspaceKind, expectsReadme);
+    return {
+      summary: `${this.describeStarterProfile(starterProfile)} for ${this.describeDomainFocus(domainFocus)} workflows with ${acceptanceCriteria.length} acceptance gate(s).`,
+      starterProfile,
+      domainFocus,
+      deliverables,
+      acceptanceCriteria,
+      qualityGates,
+      requiredFiles,
+      requiredScriptGroups,
+      expectsReadme
+    };
+  }
+
+  private async buildRepositoryContext(
+    workingDirectory: string,
+    workspaceKind: "static" | "react" | "generic",
+    packageManifest: PackageManifest | null
+  ): Promise<TaskRepositoryContext> {
+    const packageManager = await this.detectPackageManager(workingDirectory);
+    const workspaceShape = await this.detectWorkspaceShape(workingDirectory, workspaceKind);
+    const languageStyle = await this.detectLanguageStyle(workingDirectory);
+    const moduleFormat = this.detectModuleFormat(packageManifest);
+    const uiFramework = this.detectUiFramework(packageManifest, workspaceKind);
+    const styling = this.detectStylingApproach(packageManifest, workspaceKind);
+    const testing = this.detectTestingTool(packageManifest);
+    const linting = this.detectLintingTool(packageManifest);
+    const conventions = [
+      packageManager !== "unknown" ? `Use ${packageManager} commands and lockfile conventions.` : "",
+      languageStyle === "typescript" ? "Prefer TypeScript files and typed interfaces." : "",
+      languageStyle === "javascript" ? "Prefer JavaScript files unless the repo already mixes TS." : "",
+      moduleFormat === "esm" ? "Keep Node-facing code in ESM format unless a file already uses CommonJS." : "",
+      moduleFormat === "commonjs" ? "Keep Node-facing code in CommonJS unless there is a strong reason to migrate." : "",
+      uiFramework === "react" ? "Preserve the existing React app structure and entrypoint style." : "",
+      uiFramework === "nextjs" ? "Preserve Next.js app conventions instead of adding parallel entrypoints." : "",
+      styling === "tailwind" ? "Prefer existing utility-class styling over introducing parallel CSS systems." : "",
+      styling === "css" ? "Prefer the existing CSS file approach over introducing a new styling stack." : "",
+      testing !== "none" && testing !== "unknown" ? `Keep ${testing} as the primary test style.` : "",
+      linting !== "none" && linting !== "unknown" ? `Keep ${linting} as the linting convention.` : "",
+      workspaceShape === "monorepo" ? "Respect the current multi-package workspace layout and avoid flattening packages." : ""
+    ].filter(Boolean);
+
+    const summaryParts = [
+      workspaceShape !== "unknown" ? workspaceShape.replace(/-/g, " ") : "",
+      packageManager !== "unknown" ? packageManager : "",
+      languageStyle !== "unknown" ? languageStyle : "",
+      uiFramework !== "unknown" && uiFramework !== "none" ? uiFramework : "",
+      styling !== "unknown" ? styling : "",
+      testing !== "unknown" && testing !== "none" ? `tests: ${testing}` : "",
+      linting !== "unknown" && linting !== "none" ? `lint: ${linting}` : ""
+    ].filter(Boolean);
+
+    return {
+      summary: summaryParts.length > 0 ? `Repo conventions: ${summaryParts.join(", ")}.` : "Repo conventions are mostly unknown; prefer the current file layout.",
+      workspaceShape,
+      packageManager,
+      languageStyle,
+      moduleFormat,
+      uiFramework,
+      styling,
+      testing,
+      linting,
+      conventions
+    };
+  }
+
+  private async detectPackageManager(workingDirectory: string): Promise<TaskRepositoryContext["packageManager"]> {
+    const checks: Array<{ path: string; label: TaskRepositoryContext["packageManager"] }> = [
+      { path: this.joinWorkspacePath(workingDirectory, "pnpm-lock.yaml"), label: "pnpm" },
+      { path: this.joinWorkspacePath(workingDirectory, "yarn.lock"), label: "yarn" },
+      { path: this.joinWorkspacePath(workingDirectory, "package-lock.json"), label: "npm" },
+      { path: "pnpm-lock.yaml", label: "pnpm" },
+      { path: "yarn.lock", label: "yarn" },
+      { path: "package-lock.json", label: "npm" }
+    ];
+    for (const check of checks) {
+      if (await this.pathExists(this.resolveWorkspacePath(check.path))) {
+        return check.label;
+      }
+    }
+    return "unknown";
+  }
+
+  private async detectWorkspaceShape(
+    workingDirectory: string,
+    workspaceKind: "static" | "react" | "generic"
+  ): Promise<TaskRepositoryContext["workspaceShape"]> {
+    if (workspaceKind === "static") return "static-site";
+    const packageJson = this.joinWorkspacePath(workingDirectory, "package.json");
+    const rootPackageJson = "package.json";
+    const hasNestedPackagesDir = await this.pathExists(this.resolveWorkspacePath("packages"));
+    const hasAppsDir = await this.pathExists(this.resolveWorkspacePath("apps"));
+    const isRoot = (workingDirectory ?? ".").trim() === ".";
+    if ((hasNestedPackagesDir || hasAppsDir) && isRoot) {
+      return "monorepo";
+    }
+    if (await this.pathExists(this.resolveWorkspacePath(packageJson)) || await this.pathExists(this.resolveWorkspacePath(rootPackageJson))) {
+      return "single-package";
+    }
+    return "unknown";
+  }
+
+  private async detectLanguageStyle(workingDirectory: string): Promise<TaskRepositoryContext["languageStyle"]> {
+    const candidates = [
+      this.joinWorkspacePath(workingDirectory, "tsconfig.json"),
+      this.joinWorkspacePath(workingDirectory, "src/main.tsx"),
+      this.joinWorkspacePath(workingDirectory, "src/App.tsx"),
+      this.joinWorkspacePath(workingDirectory, "src/index.ts"),
+      this.joinWorkspacePath(workingDirectory, "src/server.ts"),
+      this.joinWorkspacePath(workingDirectory, "src/main.js"),
+      this.joinWorkspacePath(workingDirectory, "src/App.jsx"),
+      this.joinWorkspacePath(workingDirectory, "src/index.js"),
+      this.joinWorkspacePath(workingDirectory, "src/server.js")
+    ];
+    let hasTs = false;
+    let hasJs = false;
+    for (const candidate of candidates) {
+      if (/\.(ts|tsx)$/.test(candidate) && await this.pathExists(this.resolveWorkspacePath(candidate))) {
+        hasTs = true;
+      }
+      if (/\.(js|jsx)$/.test(candidate) && await this.pathExists(this.resolveWorkspacePath(candidate))) {
+        hasJs = true;
+      }
+    }
+    if (await this.pathExists(this.resolveWorkspacePath(this.joinWorkspacePath(workingDirectory, "tsconfig.json")))) {
+      hasTs = true;
+    }
+    if (hasTs && hasJs) return "mixed";
+    if (hasTs) return "typescript";
+    if (hasJs) return "javascript";
+    return "unknown";
+  }
+
+  private detectModuleFormat(packageManifest: PackageManifest | null): TaskRepositoryContext["moduleFormat"] {
+    const type = (packageManifest?.type ?? "").trim().toLowerCase();
+    if (type === "module") return "esm";
+    if (type === "commonjs") return "commonjs";
+    const main = (packageManifest?.main ?? "").trim().toLowerCase();
+    if (main.endsWith(".mjs")) return "esm";
+    if (main.endsWith(".cjs")) return "commonjs";
+    return "unknown";
+  }
+
+  private detectUiFramework(
+    packageManifest: PackageManifest | null,
+    workspaceKind: "static" | "react" | "generic"
+  ): TaskRepositoryContext["uiFramework"] {
+    const deps = new Set([
+      ...Object.keys(packageManifest?.dependencies ?? {}),
+      ...Object.keys(packageManifest?.devDependencies ?? {})
+    ].map((item) => item.toLowerCase()));
+    if (deps.has("next")) return "nextjs";
+    if (deps.has("react") || deps.has("react-dom") || workspaceKind === "react") return "react";
+    if (workspaceKind === "static") return "none";
+    return "unknown";
+  }
+
+  private detectStylingApproach(
+    packageManifest: PackageManifest | null,
+    workspaceKind: "static" | "react" | "generic"
+  ): TaskRepositoryContext["styling"] {
+    const deps = new Set([
+      ...Object.keys(packageManifest?.dependencies ?? {}),
+      ...Object.keys(packageManifest?.devDependencies ?? {})
+    ].map((item) => item.toLowerCase()));
+    const hasTailwind = deps.has("tailwindcss") || deps.has("@tailwindcss/vite");
+    const hasCss = workspaceKind === "static" || deps.has("react") || deps.has("vite") || deps.has("next");
+    if (hasTailwind && hasCss) return "mixed";
+    if (hasTailwind) return "tailwind";
+    if (hasCss) return "css";
+    return "unknown";
+  }
+
+  private detectTestingTool(packageManifest: PackageManifest | null): TaskRepositoryContext["testing"] {
+    const deps = new Set([
+      ...Object.keys(packageManifest?.dependencies ?? {}),
+      ...Object.keys(packageManifest?.devDependencies ?? {})
+    ].map((item) => item.toLowerCase()));
+    if (deps.has("vitest")) return "vitest";
+    if (deps.has("jest")) return "jest";
+    const scripts = Object.values(packageManifest?.scripts ?? {}).join(" ").toLowerCase();
+    if (/\bnode\b.*--test|\bnode:test\b/.test(scripts)) return "node:test";
+    return Object.keys(packageManifest?.scripts ?? {}).includes("test") ? "unknown" : "none";
+  }
+
+  private detectLintingTool(packageManifest: PackageManifest | null): TaskRepositoryContext["linting"] {
+    const deps = new Set([
+      ...Object.keys(packageManifest?.dependencies ?? {}),
+      ...Object.keys(packageManifest?.devDependencies ?? {})
+    ].map((item) => item.toLowerCase()));
+    if (deps.has("eslint")) return "eslint";
+    if (deps.has("@biomejs/biome")) return "biome";
+    return Object.keys(packageManifest?.scripts ?? {}).includes("lint") ? "unknown" : "none";
+  }
+
+  private inferStarterProfile(
+    promptArtifact: AgentArtifactType | null,
+    builderMode: TaskExecutionPlan["builderMode"],
+    workspaceKind: "static" | "react" | "generic"
+  ): StarterProfile {
+    if (promptArtifact === "desktop-app") return "electron-desktop";
+    if (promptArtifact === "api-service") return "node-api-service";
+    if (promptArtifact === "script-tool") return "node-cli";
+    if (promptArtifact === "library") return "node-library";
+    if (builderMode === "dashboard") return "react-dashboard";
+    if (builderMode === "crud") return "react-crud";
+    if (builderMode === "kanban") return "react-kanban";
+    if (builderMode === "notes") return "react-notes";
+    if (builderMode === "landing" || workspaceKind === "static") return "static-marketing";
+    if (workspaceKind === "react") return "react-web-app";
+    return "workspace-change";
+  }
+
+  private describeStarterProfile(profile: StarterProfile): string {
+    switch (profile) {
+      case "react-dashboard":
+        return "React dashboard starter";
+      case "react-crud":
+        return "React CRUD starter";
+      case "react-kanban":
+        return "React kanban starter";
+      case "react-notes":
+        return "React notes starter";
+      case "static-marketing":
+        return "Static marketing starter";
+      case "electron-desktop":
+        return "Electron desktop starter";
+      case "node-api-service":
+        return "Node API starter";
+      case "node-cli":
+        return "Node CLI starter";
+      case "node-library":
+        return "Node library starter";
+      case "react-web-app":
+        return "React app starter";
+      default:
+        return "Workspace change plan";
+    }
+  }
+
+  private inferDomainFocus(
+    prompt: string,
+    starterProfile: StarterProfile,
+    promptArtifact: AgentArtifactType | null
+  ): DomainFocus {
+    const normalized = (prompt ?? "").trim().toLowerCase();
+    if (!normalized) return "generic";
+    if (/\b(crm|lead|customer|client|sales pipeline|opportunit(?:y|ies)|account manager)\b/.test(normalized)) {
+      return "crm";
+    }
+    if (/\b(inventory|stock|warehouse|sku|purchase order|supplier|suppliers|catalog)\b/.test(normalized)) {
+      return "inventory";
+    }
+    if (/\b(schedule|scheduling|calendar|appointment|booking|roster|technician visit|dispatch)\b/.test(normalized)) {
+      return "scheduling";
+    }
+    if (/\b(finance|financial|revenue|expense|budget|cash flow|invoice|billing|payments?)\b/.test(normalized)) {
+      return "finance";
+    }
+    if (/\b(operations|incident|escalation|wallboard|service desk|support queue|sla|uptime)\b/.test(normalized)) {
+      return "operations";
+    }
+    if (/\b(admin|internal tool|back office|moderation|approval|permissions?)\b/.test(normalized)) {
+      return "admin";
+    }
+    if (starterProfile === "node-api-service" && /\b(ticket|support|queue)\b/.test(normalized)) {
+      return "operations";
+    }
+    if (promptArtifact === "desktop-app" && /\b(shop|store|retail)\b/.test(normalized)) {
+      return "inventory";
+    }
+    return "generic";
+  }
+
+  private describeDomainFocus(domainFocus: DomainFocus): string {
+    switch (domainFocus) {
+      case "operations":
+        return "operations";
+      case "crm":
+        return "CRM";
+      case "inventory":
+        return "inventory";
+      case "scheduling":
+        return "scheduling";
+      case "finance":
+        return "finance";
+      case "admin":
+        return "internal admin";
+      default:
+        return "general";
+    }
+  }
+
+  private buildDashboardDomainContent(domainFocus: DomainFocus): {
+    sidebarEyebrow: string;
+    headerEyebrow: string;
+    headerTitle: string;
+    headerCopy: string;
+    buttonLabel: string;
+    chartTitle: string;
+    chartRange: string;
+    activityTitle: string;
+    activityBadge: string;
+    teamTitle: string;
+    teamBadge: string;
+    signalTitle: string;
+    signalBadge: string;
+    signalCopy: string;
+    filterLabel: string;
+    searchLabel: string;
+    searchPlaceholder: string;
+    dealsTitle: string;
+    dealsBadge: string;
+    dealsSummary: string;
+    nav: string[];
+    regions: string[];
+    metrics: Array<{ label: string; value: string; change: string; tone: "up" | "down" }>;
+    activities: string[];
+    team: Array<{ name: string; role: string; status: string }>;
+    deals: Array<{ name: string; region: string; stage: string; value: string }>;
+    chartHeights: string[];
+    staticLede: string;
+    staticButtonLabel: string;
+    staticTrendTitle: string;
+    staticTrendBadge: string;
+    staticActivityTitle: string;
+    staticActivityBadge: string;
+    staticStats: Array<{ label: string; value: string | number; delta: string }>;
+    staticTrend: number[];
+    staticActivity: string[];
+  } {
+    switch (domainFocus) {
+      case "finance":
+        return {
+          sidebarEyebrow: "Finance cockpit",
+          headerEyebrow: "Finance snapshot",
+          headerTitle: "Cash, collections, and burn at a glance.",
+          headerCopy: "Track revenue health, overdue invoices, and budget drift without flipping between spreadsheets.",
+          buttonLabel: "Export forecast",
+          chartTitle: "Collections trend",
+          chartRange: "Last 6 weeks",
+          activityTitle: "Recent finance activity",
+          activityBadge: "Ledger sync",
+          teamTitle: "Finance owners",
+          teamBadge: "This week",
+          signalTitle: "Financial signal",
+          signalBadge: "Top movement",
+          signalCopy: "Collections improved after the latest invoice reminder run, while discretionary spend stayed inside the monthly target.",
+          filterLabel: "Region filter",
+          searchLabel: "Find a deal",
+          searchPlaceholder: "Search account, stage, or region",
+          dealsTitle: "Recent deals",
+          dealsBadge: "7-day view",
+          dealsSummary: "The latest wins skew toward EMEA renewals, while North America still carries the largest open enterprise expansion.",
+          nav: ["Overview", "Collections", "Activity", "Owners"],
+          regions: ["All regions", "North America", "EMEA", "APAC"],
+          metrics: [
+            { label: "Revenue", value: "$428k", change: "+8.2%", tone: "up" },
+            { label: "Overdue invoices", value: "19", change: "-5", tone: "up" },
+            { label: "Budget variance", value: "2.1%", change: "-0.6%", tone: "up" }
+          ],
+          activities: [
+            "Collections team cleared six overdue accounts before noon.",
+            "The budget review flagged one campaign above forecasted spend.",
+            "Finance approved the updated vendor payment run.",
+            "Quarter-close checklist is ready for final sign-off."
+          ],
+          team: [
+            { name: "Aisha", role: "Controller", status: "On track" },
+            { name: "Mina", role: "Collections lead", status: "Following up" },
+            { name: "Zayd", role: "FP&A", status: "Forecasting" }
+          ],
+          deals: [
+            { name: "Northstar Renewal", region: "EMEA", stage: "Verbal commit", value: "$86k" },
+            { name: "Helio Expansion", region: "North America", stage: "Procurement", value: "$54k" },
+            { name: "Atlas Rollout", region: "APAC", stage: "Forecast", value: "$41k" },
+            { name: "Luma Recovery", region: "EMEA", stage: "Collections", value: "$19k" }
+          ],
+          chartHeights: ["48%", "58%", "68%", "64%", "80%", "72%"],
+          staticLede: "A responsive static finance dashboard with cash, collections, and budget visibility.",
+          staticButtonLabel: "Refresh finance view",
+          staticTrendTitle: "Collections trend",
+          staticTrendBadge: "Stable",
+          staticActivityTitle: "Finance activity",
+          staticActivityBadge: "Live",
+          staticStats: [
+            { label: "Revenue run-rate", value: "$428k", delta: "+8%" },
+            { label: "Invoices due", value: 19, delta: "-5" },
+            { label: "Budget variance", value: "2.1%", delta: "-0.6%" },
+            { label: "Payment runs", value: 3, delta: "+1" }
+          ],
+          staticTrend: [60, 74, 69, 88, 92, 86],
+          staticActivity: [
+            "Collections sent the second reminder batch to overdue accounts.",
+            "AP scheduled the next vendor payment release for tomorrow morning.",
+            "Finance leadership approved the revised operating budget.",
+            "Month-close exceptions dropped below the escalation threshold."
+          ]
+        };
+      case "operations":
+        return {
+          sidebarEyebrow: "Operations hub",
+          headerEyebrow: "Ops snapshot",
+          headerTitle: "Clarity for the queue, fast.",
+          headerCopy: "Scan incidents, SLA risk, and escalation load without digging through tabs or chat threads.",
+          buttonLabel: "Export handoff",
+          chartTitle: "Incident load",
+          chartRange: "Last 24 hours",
+          activityTitle: "Recent incidents",
+          activityBadge: "Live feed",
+          teamTitle: "Shift owners",
+          teamBadge: "Current rotation",
+          signalTitle: "Top escalation",
+          signalBadge: "Right now",
+          signalCopy: "Escalations dropped after the latest queue rebalance, but one regional incident still needs senior review before handoff.",
+          filterLabel: "Region filter",
+          searchLabel: "Search queue",
+          searchPlaceholder: "Search incident, queue, or region",
+          dealsTitle: "Priority queue",
+          dealsBadge: "Needs review",
+          dealsSummary: "Use the queue filters to narrow regional load before the next dispatch handoff.",
+          nav: ["Overview", "Queue", "Activity", "Shift"],
+          regions: ["All regions", "North", "Central", "South"],
+          metrics: [
+            { label: "Open incidents", value: "14", change: "-3", tone: "up" },
+            { label: "SLA at risk", value: "4", change: "-1", tone: "up" },
+            { label: "Resolved today", value: "29", change: "+7", tone: "up" }
+          ],
+          activities: [
+            "Priority queue dropped below the morning escalation threshold.",
+            "Incident INC-482 moved to vendor investigation with notes attached.",
+            "The overnight shift cleared the oldest backlog batch.",
+            "Customer comms went out for the payment gateway disruption."
+          ],
+          team: [
+            { name: "Aisha", role: "Ops lead", status: "Coordinating" },
+            { name: "Mina", role: "Service desk", status: "Reviewing" },
+            { name: "Zayd", role: "Escalation manager", status: "Escalated" }
+          ],
+          deals: [
+            { name: "Gateway incident", region: "North", stage: "Escalated", value: "P1" },
+            { name: "Dispatch backlog", region: "Central", stage: "Queued", value: "18 jobs" },
+            { name: "Vendor outage", region: "South", stage: "Investigating", value: "P2" },
+            { name: "SLA breach watch", region: "North", stage: "Monitoring", value: "4 at risk" }
+          ],
+          chartHeights: ["42%", "56%", "74%", "61%", "88%", "70%"],
+          staticLede: "A responsive static dashboard with incidents, service health, and a compact operational summary.",
+          staticButtonLabel: "Refresh queue",
+          staticTrendTitle: "Incident trend",
+          staticTrendBadge: "Stable",
+          staticActivityTitle: "Operational activity",
+          staticActivityBadge: "Live",
+          staticStats: [
+            { label: "Open incidents", value: 14, delta: "-3" },
+            { label: "Escalations", value: 5, delta: "-1" },
+            { label: "SLA risk", value: "3.2%", delta: "-0.4%" },
+            { label: "Resolved today", value: 29, delta: "+7" }
+          ],
+          staticTrend: [58, 78, 66, 92, 81, 108],
+          staticActivity: [
+            "Ops flagged two stale incidents and resolved one automatically.",
+            "Dispatch handed a regional outage to the network team.",
+            "The service desk cleared the overnight inbox triage queue.",
+            "The latest smoke run passed before the release handoff."
+          ]
+        };
+      default:
+        return {
+          sidebarEyebrow: "Operations hub",
+          headerEyebrow: "Operations snapshot",
+          headerTitle: "Clarity for the team, fast.",
+          headerCopy: "One place to scan performance, momentum, and the next actions without digging through tabs.",
+          buttonLabel: "Export report",
+          chartTitle: "Pipeline",
+          chartRange: "Last 30 days",
+          activityTitle: "Recent activity",
+          activityBadge: "Live feed",
+          teamTitle: "Team focus",
+          teamBadge: "This week",
+          signalTitle: "What changed",
+          signalBadge: "Top signal",
+          signalCopy: "Conversion improved after the latest onboarding update, while support load stayed flat. The current setup is stable enough to scale spend.",
+          filterLabel: "Region filter",
+          searchLabel: "Search pipeline",
+          searchPlaceholder: "Search account, owner, or stage",
+          dealsTitle: "Recent deals",
+          dealsBadge: "Fresh activity",
+          dealsSummary: "The recent pipeline view keeps open expansion, renewals, and at-risk deals in one scan-friendly list.",
+          nav: ["Overview", "Pipeline", "Activity", "Team"],
+          regions: ["All regions", "North America", "EMEA", "APAC"],
+          metrics: [
+            { label: "Revenue", value: "$128k", change: "+12.4%", tone: "up" },
+            { label: "Active users", value: "8,421", change: "+6.8%", tone: "up" },
+            { label: "Conversion", value: "4.7%", change: "+0.9%", tone: "up" }
+          ],
+          activities: [
+            "Enterprise lead upgraded to annual plan",
+            "Marketing campaign reached target CPA",
+            "Customer success cleared 18 open tickets",
+            "New release health checks passed"
+          ],
+          team: [
+            { name: "Aisha", role: "Ops lead", status: "On track" },
+            { name: "Mina", role: "Customer success", status: "Reviewing" },
+            { name: "Zayd", role: "Growth", status: "Shipping" }
+          ],
+          deals: [
+            { name: "Bluebird expansion", region: "North America", stage: "Proposal", value: "$38k" },
+            { name: "Meridian renewal", region: "EMEA", stage: "Commit", value: "$22k" },
+            { name: "Sunline pilot", region: "APAC", stage: "Discovery", value: "$16k" },
+            { name: "Oakridge upsell", region: "North America", stage: "Negotiation", value: "$29k" }
+          ],
+          chartHeights: ["42%", "56%", "74%", "61%", "88%", "70%"],
+          staticLede: "A responsive static dashboard with metrics, activity, and a compact operational summary.",
+          staticButtonLabel: "Refresh metrics",
+          staticTrendTitle: "Pipeline trend",
+          staticTrendBadge: "Stable",
+          staticActivityTitle: "Recent activity",
+          staticActivityBadge: "Live",
+          staticStats: [
+            { label: "Qualified leads", value: 128, delta: "+14%" },
+            { label: "Active projects", value: 18, delta: "+3" },
+            { label: "Conversion", value: "6.4%", delta: "+0.8%" },
+            { label: "Open issues", value: 7, delta: "-2" }
+          ],
+          staticTrend: [58, 78, 66, 92, 81, 108],
+          staticActivity: [
+            "Design review cleared for the next release candidate.",
+            "Ops flagged two stale incidents and resolved one automatically.",
+            "Product accepted the new onboarding sequence.",
+            "Support queue dropped below the daily target."
+          ]
+        };
+    }
+  }
+
+  private buildCrudDomainContent(domainFocus: DomainFocus): {
+    eyebrow: string;
+    lede: string;
+    singularLabel: string;
+    pluralLabel: string;
+    nameLabel: string;
+    categoryLabel: string;
+    ownerLabel: string;
+    searchLabel: string;
+    namePlaceholder: string;
+    categoryPlaceholder: string;
+    ownerPlaceholder: string;
+    initialRecords: Array<{ id: string; name: string; category: string; owner: string; status: "Active" | "Review" | "Archived" }>;
+  } {
+    switch (domainFocus) {
+      case "crm":
+        return {
+          eyebrow: "CRM workspace",
+          lede: "Track accounts, pipeline stage, and ownership in one compact team workspace.",
+          singularLabel: "account",
+          pluralLabel: "accounts",
+          nameLabel: "Account name",
+          categoryLabel: "Pipeline stage",
+          ownerLabel: "Account owner",
+          searchLabel: "Search accounts",
+          namePlaceholder: "Apex Holdings",
+          categoryPlaceholder: "Discovery, proposal, renewal...",
+          ownerPlaceholder: "Who owns the account?",
+          initialRecords: [
+            { id: "1", name: "Northwind Holdings", category: "Proposal", owner: "Aisha", status: "Active" },
+            { id: "2", name: "Blue Mesa Retail", category: "Renewal", owner: "Zayd", status: "Review" },
+            { id: "3", name: "Harbor Logistics", category: "Closed lost", owner: "Mina", status: "Archived" }
+          ]
+        };
+      case "inventory":
+        return {
+          eyebrow: "Inventory workspace",
+          lede: "Manage stock items, supplier ownership, and review queues without leaving the list view.",
+          singularLabel: "item",
+          pluralLabel: "items",
+          nameLabel: "Item name",
+          categoryLabel: "SKU or category",
+          ownerLabel: "Supplier or owner",
+          searchLabel: "Search items",
+          namePlaceholder: "Warehouse scanner",
+          categoryPlaceholder: "Peripheral, shelf B2, SKU-4421...",
+          ownerPlaceholder: "Supplier or stock owner",
+          initialRecords: [
+            { id: "1", name: "Portable scanner", category: "SKU-4421", owner: "Northwind Supply", status: "Active" },
+            { id: "2", name: "Packing labels", category: "Consumables", owner: "Mina", status: "Review" },
+            { id: "3", name: "Returns bin", category: "Backroom", owner: "Zayd", status: "Archived" }
+          ]
+        };
+      default:
+        return {
+          eyebrow: "Cipher Workspace",
+          lede: "A focused CRUD workspace for managing records, reviewing ownership, and keeping the list organized.",
+          singularLabel: "record",
+          pluralLabel: "records",
+          nameLabel: "Name",
+          categoryLabel: "Category",
+          ownerLabel: "Owner",
+          searchLabel: "Search",
+          namePlaceholder: "Project, client, asset...",
+          categoryPlaceholder: "Sales, Ops, Finance...",
+          ownerPlaceholder: "Who is responsible?",
+          initialRecords: [
+            { id: "1", name: "Northwind Pipeline", category: "Sales", owner: "Aisha", status: "Active" },
+            { id: "2", name: "Q2 Hiring Plan", category: "People", owner: "Zayd", status: "Review" },
+            { id: "3", name: "Support Audit", category: "Operations", owner: "Mina", status: "Archived" }
+          ]
+        };
+    }
+  }
+
+  private buildDesktopDomainContent(domainFocus: DomainFocus): {
+    kicker: string;
+    copy: string;
+    modeValue: string;
+    modeCopy: string;
+    checklistTitle: string;
+    checklistItems: string[];
+    actionTitle: string;
+    shortcuts: string[];
+    activityTitle: string;
+    activity: Array<{ label: string; detail: string }>;
+  } {
+    switch (domainFocus) {
+      case "inventory":
+        return {
+          kicker: "Desktop inventory shell",
+          copy: "A local-first workspace for stock reviews, receiving tasks, and store-floor inventory coordination.",
+          modeValue: "Ready for item and supplier workflows",
+          modeCopy: "Use this shell for purchase orders, stock counts, and replenishment views backed by local data or IPC.",
+          checklistTitle: "Launch checklist",
+          checklistItems: [
+            "Map receiving, cycle-count, and reorder workflows",
+            "Wire inventory persistence or barcode-connected data",
+            "Keep packaging healthy for store-floor deployment"
+          ],
+          actionTitle: "Quick actions",
+          shortcuts: ["Open stock board", "Review suppliers", "Prepare reorder"],
+          activityTitle: "Recent activity",
+          activity: [
+            { label: "Receiving", detail: "12 inbound line items are ready for verification" },
+            { label: "Shelf counts", detail: "Backroom count variance dropped below 2 percent" },
+            { label: "Reorder prep", detail: "Three SKUs crossed the replenishment threshold" }
+          ]
+        };
+      case "scheduling":
+        return {
+          kicker: "Desktop scheduling shell",
+          copy: "A focused desktop shell for dispatch boards, technician appointments, and day-of schedule adjustments.",
+          modeValue: "Ready for dispatch and booking flows",
+          modeCopy: "Replace this shell with route planning, appointment details, and schedule conflict handling.",
+          checklistTitle: "Launch checklist",
+          checklistItems: [
+            "Map booking, dispatch, and reschedule flows",
+            "Wire appointments to local persistence or synced APIs",
+            "Keep packaging healthy for dispatcher workstations"
+          ],
+          actionTitle: "Quick actions",
+          shortcuts: ["Open dispatch board", "Review bookings", "Resolve conflicts"],
+          activityTitle: "Recent activity",
+          activity: [
+            { label: "Dispatch", detail: "Seven technician visits are ready for route balancing" },
+            { label: "Conflicts", detail: "Two overlapping bookings were flagged for reassignment" },
+            { label: "Field updates", detail: "Morning appointment confirmations synced locally" }
+          ]
+        };
+      default:
+        return {
+          kicker: "Desktop starter app",
+          copy: "A focused local-first shell for operational workflows, offline review, and release-ready task handling.",
+          modeValue: "Ready for domain-specific screens",
+          modeCopy: "Replace this starter shell with the real product workflow, navigation, and data bindings.",
+          checklistTitle: "Launch checklist",
+          checklistItems: [
+            "Map the main desktop workflow",
+            "Wire real persistence or IPC data sources",
+            "Keep packaging scripts healthy for Windows delivery"
+          ],
+          actionTitle: "Quick actions",
+          shortcuts: ["Open workspace", "Review logs", "Prepare release"],
+          activityTitle: "Recent activity",
+          activity: [
+            { label: "Inbox triage", detail: "7 local tasks ready for review" },
+            { label: "Build status", detail: "Latest smoke run passed with preview ready" },
+            { label: "Release prep", detail: "Installer, notes, and changelog still open" }
+          ]
+        };
+    }
+  }
+
+  private buildApiEntityForDomain(domainFocus: DomainFocus): {
+    singular: string;
+    plural: string;
+    collectionPath: string;
+    primaryField: string;
+    defaultPrimaryValue: string;
+  } {
+    switch (domainFocus) {
+      case "finance":
+        return {
+          singular: "invoice",
+          plural: "invoices",
+          collectionPath: "/invoices",
+          primaryField: "customer",
+          defaultPrimaryValue: "Acme Corp"
+        };
+      case "operations":
+        return {
+          singular: "ticket",
+          plural: "tickets",
+          collectionPath: "/tickets",
+          primaryField: "subject",
+          defaultPrimaryValue: "Login issue"
+        };
+      case "scheduling":
+        return {
+          singular: "booking",
+          plural: "bookings",
+          collectionPath: "/bookings",
+          primaryField: "guest",
+          defaultPrimaryValue: "Jordan Lee"
+        };
+      case "inventory":
+        return {
+          singular: "item",
+          plural: "items",
+          collectionPath: "/items",
+          primaryField: "title",
+          defaultPrimaryValue: "Portable scanner"
+        };
+      default:
+        return {
+          singular: "record",
+          plural: "records",
+          collectionPath: "/records",
+          primaryField: "title",
+          defaultPrimaryValue: "Sample item"
+        };
+    }
+  }
+
+  private buildSpecRequiredFiles(
+    workingDirectory: string,
+    workspaceKind: "static" | "react" | "generic",
+    starterProfile: StarterProfile,
+    expectsReadme: boolean,
+    requestedPaths: string[]
+  ): string[] {
+    const required = new Set<string>();
+    const add = (path: string): void => {
+      if (this.isPathInsideWorkingDirectory(path, workingDirectory)) {
+        required.add(path);
+      }
+    };
+
+    if (workspaceKind === "static") {
+      add(this.joinWorkspacePath(workingDirectory, "index.html"));
+      add(this.joinWorkspacePath(workingDirectory, "styles.css"));
+      add(this.joinWorkspacePath(workingDirectory, "app.js"));
+    } else if (workspaceKind === "react") {
+      add(this.joinWorkspacePath(workingDirectory, "package.json"));
+      add(this.joinWorkspacePath(workingDirectory, "index.html"));
+      add(this.joinWorkspacePath(workingDirectory, "src/main.tsx"));
+      add(this.joinWorkspacePath(workingDirectory, "src/App.tsx"));
+    } else if (starterProfile !== "workspace-change") {
+      add(this.joinWorkspacePath(workingDirectory, "package.json"));
+    }
+
+    if (starterProfile === "electron-desktop") {
+      add(this.joinWorkspacePath(workingDirectory, "electron/main.mjs"));
+      add(this.joinWorkspacePath(workingDirectory, "electron/preload.mjs"));
+      add(this.joinWorkspacePath(workingDirectory, "scripts/desktop-launch.mjs"));
+    }
+    if (starterProfile === "node-api-service") {
+      add(this.joinWorkspacePath(workingDirectory, "src/server.js"));
+    }
+    if (starterProfile === "node-cli" || starterProfile === "node-library") {
+      add(this.joinWorkspacePath(workingDirectory, "src/index.js"));
+    }
+    if (expectsReadme) {
+      add(this.joinWorkspacePath(workingDirectory, "README.md"));
+    }
+    for (const path of requestedPaths) {
+      add(path);
+    }
+    return [...required];
+  }
+
+  private buildSpecRequiredScriptGroups(
+    starterProfile: StarterProfile,
+    workspaceKind: "static" | "react" | "generic"
+  ): TaskExecutionSpecScriptGroup[] {
+    if (workspaceKind === "static") {
+      return [
+        { label: "build", options: ["build"] },
+        { label: "serve", options: ["start"] }
+      ];
+    }
+    if (starterProfile === "workspace-change") return [];
+    if (starterProfile === "node-library") {
+      return [{ label: "build", options: ["build"] }];
+    }
+    if (starterProfile === "electron-desktop") {
+      return [
+        { label: "build", options: ["build"] },
+        { label: "run", options: ["start"] },
+        { label: "package", options: ["package:win"] }
+      ];
+    }
+    return [
+      { label: "build", options: ["build"] },
+      { label: "run", options: ["start", "dev"] }
+    ];
+  }
+
+  private buildSpecDeliverables(
+    starterProfile: StarterProfile,
+    workspaceKind: "static" | "react" | "generic",
+    expectsReadme: boolean
+  ): string[] {
+    const deliverables = new Set<string>();
+    if (workspaceKind === "static") {
+      deliverables.add("Browser entry page");
+      deliverables.add("Stylesheet");
+      deliverables.add("Client-side interaction script");
+    }
+    if (workspaceKind === "react") {
+      deliverables.add("React application shell");
+      deliverables.add("Typed entrypoint and UI component");
+    }
+    if (starterProfile === "electron-desktop") {
+      deliverables.add("Desktop main process and launch script");
+      deliverables.add("Installer-ready package configuration");
+    } else if (starterProfile === "node-api-service") {
+      deliverables.add("HTTP service entrypoint");
+      deliverables.add("Runnable package manifest");
+    } else if (starterProfile === "node-cli") {
+      deliverables.add("Runnable CLI entrypoint");
+      deliverables.add("Runnable package manifest");
+    } else if (starterProfile === "node-library") {
+      deliverables.add("Library entrypoint");
+      deliverables.add("Buildable package manifest");
+    }
+    if (expectsReadme) {
+      deliverables.add("Project README");
+    }
+    if (deliverables.size === 0) {
+      deliverables.add("Scoped workspace changes");
+    }
+    return [...deliverables];
+  }
+
+  private buildSpecAcceptanceCriteria(
+    starterProfile: StarterProfile,
+    builderMode: TaskExecutionPlan["builderMode"],
+    promptArtifact: AgentArtifactType | null,
+    domainFocus: DomainFocus
+  ): string[] {
+    const criteria: string[] = [];
+    if (starterProfile === "static-marketing") {
+      criteria.push("The page has complete sections and a visible call to action.");
+      criteria.push("The generated page remains responsive without depending on external assets.");
+    }
+    if (builderMode === "dashboard") {
+      criteria.push("The UI shows metrics, recent activity, and a scan-friendly summary view.");
+    }
+    if (builderMode === "crud" || builderMode === "notes" || builderMode === "kanban") {
+      criteria.push("Users can create and update visible records without placeholder-only UI.");
+      criteria.push("State changes are reflected in the rendered collection view.");
+    }
+    if (starterProfile === "electron-desktop") {
+      criteria.push("The desktop project boots locally and is suitable for Windows packaging.");
+    }
+    if (promptArtifact === "web-app" || promptArtifact === "desktop-app") {
+      criteria.push("The app implements the prompt's primary user workflow instead of a generic starter shell.");
+    }
+    if (starterProfile === "node-api-service") {
+      criteria.push("The service boots cleanly and responds from a server entrypoint.");
+    }
+    if (starterProfile === "node-cli") {
+      criteria.push("The CLI runs from the package scripts without extra manual wiring.");
+    }
+    if (starterProfile === "node-library") {
+      criteria.push("The package exposes a usable library entrypoint.");
+    }
+    if (domainFocus === "crm") {
+      criteria.push("The starter reflects customer, pipeline, or account management language instead of generic filler.");
+    }
+    if (domainFocus === "inventory") {
+      criteria.push("The starter reflects stock, supplier, or item management workflows instead of generic filler.");
+    }
+    if (domainFocus === "scheduling") {
+      criteria.push("The starter reflects appointments, calendars, or dispatch workflows instead of generic filler.");
+    }
+    if (domainFocus === "finance") {
+      criteria.push("The starter reflects budgets, invoices, revenue, or payment workflows instead of generic filler.");
+    }
+    if (domainFocus === "operations") {
+      criteria.push("The starter reflects incidents, service health, or operational queue workflows instead of generic filler.");
+    }
+    if (domainFocus === "admin") {
+      criteria.push("The starter reflects approvals, moderation, or internal admin workflows instead of generic filler.");
+    }
+    if (promptArtifact === "web-app" && criteria.length === 0) {
+      criteria.push("The app presents a coherent user-facing experience instead of starter filler.");
+    }
+    if (criteria.length === 0) {
+      criteria.push("The requested changes are implemented inside the scoped workspace.");
+    }
+    return criteria;
+  }
+
+  private buildSpecQualityGates(
+    starterProfile: StarterProfile,
+    workspaceKind: "static" | "react" | "generic",
+    expectsReadme: boolean
+  ): string[] {
+    const gates = [
+      "Required entry files exist in the target workspace.",
+      "Package manifest and scripts are internally consistent for the project type."
+    ];
+    if (workspaceKind === "react" || workspaceKind === "static") {
+      gates.push("The UI includes a real bootstrap flow instead of disconnected assets.");
+      gates.push("Starter shells and placeholder-only labels are removed from the shipped UI.");
+    }
+    if (starterProfile === "electron-desktop") {
+      gates.push("Desktop packaging remains available for generated Windows apps.");
+    }
+    if (expectsReadme) {
+      gates.push("The project includes a README with run instructions.");
+    }
+    return gates;
   }
 
   private detectBuilderMode(prompt: string): "notes" | "landing" | "dashboard" | "crud" | "kanban" | null {
@@ -3831,14 +6308,42 @@ export class AgentTaskRunner {
     return null;
   }
 
+  private hasProductSummaryRequirement(normalizedPrompt: string): boolean {
+    const normalized = (normalizedPrompt ?? "").trim().toLowerCase();
+    if (!normalized) return false;
+
+    if (/\bsummary output\b/.test(normalized) || /\bsummarizer\b/.test(normalized)) {
+      return true;
+    }
+
+    if (/\b(takeaways?|chapters?|action items?|key points?|insights?)\b/.test(normalized)) {
+      return true;
+    }
+
+    return /\b(summarize|summarise)\b/.test(normalized)
+      && /\b(video|youtube|article|document|text|transcript|meeting|call|audio|pdf|captions?|subtitles?)\b/.test(normalized);
+  }
+
+  private hasAuthenticationRequirement(normalizedPrompt: string): boolean {
+    const normalized = (normalizedPrompt ?? "").trim().toLowerCase();
+    if (!normalized) return false;
+
+    return /\b(login|log in|sign in|signin|sign-in|auth|authentication|password|passcode|credentials?)\b/.test(normalized);
+  }
+
   private extractPromptRequirements(prompt: string): PromptRequirement[] {
     const normalized = (prompt ?? "").trim().toLowerCase();
     const requirements: PromptRequirement[] = [];
     const promptArtifact = this.inferArtifactTypeFromPrompt(normalized);
     const supportsVisualRequirements = promptArtifact === null || promptArtifact === "web-app" || promptArtifact === "desktop-app";
+    const addRequirement = (requirement: PromptRequirement): void => {
+      if (!requirements.some((entry) => entry.id === requirement.id)) {
+        requirements.push(requirement);
+      }
+    };
 
     if (normalized.includes("hero")) {
-      requirements.push({
+      addRequirement({
         id: "req-hero",
         label: "Hero section",
         terms: ["hero"],
@@ -3847,7 +6352,7 @@ export class AgentTaskRunner {
     }
 
     if (normalized.includes("feature cards") || normalized.includes("features")) {
-      requirements.push({
+      addRequirement({
         id: "req-features",
         label: "Feature section",
         terms: ["features", "feature", "card"],
@@ -3860,7 +6365,7 @@ export class AgentTaskRunner {
       || normalized.includes("call to action")
       || /\b(contact us|get in touch|talk to sales|book now|book appointment)\b/.test(normalized)
     ) {
-      requirements.push({
+      addRequirement({
         id: "req-contact",
         label: "Contact CTA",
         terms: ["contact", "cta"],
@@ -3869,7 +6374,7 @@ export class AgentTaskRunner {
     }
 
     if (supportsVisualRequirements && normalized.includes("dashboard")) {
-      requirements.push({
+      addRequirement({
         id: "req-dashboard",
         label: "Dashboard content",
         terms: ["dashboard", "metric", "activity"],
@@ -3878,7 +6383,7 @@ export class AgentTaskRunner {
     }
 
     if (supportsVisualRequirements && normalized.includes("notes")) {
-      requirements.push({
+      addRequirement({
         id: "req-notes",
         label: "Notes experience",
         terms: ["note", "notes"],
@@ -3887,17 +6392,98 @@ export class AgentTaskRunner {
     }
 
     if (supportsVisualRequirements && this.isDesktopBusinessReportingPrompt(normalized)) {
-      requirements.push({
+      addRequirement({
         id: "req-record-entry",
         label: "Daily entry workflow",
         terms: ["daily entry", "saved records"],
         mode: "all"
       });
-      requirements.push({
+      addRequirement({
         id: "req-reporting",
         label: "Reporting views",
         terms: ["daily summary", "weekly report", "monthly report", "quarterly report", "yearly report"],
         mode: "all"
+      });
+    }
+
+    if (supportsVisualRequirements && this.hasProductSummaryRequirement(normalized)) {
+      addRequirement({
+        id: "req-summary",
+        label: "Summary output",
+        terms: ["summary", "takeaways", "chapters", "action items"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(transcript|subtitles?|captions?)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-transcript",
+        label: "Transcript workflow",
+        terms: ["transcript", "caption", "subtitle"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(youtube|video url|youtube url|youtu\.be|youtube\.com|video link)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-video-source",
+        label: "Video source input",
+        terms: ["youtube", "video", "url", "link"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(search|filter|find)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-search-filter",
+        label: "Search or filter flow",
+        terms: ["search", "filter"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(save|saved|persist|history|recent|library)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-persistence",
+        label: "Persistence flow",
+        terms: ["save", "saved", "localstorage", "history", "recent", "library"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(copy|export|download|share)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-export",
+        label: "Export or copy flow",
+        terms: ["copy", "export", "download", "share"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(import|upload|paste|drag and drop|dropzone|drop zone|file picker)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-ingest",
+        label: "Input ingest flow",
+        terms: ["import", "upload", "paste", "drop", "file"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && this.hasAuthenticationRequirement(normalized)) {
+      addRequirement({
+        id: "req-auth",
+        label: "Authentication flow",
+        terms: ["login", "sign in", "auth", "password", "account"],
+        mode: "any"
+      });
+    }
+
+    if (supportsVisualRequirements && /\b(settings|preferences|configuration|config)\b/.test(normalized)) {
+      addRequirement({
+        id: "req-settings",
+        label: "Settings flow",
+        terms: ["settings", "preferences", "configuration"],
+        mode: "any"
       });
     }
 
@@ -3915,6 +6501,7 @@ export class AgentTaskRunner {
 
     for (const rawMatch of matches) {
       const cleaned = rawMatch.trim().replace(/^\.?\//, "");
+      if (/^node\.js$/i.test(cleaned)) continue;
       if (!cleaned || cleaned.startsWith("../")) continue;
       const normalizedPath = cleaned.includes("/")
         ? cleaned
@@ -3943,15 +6530,28 @@ export class AgentTaskRunner {
     if (!/\b(electron|desktop|tauri)\b/.test(normalized)) return false;
     if (this.isDesktopBusinessReportingPrompt(normalized)) return true;
     if (this.isSimpleDesktopUtilityPrompt(normalized)) return true;
+    if (/\bsnippet\b/.test(normalized)) return true;
+    if ((/\bvoice\b/.test(normalized) || /\brecording\b/.test(normalized)) && /\b(start recording|recording list|sidebar)\b/.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
 
-    const layoutSignals = [
-      /\bsidebar\b/,
-      /\b(queue|list|recording list)\b/,
-      /\b(filter|filters)\b/,
-      /\b(primary action|new-[a-z-]+ action|clear [a-z-]+ action|add-[a-z-]+ action|add [a-z-]+ action|start [a-z-]+ action)\b/
+  private detectStarterPlaceholderSignals(content: string): string[] {
+    const normalized = (content ?? "").toLowerCase();
+    const markers = [
+      { label: "open primary action", pattern: /open primary action/ },
+      { label: "focused desktop shell", pattern: /focused desktop shell/ },
+      { label: "shell guidance", pattern: /shell guidance/ },
+      { label: "desktop starter app", pattern: /desktop starter app/ },
+      { label: "react starter", pattern: /react starter/ },
+      { label: "replace this starter shell", pattern: /replace this starter shell/ },
+      { label: "replace starter content", pattern: /replace starter content/ },
+      { label: "replace this with the product workflow", pattern: /replace this with the product workflow/ },
+      { label: "ready for domain-specific screens", pattern: /ready for domain-specific screens/ },
+      { label: "inspect sections", pattern: /inspect sections/ }
     ];
-    const matchedSignals = layoutSignals.filter((pattern) => pattern.test(normalized)).length;
-    return matchedSignals >= 3;
+    return markers.filter((marker) => marker.pattern.test(normalized)).map((marker) => marker.label);
   }
 
   private isDesktopBusinessReportingPrompt(normalizedPrompt: string): boolean {
@@ -4013,7 +6613,7 @@ export class AgentTaskRunner {
     const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     if (!workingDirectory.startsWith("generated-apps/")) return [];
 
-    const allowed = new Set((plan.candidateFiles ?? []).map((value) => value.replace(/\\/g, "/")));
+    const allowed = new Set(this.getImplicitPlanAllowedPaths(plan).map((value) => value.replace(/\\/g, "/")));
     const entries = await this.listWorkspaceFiles(workingDirectory, 4);
     const conflicting = new Set(this.getConflictingScaffoldPaths(plan));
     const removable = entries
@@ -4126,11 +6726,23 @@ export class AgentTaskRunner {
     requestedPaths: string[]
   ): "static" | "react" | "generic" {
     const normalizedPrompt = (prompt ?? "").trim().toLowerCase();
+    const promptArtifact = this.inferArtifactTypeFromPrompt(normalizedPrompt);
     const requestedNames = new Set(
       requestedPaths
         .map((path) => path.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "")
         .filter(Boolean)
     );
+    const requestsDesktopFiles = requestedNames.has("main.js")
+      || requestedNames.has("preload.js")
+      || requestedNames.has("renderer.js");
+
+    if (
+      promptArtifact === "desktop-app"
+      || requestsDesktopFiles
+      || /\b(electron|desktop app|desktop application)\b/.test(normalizedPrompt)
+    ) {
+      return "react";
+    }
 
     const requestsStaticFiles = requestedNames.has("index.html")
       && (requestedNames.has("styles.css") || requestedNames.has("app.js"));
@@ -4178,7 +6790,9 @@ export class AgentTaskRunner {
     prompt: string,
     workingDirectory: string,
     workspaceKind: "static" | "react" | "generic",
-    requestedPaths: string[] = []
+    requestedPaths: string[] = [],
+    spec?: TaskExecutionSpec,
+    repositoryContext?: TaskRepositoryContext
   ): TaskWorkItem[] {
     const normalized = (prompt ?? "").trim().toLowerCase();
     const promptArtifact = this.inferArtifactTypeFromPrompt(normalized);
@@ -4236,23 +6850,31 @@ export class AgentTaskRunner {
             ? libraryAllowedPaths
             : promptArtifact === "api-service"
               ? serviceAllowedPaths
-              : reactAllowedPaths;
+            : reactAllowedPaths;
+    const executionBrief = spec
+      ? ` Domain focus: ${this.describeDomainFocus(spec.domainFocus)}. Deliverables: ${spec.deliverables.join("; ")}. Acceptance: ${spec.acceptanceCriteria.join(" ")}.`
+      : "";
+    const repoBrief = repositoryContext?.conventions.length
+      ? ` Repository conventions: ${repositoryContext.conventions.join(" ")}`
+      : repositoryContext?.summary
+        ? ` ${repositoryContext.summary}`
+        : "";
 
     if (["kanban", "task board"].some((term) => normalized.includes(term))) {
       return [
         {
           title: "Build kanban layout",
-          instruction: `Create the main kanban board layout${targetHint} with todo, in progress, and done columns plus clear task cards.`,
+          instruction: `Create the main kanban board layout${targetHint} with todo, in progress, and done columns plus clear task cards.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Add task creation and status flow",
-          instruction: `Implement add-task and status-change interactions${targetHint}. Users should be able to create a task and move it between visible columns.`,
+          instruction: `Implement add-task and status-change interactions${targetHint}. Users should be able to create a task and move it between visible columns.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Polish board design",
-          instruction: `Improve the kanban board styling${targetHint} so it feels intentional, readable, and responsive.`,
+          instruction: `Improve the kanban board styling${targetHint} so it feels intentional, readable, and responsive.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         }
       ];
@@ -4262,35 +6884,35 @@ export class AgentTaskRunner {
       const items: TaskWorkItem[] = [
         {
           title: "Build notes interface",
-          instruction: `Create or improve the main notes app interface${targetHint}. Replace starter content with a real notes experience.`,
+          instruction: `Create or improve the main notes app interface${targetHint}. Replace starter content with a real notes experience.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         }
       ];
       if (normalized.includes("add") || normalized.includes("create")) {
         items.push({
           title: "Add note creation flow",
-          instruction: `Implement a reliable add-note flow${targetHint}. Users should be able to enter a note title and body and save it into the visible notes list.`,
+          instruction: `Implement a reliable add-note flow${targetHint}. Users should be able to enter a note title and body and save it into the visible notes list.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         });
       }
       if (normalized.includes("search")) {
         items.push({
           title: "Add search and filtering",
-          instruction: `Implement note search/filtering${targetHint}. Searching should reduce the visible notes list based on title or body matches.`,
+          instruction: `Implement note search/filtering${targetHint}. Searching should reduce the visible notes list based on title or body matches.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         });
       }
       if (normalized.includes("delete") || normalized.includes("remove")) {
         items.push({
           title: "Add note deletion",
-          instruction: `Add note deletion controls${targetHint}. Users should be able to remove notes from the list cleanly.`,
+          instruction: `Add note deletion controls${targetHint}. Users should be able to remove notes from the list cleanly.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         });
       }
       if (normalized.includes("ui") || normalized.includes("design") || normalized.includes("improve")) {
         items.push({
           title: "Polish visual design",
-          instruction: `Improve layout and styling${targetHint}. Make the notes UI feel intentional, clean, and responsive.`,
+          instruction: `Improve layout and styling${targetHint}. Make the notes UI feel intentional, clean, and responsive.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         });
       }
@@ -4305,7 +6927,7 @@ export class AgentTaskRunner {
     ) {
       return [{
         title: "Implement requested changes",
-        instruction: `Implement the requested ${promptArtifact.replace(/-/g, " ")} updates${targetHint}. Keep the solution inside the planned package files and avoid unrelated UI scaffolding.`,
+        instruction: `Implement the requested ${promptArtifact.replace(/-/g, " ")} updates${targetHint}. Keep the solution inside the planned package files and avoid unrelated UI scaffolding.${executionBrief}${repoBrief}`,
         allowedPaths: preferredPaths
       }];
     }
@@ -4314,12 +6936,12 @@ export class AgentTaskRunner {
       return [
         {
           title: "Build page structure",
-          instruction: `Create the main page layout${targetHint} with complete sections and usable content.`,
+          instruction: `Create the main page layout${targetHint} with complete sections and usable content.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Polish visual design",
-          instruction: `Improve styling and hierarchy${targetHint} so the interface looks intentional and responsive.`,
+          instruction: `Improve styling and hierarchy${targetHint} so the interface looks intentional and responsive.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         }
       ];
@@ -4329,17 +6951,17 @@ export class AgentTaskRunner {
       return [
         {
           title: "Build dashboard structure",
-          instruction: `Create the main dashboard layout${targetHint} with stats, activity, and clear navigation areas.`,
+          instruction: `Create the main dashboard layout${targetHint} with stats, activity, and clear navigation areas.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Add data cards and tables",
-          instruction: `Add dashboard content blocks${targetHint} including metric cards, a simple chart area, and recent activity or table rows.`,
+          instruction: `Add dashboard content blocks${targetHint} including metric cards, a simple chart area, and recent activity or table rows.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Polish dashboard design",
-          instruction: `Improve dashboard styling${targetHint} so it feels clear, intentional, and responsive.`,
+          instruction: `Improve dashboard styling${targetHint} so it feels clear, intentional, and responsive.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         }
       ];
@@ -4349,17 +6971,17 @@ export class AgentTaskRunner {
       return [
         {
           title: "Build CRUD layout",
-          instruction: `Create the main CRUD app layout${targetHint} with a clear form area, records list, and useful summary section.`,
+          instruction: `Create the main CRUD app layout${targetHint} with a clear form area, records list, and useful summary section.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Add create, edit, and delete flows",
-          instruction: `Implement create, edit, and delete interactions${targetHint}. Users should be able to manage visible records cleanly from the interface.`,
+          instruction: `Implement create, edit, and delete interactions${targetHint}. Users should be able to manage visible records cleanly from the interface.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         },
         {
           title: "Polish CRUD experience",
-          instruction: `Improve the CRUD app styling${targetHint} so it feels intentional, responsive, and easy to scan.`,
+          instruction: `Improve the CRUD app styling${targetHint} so it feels intentional, responsive, and easy to scan.${executionBrief}${repoBrief}`,
           allowedPaths: preferredPaths
         }
       ];
@@ -4368,7 +6990,7 @@ export class AgentTaskRunner {
     return [
       {
         title: "Implement requested changes",
-        instruction: prompt,
+        instruction: `${prompt}${executionBrief}${repoBrief}`,
         allowedPaths: preferredPaths
       }
     ];
@@ -4391,8 +7013,23 @@ export class AgentTaskRunner {
     plan: TaskExecutionPlan,
     workItem?: TaskWorkItem
   ): Promise<FixResponse> {
-    const routes = this.resolveModelRoutes("Implementation");
+    const taskAttachments = this.getTaskAttachments(taskId);
+    const routes = this.resolveModelRoutes("Implementation", {
+      requiresVision: this.taskRequiresVisionRoute(taskId)
+    });
     const contextFiles = await this.collectImplementationContextFiles(plan, workItem);
+    const repositoryContext = plan.repositoryContext ?? {
+      summary: "Preserve the current workspace layout and conventions.",
+      workspaceShape: "unknown" as const,
+      packageManager: "unknown" as const,
+      languageStyle: "unknown" as const,
+      moduleFormat: "unknown" as const,
+      uiFramework: "unknown" as const,
+      styling: "unknown" as const,
+      testing: "unknown" as const,
+      linting: "unknown" as const,
+      conventions: []
+    };
     if (contextFiles.length === 0) {
       return { summary: "No planned files were available for implementation.", edits: [] };
     }
@@ -4400,35 +7037,48 @@ export class AgentTaskRunner {
     this.appendLog(taskId, `Implementation model candidates: ${routes.map((route) => route.model).join(", ")}`);
     this.appendLog(taskId, `Implementation context files: ${contextFiles.map((file) => file.path).join(", ")}`);
 
-    const messages = [
-      {
-        role: "system",
-        content:
-          "You are a precise coding agent. Implement the user's request using the provided workspace files and manifest. " +
-          `You may create new files only inside the working directory "${plan.workingDirectory}". ` +
-          "Return only strict JSON with shape {\"summary\":\"...\",\"edits\":[{\"path\":\"relative/path\",\"content\":\"full file content\"}]}. " +
-          "Do not include markdown fences or prose outside JSON. Do not emit edits for files that do not need changes. " +
-          "Every edit path must stay inside the allowed planned files for this work item."
-      },
-      {
-        role: "user",
-        content: [
-          `Task: ${userPrompt}`,
-          `Working directory: ${plan.workingDirectory}`,
-          "",
-          `Allowed edit paths: ${this.getScopedCandidateFiles(plan, workItem).join(", ") || "(none)"}`,
-          "",
-          "Workspace manifest:",
-          ...(plan.workspaceManifest.length > 0 ? plan.workspaceManifest : ["(manifest unavailable)"]),
-          "",
-          "Workspace file context:",
-          ...contextFiles.flatMap((file) => [
-            `--- FILE: ${file.path} ---`,
-            file.content
-          ])
-        ].join("\n")
-      }
-    ];
+    const messages = this.buildTaskPromptMessages(
+      [
+        `Task: ${userPrompt}`,
+        `Working directory: ${plan.workingDirectory}`,
+        `Repository context: ${repositoryContext.summary}`,
+        ...(repositoryContext.conventions.length > 0
+          ? ["Repository conventions:", ...repositoryContext.conventions.map((item) => `- ${item}`), ""]
+          : []),
+        ...(plan.spec
+          ? [
+            `Starter profile: ${plan.spec.starterProfile}`,
+            `Required files: ${plan.spec.requiredFiles.join(", ") || "(none)"}`,
+            `Required scripts: ${plan.spec.requiredScriptGroups.map((group) => `${group.label} => ${group.options.join(" | ")}`).join("; ") || "(none)"}`,
+            `Acceptance: ${plan.spec.acceptanceCriteria.join(" ") || "(none)"}`,
+            `Quality gates: ${plan.spec.qualityGates.join(" ") || "(none)"}`,
+            ""
+          ]
+          : []),
+        taskAttachments.length > 0 ? `Task attachments: ${taskAttachments.map((attachment) => attachment.name).join(", ")}` : "",
+        "",
+        `Allowed edit paths: ${this.getScopedCandidateFiles(plan, workItem).join(", ") || "(none)"}`,
+        "",
+        "Workspace manifest:",
+        ...(plan.workspaceManifest.length > 0 ? plan.workspaceManifest : ["(manifest unavailable)"]),
+        "",
+        "Workspace file context:",
+        ...contextFiles.flatMap((file) => [
+          `--- FILE: ${file.path} ---`,
+          file.content
+        ])
+      ].filter(Boolean).join("\n"),
+      taskAttachments,
+      "You are a precise coding agent. Implement the user's request using the provided workspace files and manifest. " +
+        `You may create new files only inside the working directory "${plan.workingDirectory}". ` +
+        `Follow these repository conventions when possible: ${repositoryContext.conventions.join(" ") || repositoryContext.summary}. ` +
+        `${plan.spec?.starterProfile === "electron-desktop"
+          ? "This is a strict Electron desktop task. Do not return a static site, landing page, or python http.server scaffold. The output must remain desktop-first and packaging-ready, including package:win when Windows packaging is required. "
+          : ""}` +
+        "Return only strict JSON with shape {\"summary\":\"...\",\"edits\":[{\"path\":\"relative/path\",\"content\":\"full file content\"}]}. " +
+        "Do not include markdown fences or prose outside JSON. Do not emit edits for files that do not need changes. " +
+        "Every edit path must stay inside the allowed planned files for this work item."
+    );
 
     const exhaustedImplementationRoutes = new Set<string>();
     const getAvailableRoutes = (): ModelRoute[] => routes.filter(
@@ -4587,9 +7237,39 @@ export class AgentTaskRunner {
       return [...new Set(scoped)];
     }
 
-    const candidatePaths = new Set<string>(plan.candidateFiles);
-    candidatePaths.add(this.joinWorkspacePath(plan.workingDirectory, "package.json"));
-    return [...candidatePaths];
+    return this.getImplicitPlanAllowedPaths(plan);
+  }
+
+  private getImplicitPlanAllowedPaths(plan: TaskExecutionPlan): string[] {
+    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
+    const allowed = new Set<string>((plan.candidateFiles ?? []).map((value) => value.trim()).filter(Boolean));
+    const requested = (plan.requestedPaths ?? []).map((value) => value.trim()).filter(Boolean);
+    const required = (plan.spec?.requiredFiles ?? []).map((value) => value.trim()).filter(Boolean);
+
+    allowed.add(this.joinWorkspacePath(workingDirectory, "package.json"));
+
+    for (const path of [...requested, ...required]) {
+      if (path) allowed.add(path);
+    }
+
+    if (plan.workspaceKind === "react") {
+      allowed.add(this.joinWorkspacePath(workingDirectory, "index.html"));
+      allowed.add(this.joinWorkspacePath(workingDirectory, "src/main.tsx"));
+      allowed.add(this.joinWorkspacePath(workingDirectory, "src/App.tsx"));
+      allowed.add(this.joinWorkspacePath(workingDirectory, "src/App.css"));
+      allowed.add(this.joinWorkspacePath(workingDirectory, "src/index.css"));
+      if (plan.spec?.starterProfile === "electron-desktop") {
+        allowed.add(this.joinWorkspacePath(workingDirectory, "electron/main.mjs"));
+        allowed.add(this.joinWorkspacePath(workingDirectory, "electron/preload.mjs"));
+        allowed.add(this.joinWorkspacePath(workingDirectory, "scripts/desktop-launch.mjs"));
+      }
+    } else if (plan.workspaceKind === "static") {
+      allowed.add(this.joinWorkspacePath(workingDirectory, "index.html"));
+      allowed.add(this.joinWorkspacePath(workingDirectory, "styles.css"));
+      allowed.add(this.joinWorkspacePath(workingDirectory, "app.js"));
+    }
+
+    return [...allowed];
   }
 
   private filterValidEdits(
@@ -4605,7 +7285,7 @@ export class AgentTaskRunner {
     plan?: TaskExecutionPlan,
     workItem?: TaskWorkItem
   ): StructuredEditValidationResult {
-    const allowed = new Set((plan?.candidateFiles ?? []).map((value) => value.trim()).filter(Boolean));
+    const allowed = new Set(plan ? this.getImplicitPlanAllowedPaths(plan).map((value) => value.trim()).filter(Boolean) : []);
     const workItemAllowed = new Set((workItem?.allowedPaths ?? []).map((value) => value.trim()).filter(Boolean));
     const workingDirectory = (plan?.workingDirectory ?? ".").trim() || ".";
     const acceptedEdits: StructuredEdit[] = [];
@@ -5913,6 +8593,7 @@ textarea {
     if (plan.workspaceKind !== "generic") return null;
 
     const title = this.toDisplayNameFromDirectory(plan.workingDirectory);
+    const domainFocus = plan.spec?.domainFocus ?? this.inferDomainFocus(prompt, "node-api-service", "api-service");
     const entity = normalized.includes("invoice")
       ? { singular: "invoice", plural: "invoices", collectionPath: "/invoices", primaryField: "customer", defaultPrimaryValue: "Acme Corp" }
       : normalized.includes("booking")
@@ -5921,7 +8602,7 @@ textarea {
           ? { singular: "ticket", plural: "tickets", collectionPath: "/tickets", primaryField: "subject", defaultPrimaryValue: "Login issue" }
           : normalized.includes("expense")
             ? { singular: "request", plural: "requests", collectionPath: "/requests", primaryField: "requester", defaultPrimaryValue: "Morgan Chen" }
-            : { singular: "record", plural: "records", collectionPath: "/records", primaryField: "title", defaultPrimaryValue: "Sample item" };
+            : this.buildApiEntityForDomain(domainFocus);
 
     const actions: Array<{ path: string; status?: string; assign?: boolean }> = [];
     if (normalized.includes("approve")) actions.push({ path: "approve", status: "approved" });
@@ -6427,13 +9108,14 @@ textarea {
     if (!wantsDashboard) return null;
 
     const title = this.toDisplayNameFromDirectory(plan.workingDirectory);
+    const domainFocus = plan.spec?.domainFocus ?? this.inferDomainFocus(prompt, "react-dashboard", null);
     if (plan.workspaceKind === "static") {
       return {
         summary: `Created a heuristic ${title} static dashboard with metrics, activity, and responsive layout.`,
         edits: [
-          { path: this.joinWorkspacePath(plan.workingDirectory, "index.html"), content: this.buildStaticDashboardHtml(title) },
+          { path: this.joinWorkspacePath(plan.workingDirectory, "index.html"), content: this.buildStaticDashboardHtml(title, domainFocus) },
           { path: this.joinWorkspacePath(plan.workingDirectory, "styles.css"), content: this.buildStaticDashboardCss() },
-          { path: this.joinWorkspacePath(plan.workingDirectory, "app.js"), content: this.buildStaticDashboardJs() }
+          { path: this.joinWorkspacePath(plan.workingDirectory, "app.js"), content: this.buildStaticDashboardJs(domainFocus) }
         ]
       };
     }
@@ -6444,7 +9126,7 @@ textarea {
     return {
       summary: `Created a heuristic ${title} dashboard with metrics, activity, and responsive layout.`,
       edits: [
-        { path: appPath, content: this.buildDashboardTsx(title) },
+        { path: appPath, content: this.buildDashboardTsx(title, domainFocus) },
         { path: appCssPath, content: this.buildDashboardCss() },
         { path: indexCssPath, content: this.buildDashboardIndexCss() }
       ]
@@ -6499,13 +9181,14 @@ textarea {
     const isVendorPayments = /\b(vendor|vendors|payment|payments|mark (?:one )?paid|due date|due dates)\b/.test(normalized);
 
     const title = this.toDisplayNameFromDirectory(plan.workingDirectory);
+    const domainFocus = plan.spec?.domainFocus ?? this.inferDomainFocus(prompt, "react-crud", null);
     if (plan.workspaceKind === "static") {
       return {
         summary: `Created a heuristic ${title} static CRUD app with record management and responsive layout.`,
         edits: [
-          { path: this.joinWorkspacePath(plan.workingDirectory, "index.html"), content: this.buildStaticCrudHtml(title) },
+          { path: this.joinWorkspacePath(plan.workingDirectory, "index.html"), content: this.buildStaticCrudHtml(title, domainFocus) },
           { path: this.joinWorkspacePath(plan.workingDirectory, "styles.css"), content: this.buildStaticCrudCss() },
-          { path: this.joinWorkspacePath(plan.workingDirectory, "app.js"), content: this.buildStaticCrudJs(title) }
+          { path: this.joinWorkspacePath(plan.workingDirectory, "app.js"), content: this.buildStaticCrudJs(title, domainFocus) }
         ]
       };
     }
@@ -6516,7 +9199,7 @@ textarea {
     return {
       summary: `Created a heuristic ${title} CRUD app with record management, filters, and responsive layout.`,
       edits: [
-        { path: appPath, content: isVendorPayments ? this.buildVendorPaymentsCrudAppTsx(title) : this.buildCrudAppTsx(title) },
+        { path: appPath, content: isVendorPayments ? this.buildVendorPaymentsCrudAppTsx(title) : this.buildCrudAppTsx(title, domainFocus) },
         { path: appCssPath, content: this.buildCrudAppCss() },
         { path: indexCssPath, content: this.buildCrudIndexCss() }
       ]
@@ -7016,7 +9699,8 @@ renderNotes();
 `;
   }
 
-  private buildStaticDashboardHtml(title: string): string {
+  private buildStaticDashboardHtml(title: string, domainFocus: DomainFocus = "generic"): string {
+    const content = this.buildDashboardDomainContent(domainFocus);
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -7031,9 +9715,9 @@ renderNotes();
         <div>
           <p class="eyebrow">Generated by Cipher Workspace</p>
           <h1>${title}</h1>
-          <p class="lede">A responsive static dashboard with metrics, activity, and a compact operational summary.</p>
+          <p class="lede">${content.staticLede}</p>
         </div>
-        <button id="refresh-dashboard" type="button">Refresh metrics</button>
+        <button id="refresh-dashboard" type="button">${content.staticButtonLabel}</button>
       </section>
 
       <section class="stats-grid" id="stats-grid"></section>
@@ -7041,15 +9725,15 @@ renderNotes();
       <section class="dashboard-grid">
         <article class="panel">
           <div class="panel-head">
-            <h2>Pipeline trend</h2>
-            <span id="trend-badge">Stable</span>
+            <h2>${content.staticTrendTitle}</h2>
+            <span id="trend-badge">${content.staticTrendBadge}</span>
           </div>
           <div class="bars" id="trend-bars"></div>
         </article>
         <article class="panel">
           <div class="panel-head">
-            <h2>Recent activity</h2>
-            <span>Live</span>
+            <h2>${content.staticActivityTitle}</h2>
+            <span>${content.staticActivityBadge}</span>
           </div>
           <div id="activity-list" class="activity-list"></div>
         </article>
@@ -7200,21 +9884,12 @@ button {
 `;
   }
 
-  private buildStaticDashboardJs(): string {
-    return `const stats = [
-  { label: "Qualified leads", value: 128, delta: "+14%" },
-  { label: "Active projects", value: 18, delta: "+3" },
-  { label: "Conversion", value: "6.4%", delta: "+0.8%" },
-  { label: "Open issues", value: 7, delta: "-2" }
-];
+  private buildStaticDashboardJs(domainFocus: DomainFocus = "generic"): string {
+    const content = this.buildDashboardDomainContent(domainFocus);
+    return `const stats = ${JSON.stringify(content.staticStats, null, 2)};
 
-const trend = [58, 78, 66, 92, 81, 108];
-const activity = [
-  "Design review cleared for the next release candidate.",
-  "Ops flagged two stale incidents and resolved one automatically.",
-  "Product accepted the new onboarding sequence.",
-  "Support queue dropped below the daily target."
-];
+const trend = ${JSON.stringify(content.staticTrend)};
+const activity = ${JSON.stringify(content.staticActivity, null, 2)};
 
 function renderDashboard() {
   const statsGrid = document.getElementById("stats-grid");
@@ -7238,7 +9913,8 @@ renderDashboard();
 `;
   }
 
-  private buildStaticCrudHtml(title: string): string {
+  private buildStaticCrudHtml(title: string, domainFocus: DomainFocus = "generic"): string {
+    const content = this.buildCrudDomainContent(domainFocus);
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -7253,17 +9929,17 @@ renderDashboard();
         <div>
           <p class="eyebrow">Generated by Cipher Workspace</p>
           <h1>${title}</h1>
-          <p class="lede">A static CRUD workspace with a record form, searchable table, and quick summary panel.</p>
+          <p class="lede">${content.lede}</p>
         </div>
       </section>
 
       <section class="crud-grid">
         <form class="panel form-panel" id="record-form">
           <div class="panel-head">
-            <h2>Record details</h2>
+            <h2>${this.toDisplayLabel(content.singularLabel)} details</h2>
             <span id="form-mode">Create</span>
           </div>
-          <label>Name<input id="record-name" placeholder="Avery Stone" /></label>
+          <label>${content.nameLabel}<input id="record-name" placeholder="${content.namePlaceholder}" /></label>
           <label>Status
             <select id="record-status">
               <option>Active</option>
@@ -7271,17 +9947,17 @@ renderDashboard();
               <option>Review</option>
             </select>
           </label>
-          <label>Owner<input id="record-owner" placeholder="North Team" /></label>
-          <button type="submit">Save record</button>
+          <label>${content.ownerLabel}<input id="record-owner" placeholder="${content.ownerPlaceholder}" /></label>
+          <button type="submit">Save ${content.singularLabel}</button>
         </form>
 
         <section class="panel table-panel">
           <div class="panel-head">
             <div>
-              <h2>Records</h2>
-              <span id="records-count">0 records</span>
+              <h2>${this.toDisplayLabel(content.pluralLabel)}</h2>
+              <span id="records-count">0 ${content.pluralLabel}</span>
             </div>
-            <label class="search-field">Search<input id="record-search" placeholder="Search records..." /></label>
+            <label class="search-field">${content.searchLabel}<input id="record-search" placeholder="Search ${content.pluralLabel}..." /></label>
           </div>
           <div id="records-list" class="records-list"></div>
         </section>
@@ -7451,14 +10127,12 @@ button {
 `;
   }
 
-  private buildStaticCrudJs(title: string): string {
+  private buildStaticCrudJs(title: string, domainFocus: DomainFocus = "generic"): string {
     void title;
+    const content = this.buildCrudDomainContent(domainFocus);
     return `const state = {
   editingId: "",
-  records: [
-    { id: "1", name: "North Region Rollout", status: "Active", owner: "Avery Stone" },
-    { id: "2", name: "Retention Audit", status: "Review", owner: "Mina Patel" }
-  ]
+  records: ${JSON.stringify(content.initialRecords, null, 2)}
 };
 
 const formEl = document.getElementById("record-form");
@@ -7498,7 +10172,7 @@ function renderRecords() {
 
   countEl.textContent = visible.length + (visible.length === 1 ? " record" : " records");
   if (visible.length === 0) {
-    listEl.innerHTML = '<article class="record-item"><h3>No matches</h3><p>Try a different search term or save a new record.</p></article>';
+    listEl.innerHTML = '<article class="record-item"><h3>No matches</h3><p>Try a different search term or save a new ${content.singularLabel}.</p></article>';
     return;
   }
 
@@ -9044,51 +11718,77 @@ body {
 `;
   }
 
-  private buildDashboardTsx(title: string): string {
-    return `import "./App.css";
+  private buildDashboardTsx(title: string, domainFocus: DomainFocus = "generic"): string {
+    const content = this.buildDashboardDomainContent(domainFocus);
+    return `import { useState } from "react";
+import "./App.css";
 
-const metrics = [
-  { label: "Revenue", value: "$128k", change: "+12.4%", tone: "up" },
-  { label: "Active users", value: "8,421", change: "+6.8%", tone: "up" },
-  { label: "Conversion", value: "4.7%", change: "+0.9%", tone: "up" }
-];
+const metrics = ${JSON.stringify(content.metrics, null, 2)} as const;
 
-const activities = [
-  "Enterprise lead upgraded to annual plan",
-  "Marketing campaign reached target CPA",
-  "Customer success cleared 18 open tickets",
-  "New release health checks passed"
-];
+const activities = ${JSON.stringify(content.activities, null, 2)};
 
-const team = [
-  { name: "Aisha", role: "Ops lead", status: "On track" },
-  { name: "Mina", role: "Customer success", status: "Reviewing" },
-  { name: "Zayd", role: "Growth", status: "Shipping" }
-];
+const team = ${JSON.stringify(content.team, null, 2)} as const;
+
+const deals = ${JSON.stringify(content.deals, null, 2)} as const;
+
+const regions = ${JSON.stringify(content.regions, null, 2)} as const;
+
+const chartHeights = ${JSON.stringify(content.chartHeights)};
 
 function App() {
+  const [regionFilter, setRegionFilter] = useState<string>(regions[0] ?? "All regions");
+  const [query, setQuery] = useState("");
+  const visibleDeals = deals.filter((deal) => {
+    const matchesRegion = regionFilter === (regions[0] ?? "All regions") || deal.region === regionFilter;
+    const needle = query.trim().toLowerCase();
+    if (!needle) return matchesRegion;
+    return matchesRegion && [deal.name, deal.region, deal.stage, deal.value].some((value) =>
+      value.toLowerCase().includes(needle)
+    );
+  });
+
   return (
     <main className="dashboard-shell">
       <aside className="dashboard-sidebar">
-        <p className="eyebrow">Operations hub</p>
+        <p className="eyebrow">${content.sidebarEyebrow}</p>
         <h1>${title}</h1>
         <nav>
-          <a href="#overview">Overview</a>
-          <a href="#pipeline">Pipeline</a>
-          <a href="#activity">Activity</a>
-          <a href="#team">Team</a>
+          <a href="#overview">${content.nav[0] ?? "Overview"}</a>
+          <a href="#pipeline">${content.nav[1] ?? "Pipeline"}</a>
+          <a href="#activity">${content.nav[2] ?? "Activity"}</a>
+          <a href="#team">${content.nav[3] ?? "Team"}</a>
         </nav>
       </aside>
 
       <section className="dashboard-main">
         <header id="overview" className="dashboard-header">
           <div>
-            <p className="eyebrow">Operations snapshot</p>
-            <h2>Clarity for the team, fast.</h2>
-            <p>One place to scan performance, momentum, and the next actions without digging through tabs.</p>
+            <p className="eyebrow">${content.headerEyebrow}</p>
+            <h2>${content.headerTitle}</h2>
+            <p>${content.headerCopy}</p>
           </div>
-          <button type="button">Export report</button>
+          <button type="button">${content.buttonLabel}</button>
         </header>
+
+        <section className="filter-bar">
+          <label className="filter-field">
+            <span>${content.filterLabel}</span>
+            <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)}>
+              {regions.map((region) => (
+                <option key={region} value={region}>{region}</option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field search-field">
+            <span>${content.searchLabel}</span>
+            <input
+              type="search"
+              value={query}
+              placeholder="${content.searchPlaceholder}"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+        </section>
 
         <section className="metric-grid">
           {metrics.map((metric) => (
@@ -9103,23 +11803,20 @@ function App() {
         <section className="content-grid">
           <article id="pipeline" className="panel chart-panel">
             <div className="panel-header">
-              <h3>Pipeline</h3>
-              <span>Last 30 days</span>
+              <h3>${content.chartTitle}</h3>
+              <span>${content.chartRange}</span>
             </div>
             <div className="chart-bars">
-              <div style={{ height: "42%" }}></div>
-              <div style={{ height: "56%" }}></div>
-              <div style={{ height: "74%" }}></div>
-              <div style={{ height: "61%" }}></div>
-              <div style={{ height: "88%" }}></div>
-              <div style={{ height: "70%" }}></div>
+              {chartHeights.map((height, index) => (
+                <div key={index} style={{ height }}></div>
+              ))}
             </div>
           </article>
 
           <article id="activity" className="panel activity-panel">
             <div className="panel-header">
-              <h3>Recent activity</h3>
-              <span>Live feed</span>
+              <h3>${content.activityTitle}</h3>
+              <span>${content.activityBadge}</span>
             </div>
             <ul>
               {activities.map((item) => (
@@ -9132,8 +11829,8 @@ function App() {
         <section className="content-grid content-grid-secondary">
           <article id="team" className="panel team-panel">
             <div className="panel-header">
-              <h3>Team focus</h3>
-              <span>This week</span>
+              <h3>${content.teamTitle}</h3>
+              <span>${content.teamBadge}</span>
             </div>
             <div className="team-list">
               {team.map((person) => (
@@ -9148,14 +11845,27 @@ function App() {
             </div>
           </article>
 
-          <article className="panel signal-panel">
+          <article className="panel deals-panel">
             <div className="panel-header">
-              <h3>What changed</h3>
-              <span>Top signal</span>
+              <h3>${content.dealsTitle}</h3>
+              <span>${content.dealsBadge}</span>
             </div>
-            <p className="signal-copy">
-              Conversion improved after the latest onboarding update, while support load stayed flat. The current setup is stable enough to scale spend.
-            </p>
+            <ul className="deals-list">
+              {visibleDeals.length === 0 ? (
+                <li className="deals-empty">No deals match the current filter.</li>
+              ) : (
+                visibleDeals.map((deal) => (
+                  <li key={deal.name} className="deal-row">
+                    <div>
+                      <strong>{deal.name}</strong>
+                      <p>{deal.region} · {deal.stage}</p>
+                    </div>
+                    <span>{deal.value}</span>
+                  </li>
+                ))
+              )}
+            </ul>
+            <p className="signal-copy">${content.dealsSummary}</p>
           </article>
         </section>
       </section>
@@ -9264,6 +11974,37 @@ export default App;
   margin-top: 18px;
 }
 
+.filter-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.filter-field {
+  display: grid;
+  gap: 8px;
+  color: #4f5d78;
+}
+
+.filter-field span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filter-field select,
+.filter-field input {
+  width: 100%;
+  border: 1px solid rgba(20, 32, 51, 0.12);
+  border-radius: 16px;
+  padding: 13px 14px;
+  font: inherit;
+  color: #162033;
+  background: rgba(255, 255, 255, 0.92);
+}
+
 .metric-card {
   padding: 20px;
 }
@@ -9356,6 +12097,41 @@ export default App;
   color: #162033;
 }
 
+.deals-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.deal-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(244, 247, 253, 0.95);
+  border: 1px solid rgba(20, 32, 51, 0.06);
+}
+
+.deal-row p,
+.deals-empty {
+  margin: 4px 0 0;
+  color: #60708d;
+}
+
+.deal-row span {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(24, 135, 95, 0.1);
+  color: #18875f;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .team-row p {
   margin: 4px 0 0;
   color: #60708d;
@@ -9383,6 +12159,10 @@ export default App;
 
   .metric-grid,
   .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-bar {
     grid-template-columns: 1fr;
   }
 
@@ -9805,7 +12585,8 @@ renderBoard();
 `;
   }
 
-  private buildCrudAppTsx(title: string): string {
+  private buildCrudAppTsx(title: string, domainFocus: DomainFocus = "generic"): string {
+    const content = this.buildCrudDomainContent(domainFocus);
     return `import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
@@ -9820,11 +12601,7 @@ type RecordItem = {
 
 type RecordDraft = Omit<RecordItem, "id">;
 
-const initialRecords: RecordItem[] = [
-  { id: "1", name: "Northwind Pipeline", category: "Sales", owner: "Aisha", status: "Active" },
-  { id: "2", name: "Q2 Hiring Plan", category: "People", owner: "Zayd", status: "Review" },
-  { id: "3", name: "Support Audit", category: "Operations", owner: "Mina", status: "Archived" }
-];
+const initialRecords: RecordItem[] = ${JSON.stringify(content.initialRecords, null, 2)};
 
 const emptyDraft: RecordDraft = { name: "", category: "", owner: "", status: "Active" };
 
@@ -9900,9 +12677,9 @@ function App() {
     <main className="crud-shell">
       <section className="crud-hero">
         <div>
-          <p className="eyebrow">Cipher Workspace</p>
+          <p className="eyebrow">${content.eyebrow}</p>
           <h1>${title}</h1>
-          <p className="lede">A focused CRUD workspace for managing records, reviewing ownership, and keeping the list organized.</p>
+          <p className="lede">${content.lede}</p>
         </div>
         <div className="hero-stats">
           <article>
@@ -9920,7 +12697,7 @@ function App() {
         <form className="editor-card" onSubmit={handleSubmit}>
           <div className="section-heading">
             <div>
-              <h2>{editingId ? "Edit record" : "Create record"}</h2>
+              <h2>{editingId ? "Edit ${content.singularLabel}" : "Create ${content.singularLabel}"}</h2>
               <span>{editingId ? "Update the selected item" : "Capture a new item quickly"}</span>
             </div>
             {editingId ? (
@@ -9938,29 +12715,29 @@ function App() {
           </div>
 
           <label>
-            Name
+            ${content.nameLabel}
             <input
               value={draft.name}
               onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Project, client, asset..."
+              placeholder="${content.namePlaceholder}"
             />
           </label>
 
           <label>
-            Category
+            ${content.categoryLabel}
             <input
               value={draft.category}
               onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))}
-              placeholder="Sales, Ops, Finance..."
+              placeholder="${content.categoryPlaceholder}"
             />
           </label>
 
           <label>
-            Owner
+            ${content.ownerLabel}
             <input
               value={draft.owner}
               onChange={(event) => setDraft((current) => ({ ...current, owner: event.target.value }))}
-              placeholder="Who is responsible?"
+              placeholder="${content.ownerPlaceholder}"
             />
           </label>
 
@@ -9978,35 +12755,35 @@ function App() {
             </select>
           </label>
 
-          <button type="submit">{editingId ? "Save changes" : "Add record"}</button>
+          <button type="submit">{editingId ? "Save changes" : "Add ${content.singularLabel}"}</button>
         </form>
 
         <section className="records-card">
           <div className="section-heading records-heading">
             <div>
-              <h2>Records</h2>
+              <h2>${this.toDisplayLabel(content.pluralLabel)}</h2>
               <span>{visibleRecords.length} visible</span>
             </div>
             <label className="search-field">
-              Search
+              ${content.searchLabel}
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Filter by name, owner, or status"
+                placeholder="Filter by ${content.nameLabel.toLowerCase()}, ${content.ownerLabel.toLowerCase()}, or status"
               />
             </label>
           </div>
 
           <div className="records-table">
             <div className="records-table-head">
-              <span>Name</span>
-              <span>Category</span>
-              <span>Owner</span>
+              <span>${content.nameLabel}</span>
+              <span>${content.categoryLabel}</span>
+              <span>${content.ownerLabel}</span>
               <span>Status</span>
               <span>Actions</span>
             </div>
             {visibleRecords.length === 0 ? (
-              <div className="records-empty">No records match the current filter.</div>
+              <div className="records-empty">No ${content.pluralLabel} match the current filter.</div>
             ) : (
               visibleRecords.map((record) => (
                 <article key={record.id} className="record-row">
@@ -10900,12 +13677,40 @@ body {
     commandResult: TerminalCommandResult,
     contextFiles: Array<{ path: string; content: string }>,
     attempt: number,
-    stageLabel = "Fix"
+    stageLabel = "Fix",
+    plan?: TaskExecutionPlan
   ): Promise<FixResponse> {
-    const routes = this.resolveModelRoutes(stageLabel);
+    const taskAttachments = this.getTaskAttachments(taskId);
+    const routes = this.resolveModelRoutes(stageLabel, {
+      requiresVision: this.taskRequiresVisionRoute(taskId)
+    });
+    const repositoryContext = plan?.repositoryContext ?? {
+      summary: "Preserve the current workspace layout and conventions.",
+      workspaceShape: "unknown" as const,
+      packageManager: "unknown" as const,
+      languageStyle: "unknown" as const,
+      moduleFormat: "unknown" as const,
+      uiFramework: "unknown" as const,
+      styling: "unknown" as const,
+      testing: "unknown" as const,
+      linting: "unknown" as const,
+      conventions: []
+    };
+    const repositoryConventions = repositoryContext.conventions ?? [];
     const failureLabel = `${stageLabel.toLowerCase()} failure`;
     const failureCategory = this.classifyFailureCategory(stageLabel, commandResult.combinedOutput || "");
     const failureGuidance = this.buildFailureCategoryGuidance(failureCategory);
+    const failureMemory = this.getRelevantFailureMemory(taskId, stageLabel, failureCategory, plan);
+    const specRequiredFiles = plan?.spec?.requiredFiles ?? [];
+    const specRequiredScriptGroups = plan?.spec?.requiredScriptGroups ?? [];
+    const specAcceptanceCriteria = plan?.spec?.acceptanceCriteria ?? [];
+    const specQualityGates = plan?.spec?.qualityGates ?? [];
+    const task = this.tasks.get(taskId);
+    if (task) {
+      const telemetry = this.ensureTaskTelemetry(task);
+      telemetry.failureMemoryHints = failureMemory.map((entry) => `${entry.category}/${entry.signature}: ${entry.guidance}`);
+      this.persistTaskState();
+    }
     const recoveryStageLabel = `${stageLabel} recovery`;
     const exhaustedRepairRoutes = new Set<string>();
     const getAvailableRoutes = (): ModelRoute[] => routes.filter(
@@ -10920,33 +13725,46 @@ body {
     const hasRemainingRoutes = (): boolean => getAvailableRoutes().length > 0;
     let lastFailure = `${stageLabel} recovery model did not produce valid structured edits.`;
     this.appendLog(taskId, `Fix model candidates: ${routes.map((route) => route.model).join(", ")}`);
-    const baseMessages = [
-      {
-        role: "system",
-        content:
-          `You are a precise coding agent. Fix the ${failureLabel} using the provided workspace files only. ` +
-          "Return only strict JSON with shape {\"summary\":\"...\",\"edits\":[{\"path\":\"relative/path\",\"content\":\"full file content\"}]}. " +
-          "Do not include markdown fences. Do not omit unchanged surrounding code in edited files."
-      },
-      {
-        role: "user",
-        content: [
-          `Task: ${userPrompt}`,
-          `Attempt: ${attempt}`,
-          `Failure category: ${failureCategory}`,
-          `Repair guidance: ${failureGuidance}`,
-          "",
-          `${stageLabel} failure output:`,
-          commandResult.combinedOutput || "(no output)",
-          "",
-          "Workspace file context:",
-          ...contextFiles.flatMap((file) => [
-            `--- FILE: ${file.path} ---`,
-            file.content
-          ])
-        ].join("\n")
-      }
-    ];
+    const baseMessages = this.buildTaskPromptMessages(
+      [
+        `Task: ${userPrompt}`,
+        `Attempt: ${attempt}`,
+        `Failure category: ${failureCategory}`,
+        `Repair guidance: ${failureGuidance}`,
+        ...(plan ? [`Repository context: ${repositoryContext.summary}`] : []),
+        ...(plan?.spec
+          ? [
+            `Starter profile: ${plan.spec.starterProfile}`,
+            `Required files: ${specRequiredFiles.join(", ") || "(none)"}`,
+            `Required scripts: ${specRequiredScriptGroups.map((group) => `${group.label} => ${group.options.join(" | ")}`).join("; ") || "(none)"}`,
+            `Acceptance: ${specAcceptanceCriteria.join(" ") || "(none)"}`,
+            `Quality gates: ${specQualityGates.join(" ") || "(none)"}`
+          ]
+          : []),
+        ...(plan && repositoryConventions.length > 0
+          ? ["Repository conventions:", ...repositoryConventions.map((item) => `- ${item}`)]
+          : []),
+        ...this.formatFailureMemoryForPrompt(failureMemory),
+        taskAttachments.length > 0 ? `Task attachments: ${taskAttachments.map((attachment) => attachment.name).join(", ")}` : "",
+        "",
+        `${stageLabel} failure output:`,
+        commandResult.combinedOutput || "(no output)",
+        "",
+        "Workspace file context:",
+        ...contextFiles.flatMap((file) => [
+          `--- FILE: ${file.path} ---`,
+          file.content
+        ])
+      ].filter(Boolean).join("\n"),
+      taskAttachments,
+      `You are a precise coding agent. Fix the ${failureLabel} using the provided workspace files only. ` +
+        `${plan ? `Follow these repository conventions when possible: ${repositoryConventions.join(" ") || repositoryContext.summary}. ` : ""}` +
+        `${plan?.spec?.starterProfile === "electron-desktop"
+          ? "This is a strict Electron desktop task. Do not convert it into a static site, landing page, or python http.server scaffold. Preserve or restore desktop packaging support and package:win when required. "
+          : ""}` +
+        "Return only strict JSON with shape {\"summary\":\"...\",\"edits\":[{\"path\":\"relative/path\",\"content\":\"full file content\"}]}. " +
+        "Do not include markdown fences. Do not omit unchanged surrounding code in edited files."
+    );
 
     for (let semanticRouteAttempt = 1; semanticRouteAttempt <= routes.length; semanticRouteAttempt += 1) {
       const initialResponse = await this.sendFixModelRequest(taskId, getAvailableRoutes(), baseMessages, "initial", recoveryStageLabel);
@@ -11055,6 +13873,42 @@ body {
     }
   }
 
+  private getRelevantFailureMemory(
+    taskId: string,
+    stageLabel: string,
+    failureCategory: AgentTaskFailureCategory,
+    plan?: TaskExecutionPlan
+  ): FailureMemoryEntry[] {
+    const task = this.tasks.get(taskId);
+    const currentArtifact = task?.artifactType
+      ?? (task?.prompt ? this.inferArtifactTypeFromPrompt(task.prompt) : null)
+      ?? (plan?.spec?.starterProfile === "electron-desktop"
+        ? "desktop-app"
+        : plan?.spec?.starterProfile === "node-api-service"
+          ? "api-service"
+          : plan?.spec?.starterProfile === "node-cli"
+            ? "script-tool"
+            : plan?.spec?.starterProfile === "node-library"
+              ? "library"
+              : "unknown");
+    const normalizedStage = (stageLabel ?? "").trim().toLowerCase();
+
+    return [...this.failureMemory.values()]
+      .filter((entry) => entry.count >= 2 || entry.category === failureCategory)
+      .filter((entry) => entry.category === failureCategory || normalizedStage.includes(entry.stage.toLowerCase().split(" ")[0] ?? ""))
+      .filter((entry) => entry.artifactType === "unknown" || currentArtifact === "unknown" || entry.artifactType === currentArtifact)
+      .sort((a, b) => b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt))
+      .slice(0, 3);
+  }
+
+  private formatFailureMemoryForPrompt(entries: FailureMemoryEntry[]): string[] {
+    if (entries.length === 0) return [];
+    return [
+      "Recurring failure memory:",
+      ...entries.map((entry) => `- ${entry.count}x ${entry.category}/${entry.signature}: ${entry.guidance}`)
+    ];
+  }
+
   private tryParseFixResponse(raw: string, responseLabel = "Fix", options: ParseFixResponseOptions = {}): ParsedFixResponse | null {
     const normalized = (raw ?? "").trim();
     if (!normalized) {
@@ -11070,24 +13924,21 @@ body {
           if (!parsed) {
             return null;
           }
-          const edits = this.normalizeStrictStructuredEdits(parsed);
-          if (!this.matchesStrictFixResponseSchema(parsed)) {
+          const strictFix = this.extractStrictFixResponse(parsed);
+          if (!strictFix) {
             return {
               extractedJson: fencedJson,
               issue: "schema-mismatch"
             };
           }
-          if (edits.length === 0) {
+          if (strictFix.edits.length === 0) {
             return {
               extractedJson: fencedJson,
               issue: "no-usable-edits"
             };
           }
           return {
-            fix: {
-              summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
-              edits
-            },
+            fix: strictFix,
             extractedJson: fencedJson
           };
         }
@@ -11110,11 +13961,12 @@ body {
     if (!parsed) {
       return null;
     }
+    const strictFix = options.strictSchema ? this.extractStrictFixResponse(parsed) : null;
     const edits = options.strictSchema
-      ? this.normalizeStrictStructuredEdits(parsed)
+      ? (strictFix?.edits ?? [])
       : this.normalizeStructuredEdits(parsed);
 
-    if (options.strictSchema && !this.matchesStrictFixResponseSchema(parsed)) {
+    if (options.strictSchema && !strictFix) {
       return {
         extractedJson: jsonText,
         issue: "schema-mismatch"
@@ -11130,7 +13982,7 @@ body {
 
     return {
       fix: {
-        summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+        summary: strictFix?.summary ?? (typeof parsed.summary === "string" ? parsed.summary.trim() : ""),
         edits
       },
       extractedJson: jsonText
@@ -11200,6 +14052,37 @@ body {
       .filter((edit): edit is StructuredEdit => Boolean(edit));
   }
 
+  private extractStrictFixResponse(parsed: Partial<FixResponse>): FixResponse | null {
+    if (this.matchesStrictFixResponseSchema(parsed)) {
+      return {
+        summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+        edits: this.normalizeStrictStructuredEdits(parsed)
+      };
+    }
+
+    const fallbackSummary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+    const nestedCandidates = [
+      typeof (parsed as { fix?: unknown }).fix === "object" ? (parsed as { fix?: Partial<FixResponse> }).fix : null,
+      typeof (parsed as { result?: unknown }).result === "object" ? (parsed as { result?: Partial<FixResponse> }).result : null,
+      typeof (parsed as { response?: unknown }).response === "object" ? (parsed as { response?: Partial<FixResponse> }).response : null,
+      typeof (parsed as { data?: unknown }).data === "object" ? (parsed as { data?: Partial<FixResponse> }).data : null,
+      typeof (parsed as { payload?: unknown }).payload === "object" ? (parsed as { payload?: Partial<FixResponse> }).payload : null,
+      typeof parsed.summary === "object" && parsed.summary ? parsed.summary as Partial<FixResponse> : null
+    ].filter((candidate): candidate is Partial<FixResponse> => Boolean(candidate));
+
+    for (const candidate of nestedCandidates) {
+      if (!this.matchesNestedStrictFixResponseSchema(candidate)) continue;
+      const edits = this.normalizeStrictStructuredEdits(candidate);
+      if (edits.length === 0) continue;
+      return {
+        summary: typeof candidate.summary === "string" ? candidate.summary.trim() : (fallbackSummary || "Recovered strict structured edits."),
+        edits
+      };
+    }
+
+    return null;
+  }
+
   private matchesStrictFixResponseSchema(parsed: Partial<FixResponse>): boolean {
     if (typeof parsed.summary !== "string" || !Array.isArray(parsed.edits)) {
       return false;
@@ -11216,6 +14099,19 @@ body {
         && Boolean(path)
         && this.normalizeStructuredEditContent(path, record.content) !== null;
     });
+  }
+
+  private matchesNestedStrictFixResponseSchema(parsed: Partial<FixResponse>): boolean {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const record = parsed as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.length === 0 || keys.length > 2) return false;
+    if (!keys.includes("edits")) return false;
+    if (keys.some((key) => key !== "summary" && key !== "edits")) return false;
+    if ("summary" in record && typeof record.summary !== "string") return false;
+    return Array.isArray(record.edits) && this.normalizeStrictStructuredEdits(parsed).length > 0;
   }
 
   private normalizeStructuredEdit(edit: unknown): StructuredEdit | null {
@@ -11333,7 +14229,7 @@ body {
   private async sendFixModelRequest(
     taskId: string,
     routes: ModelRoute[],
-    messages: Array<{ role: string; content: string }>,
+    messages: ChatHistoryEntry[],
     label: "initial" | "json-retry",
     stageLabel = "Agent model request"
   ): Promise<string> {
@@ -11388,9 +14284,16 @@ body {
           const transient = this.isTransientModelFailure(message);
           this.recordModelAttempt(taskId, stageLabel, route.model, routeIndex, attempt, transient ? "transient-error" : "error", message);
           this.recordModelRouteStat(route, transient ? "transient-error" : "error");
-          const blacklisted = this.recordTaskModelFailure(taskId, route.model);
+          const blacklisted = this.recordTaskModelFailure(taskId, route.model, transient ? "transient-error" : "error");
           if (blacklisted) {
-            this.appendLog(taskId, `Blacklisting ${route.model} for the rest of task ${taskId} after repeated failures.`);
+            this.appendLog(
+              taskId,
+              `Blacklisting ${route.model} for the rest of task ${taskId} after repeated ${transient ? "transient" : "hard"} failures.`
+            );
+            if (transient) {
+              this.appendLog(taskId, `Stopping retries for ${route.model} because it is now blacklisted. Falling back to the next route...`);
+              break;
+            }
           }
 
           if (!transient) {
@@ -11454,6 +14357,107 @@ body {
     return (stats.successes * 3) - (stats.failures * 4) - (stats.semanticFailures * 5) - (stats.transientFailures * 2);
   }
 
+  private buildModelRouteScoreFactors(
+    route: Pick<ModelRoute, "model" | "baseUrl" | "skipAuth">
+  ): AgentModelRouteScoreFactor[] {
+    const stats = this.modelRouteStats.get(this.buildModelRouteKey(route));
+    if (!stats) {
+      return [{ label: "No reliability history", delta: 0 }];
+    }
+
+    const factors: AgentModelRouteScoreFactor[] = [];
+    if (stats.successes > 0) {
+      factors.push({ label: `${stats.successes} success${stats.successes === 1 ? "" : "es"}`, delta: stats.successes * 3 });
+    }
+    if (stats.failures > 0) {
+      factors.push({ label: `${stats.failures} hard fail${stats.failures === 1 ? "" : "s"}`, delta: stats.failures * -4 });
+    }
+    if (stats.transientFailures > 0) {
+      factors.push({
+        label: `${stats.transientFailures} transient fail${stats.transientFailures === 1 ? "ure" : "ures"}`,
+        delta: stats.transientFailures * -2
+      });
+    }
+    if (stats.semanticFailures > 0) {
+      factors.push({
+        label: `${stats.semanticFailures} semantic fail${stats.semanticFailures === 1 ? "ure" : "ures"}`,
+        delta: stats.semanticFailures * -5
+      });
+    }
+    return factors.length > 0 ? factors : [{ label: "No reliability history", delta: 0 }];
+  }
+
+  private inferRoutingStage(stageLabel: string): AgentRoutingStage {
+    const normalized = (stageLabel ?? "").trim().toLowerCase();
+    if (normalized.includes("plan")) return "planner";
+    if (normalized.includes("repair") || normalized.includes("fix") || normalized.includes("recovery")) return "repair";
+    return "generator";
+  }
+
+  private buildTaskModelFailureStatus(taskId: string, model: string): {
+    count: number;
+    blacklisted: boolean;
+    hardFailuresUntilBlacklist: number;
+    transientFailuresUntilBlacklist: number;
+  } {
+    const normalizedModel = (model ?? "").trim();
+    const count = this.taskModelFailureCounts.get(taskId)?.get(normalizedModel) ?? 0;
+    return {
+      count,
+      blacklisted: this.isTaskModelBlacklisted(taskId, normalizedModel),
+      hardFailuresUntilBlacklist: Math.max(0, AGENT_MODEL_BLACKLIST_THRESHOLD - count),
+      transientFailuresUntilBlacklist: Math.max(0, AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD - count)
+    };
+  }
+
+  private getTaskAttachments(taskId: string): AttachmentPayload[] {
+    return (this.tasks.get(taskId)?.attachments ?? []).map((attachment) => ({ ...attachment }));
+  }
+
+  private taskRequiresVisionRoute(taskId: string): boolean {
+    return this.getTaskAttachments(taskId).some((attachment) => attachment.type === "image");
+  }
+
+  private buildTaskPromptMessages(
+    prompt: string,
+    attachments: AttachmentPayload[],
+    systemPreamble: string
+  ): ChatHistoryEntry[] {
+    return [
+      { role: "system", content: systemPreamble },
+      ...buildAttachmentAwarePromptMessages(prompt, attachments)
+    ];
+  }
+
+  private buildTaskStageSelectionReason(taskId: string, stage: string, route: ModelRoute, routeIndex: number): string {
+    const routingStage = this.inferRoutingStage(stage);
+    const providerLabel = route.skipAuth ? "local" : "cloud";
+    const hints = getModelCapabilityHints(route.model);
+    const capabilityHints: string[] = [];
+    if (hints.coding > 0) capabilityHints.push("coder");
+    if (hints.reasoning >= 6) capabilityHints.push("reasoning");
+    if (hints.longContext >= 8) capabilityHints.push("long-context");
+    if (hints.vision) capabilityHints.push("vision");
+
+    const stageBias = routingStage === "planner"
+      ? "Planner stages favor long-context and reasoning models."
+      : routingStage === "repair"
+        ? "Repair stages favor coder and reasoning models."
+        : "Implementation stages favor coder-first routes.";
+    const capabilityDetail = capabilityHints.length > 0
+      ? `Matched ${capabilityHints.join(", ")} capability hints on this ${providerLabel} route.`
+      : `No strong capability hints were detected, so this ${providerLabel} route stayed available as a fallback.`;
+    const visionBias = this.taskRequiresVisionRoute(taskId)
+      ? (hints.vision
+        ? " This task includes image attachments, so vision-capable routes are preferred."
+        : " This task includes image attachments, but no vision signal was detected on this fallback route.")
+      : "";
+    const routePosition = routeIndex > 0
+      ? ` It is currently using route ${routeIndex + 1}, so earlier candidates already failed, were blacklisted, or ranked lower.`
+      : " It is currently the top remaining route for this stage.";
+    return `${stageBias} ${capabilityDetail}${visionBias}${routePosition}`;
+  }
+
   private recordModelRouteStat(
     route: Pick<ModelRoute, "model" | "baseUrl" | "skipAuth">,
     outcome: AgentTaskModelAttempt["outcome"]
@@ -11482,7 +14486,11 @@ body {
     this.persistTaskState();
   }
 
-  private recordTaskModelFailure(taskId: string, model: string): boolean {
+  private recordTaskModelFailure(
+    taskId: string,
+    model: string,
+    outcome: Extract<AgentTaskModelAttempt["outcome"], "transient-error" | "error" | "semantic-error">
+  ): boolean {
     const normalizedModel = (model ?? "").trim();
     if (!taskId || !normalizedModel) return false;
     const taskFailures = this.taskModelFailureCounts.get(taskId) ?? new Map<string, number>();
@@ -11491,7 +14499,10 @@ body {
     this.taskModelFailureCounts.set(taskId, taskFailures);
     this.syncTaskRouteTelemetry(taskId);
 
-    if (nextCount < 2) return false;
+    const threshold = outcome === "transient-error"
+      ? AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD
+      : AGENT_MODEL_BLACKLIST_THRESHOLD;
+    if (nextCount < threshold) return false;
     const blacklist = this.taskModelBlacklist.get(taskId) ?? new Set<string>();
     blacklist.add(normalizedModel);
     this.taskModelBlacklist.set(taskId, blacklist);
@@ -11527,11 +14538,12 @@ body {
     if (!taskId || !normalizedStage) return;
     const taskRoutes = this.taskStageRoutes.get(taskId);
     const state = taskRoutes?.get(normalizedStage);
+    this.rememberFailureMemory(taskId, normalizedStage, message);
     if (!state) return;
 
     this.recordModelAttempt(taskId, normalizedStage, state.route.model, state.routeIndex, state.attempt, "semantic-error", message);
     this.recordModelRouteStat(state.route, "semantic-error");
-    const blacklisted = this.recordTaskModelFailure(taskId, state.route.model);
+    const blacklisted = this.recordTaskModelFailure(taskId, state.route.model, "semantic-error");
     if (blacklisted) {
       this.appendLog(taskId, `Blacklisting ${state.route.model} for the rest of task ${taskId} after repeated semantic failures.`);
     }
@@ -11566,6 +14578,139 @@ body {
   private compactFailureMessage(message: string): string {
     const normalized = (message ?? "").replace(/\s+/g, " ").trim();
     return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+  }
+
+  private rememberFailureMemory(taskId: string, stage: string, message: string): void {
+    const normalizedStage = (stage ?? "").trim();
+    const compact = this.compactFailureMessage(message ?? "");
+    if (!taskId || !normalizedStage || !compact) return;
+
+    const task = this.tasks.get(taskId);
+    const category = this.classifyFailureCategory(normalizedStage, compact);
+    const artifactType = task?.artifactType
+      ?? (task?.prompt ? this.inferArtifactTypeFromPrompt(task.prompt) : null)
+      ?? "unknown";
+    const signature = this.buildFailureMemorySignature(category, compact);
+    const key = `${artifactType}|${category}|${signature}`;
+    const now = new Date().toISOString();
+    const guidance = this.buildFailureMemoryGuidance(category, signature, compact);
+    const current = this.failureMemory.get(key);
+    if (current) {
+      current.count += 1;
+      current.lastSeenAt = now;
+      current.example = compact;
+      current.guidance = guidance;
+      current.stage = normalizedStage;
+    } else {
+      this.failureMemory.set(key, {
+        key,
+        artifactType,
+        category,
+        stage: normalizedStage,
+        signature,
+        guidance,
+        example: compact,
+        count: 1,
+        firstSeenAt: now,
+        lastSeenAt: now
+      });
+      this.trimFailureMemory();
+    }
+    this.persistTaskState();
+  }
+
+  private trimFailureMemory(): void {
+    const entries = [...this.failureMemory.values()];
+    if (entries.length <= MAX_FAILURE_MEMORY_ENTRIES) return;
+    entries
+      .sort((a, b) => b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt))
+      .slice(MAX_FAILURE_MEMORY_ENTRIES)
+      .forEach((entry) => {
+        this.failureMemory.delete(entry.key);
+      });
+  }
+
+  private buildFailureMemorySignature(category: AgentTaskFailureCategory, message: string): string {
+    const normalized = (message ?? "").toLowerCase();
+    if (category === "malformed-json") {
+      if (normalized.includes("strict schema")) return "strict-schema-contract";
+      if (normalized.includes("no usable edits")) return "json-no-usable-edits";
+      return "managed-json-shape";
+    }
+    if (category === "unsupported-path") return "out-of-scope-edits";
+    if (category === "wrong-scaffold") return "scaffold-mismatch";
+    if (category === "asset-missing") return "missing-linked-assets";
+    if (category === "missing-file") {
+      if (normalized.includes("readme")) return "missing-readme";
+      if (normalized.includes("index.html")) return "missing-index-entry";
+      if (normalized.includes("main.tsx")) return "missing-react-entry";
+      if (normalized.includes("desktop-launch")) return "missing-desktop-launcher";
+      return "missing-required-file";
+    }
+    if (category === "build-error") {
+      if (normalized.includes("package.json")) return "package-manifest-integrity";
+      if (normalized.includes("dependency")) return "dependency-install";
+      return "build-contract";
+    }
+    if (category === "runtime-error") {
+      if (normalized.includes("usage")) return "cli-usage-output";
+      if (normalized.includes("api probe") || normalized.includes("/health")) return "api-runtime-endpoints";
+      if (normalized.includes("desktop preview")) return "desktop-preview-runtime";
+      return "runtime-launch-path";
+    }
+    if (category === "preview-error") return "preview-bootstrap";
+    if (category === "lint-error") return "lint-cleanup";
+    if (category === "test-error") return "test-contract";
+    if (category === "verification-error") {
+      if (normalized.includes("api probe")) return "api-verification";
+      if (normalized.includes("cli runtime")) return "cli-verification";
+      if (normalized.includes("desktop interaction")) return "desktop-verification";
+      return "verification-contract";
+    }
+    return normalized
+      .replace(/\b\d+\b/g, "#")
+      .replace(/[^\w\s-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 48) || "general";
+  }
+
+  private buildFailureMemoryGuidance(
+    category: AgentTaskFailureCategory,
+    signature: string,
+    message: string
+  ): string {
+    const base = this.buildFailureCategoryGuidance(category);
+    switch (signature) {
+      case "strict-schema-contract":
+        return "Return only the strict JSON contract with summary and scoped edits. No prose, no markdown fences, no alternate keys.";
+      case "json-no-usable-edits":
+        return "Do not stop at a summary. Return at least one concrete scoped file edit when a repair is required.";
+      case "out-of-scope-edits":
+        return "Keep edits inside the planned workspace files and avoid touching host-workspace or unsupported paths.";
+      case "missing-readme":
+        return "Restore the missing README and keep it aligned with run/build commands and deliverables.";
+      case "missing-index-entry":
+        return "Restore the preview entry HTML and ensure scripts/styles still point at real local assets.";
+      case "missing-react-entry":
+        return "Restore the main React entry and make sure the root render path is intact.";
+      case "missing-desktop-launcher":
+        return "Restore the desktop launcher script and keep packaged launch scripts pointed at the Electron entry.";
+      case "package-manifest-integrity":
+        return "Keep package.json valid JSON and preserve the expected build/start/test scripts for the project type.";
+      case "dependency-install":
+        return "Prefer dependency-safe repairs that keep package names, versions, and scripts consistent with the scaffold.";
+      case "cli-usage-output":
+        return "A CLI verification run must complete with real output, not just usage text. Accept fixture input when provided.";
+      case "api-runtime-endpoints":
+        return "Keep the API launch path stable and make sure /health plus the main collection endpoint return JSON.";
+      case "desktop-preview-runtime":
+        return "Keep the desktop preview interactive and ensure the built index.html remains smoke-testable.";
+      case "preview-bootstrap":
+        return "Preserve preview bootstrap wiring: entry HTML, linked assets, and root render/bootstrap markers.";
+      default:
+        return `${base} Recent example: ${this.compactFailureMessage(message)}`;
+    }
   }
 
   private hasStartupFailureSignal(output: string): boolean {
@@ -12154,6 +15299,11 @@ body {
       this.joinWorkspacePath(workingDirectory, "electron/main.mjs"),
       this.buildGeneratedDesktopMainProcess(this.toDisplayNameFromDirectory(workingDirectory))
     );
+
+    await this.writeWorkspaceFile(
+      this.joinWorkspacePath(workingDirectory, "electron/preload.mjs"),
+      this.buildGeneratedDesktopPreloadBridge()
+    );
   }
 
   private detectBootstrapPlan(prompt: string, inspection: WorkspaceInspectionResult): BootstrapPlan | null {
@@ -12176,14 +15326,23 @@ body {
     const wantsNext = /\bnext(?:\.js|js)\b/.test(normalizedPrompt);
     const wantsStatic = ["landing page", "pricing page", "microsite", "showcase page", "marketing page", "static site", "html css", "vanilla js"].some((term) => normalizedPrompt.includes(term));
     const promptArtifact = this.inferArtifactTypeFromPrompt(normalizedPrompt);
+    const starterProfile = this.inferStarterProfile(promptArtifact, this.detectBuilderMode(prompt), wantsStatic ? "static" : "react");
+    const domainFocus = this.inferDomainFocus(prompt, starterProfile, promptArtifact);
     const wantsNodePackage = promptArtifact === "script-tool" || promptArtifact === "library" || promptArtifact === "api-service";
-    const template: BootstrapPlan["template"] = wantsNodePackage ? "node-package" : (wantsNext ? "nextjs" : (wantsStatic ? "static" : "react-vite"));
+    const isDesktopStarter = starterProfile === "electron-desktop" || promptArtifact === "desktop-app";
+    const template: BootstrapPlan["template"] = wantsNodePackage
+      ? "node-package"
+      : isDesktopStarter
+        ? "react-vite"
+        : (wantsNext ? "nextjs" : (wantsStatic ? "static" : "react-vite"));
     const commands = this.buildBootstrapCommands(template, targetDirectory);
 
     return {
       targetDirectory,
       template,
-      artifactType: wantsNodePackage ? promptArtifact : undefined,
+      artifactType: promptArtifact ?? undefined,
+      starterProfile,
+      domainFocus,
       projectName,
       summary: `Bootstrapping a ${template} project in ${targetDirectory} to avoid overwriting the current Cipher workspace.`,
       commands
@@ -12196,12 +15355,21 @@ body {
     const wantsNext = /\bnext(?:\.js|js)\b/.test(normalizedPrompt);
     const wantsStatic = ["landing page", "pricing page", "microsite", "showcase page", "marketing page", "static site", "html css", "vanilla js", "website", "site", "homepage"].some((term) => normalizedPrompt.includes(term));
     const promptArtifact = this.inferArtifactTypeFromPrompt(normalizedPrompt);
+    const starterProfile = this.inferStarterProfile(promptArtifact, this.detectBuilderMode(prompt), wantsStatic ? "static" : "react");
+    const domainFocus = this.inferDomainFocus(prompt, starterProfile, promptArtifact);
     const wantsNodePackage = promptArtifact === "script-tool" || promptArtifact === "library" || promptArtifact === "api-service";
-    const template: BootstrapPlan["template"] = wantsNodePackage ? "node-package" : (wantsNext ? "nextjs" : (wantsStatic ? "static" : "react-vite"));
+    const isDesktopStarter = starterProfile === "electron-desktop" || promptArtifact === "desktop-app";
+    const template: BootstrapPlan["template"] = wantsNodePackage
+      ? "node-package"
+      : isDesktopStarter
+        ? "react-vite"
+        : (wantsNext ? "nextjs" : (wantsStatic ? "static" : "react-vite"));
     return {
       targetDirectory,
       template,
-      artifactType: wantsNodePackage ? promptArtifact : undefined,
+      artifactType: promptArtifact ?? undefined,
+      starterProfile,
+      domainFocus,
       projectName: targetName,
       summary: `Bootstrapping a ${template} project in ${targetDirectory}.`,
       commands: this.buildBootstrapCommands(template, targetDirectory)
@@ -12319,6 +15487,7 @@ body {
         if (plan.template === "static") {
           await this.ensureStaticWorkspaceScripts(plan.targetDirectory);
         }
+        await this.ensureBootstrapProjectReadme(plan);
         this.appendLog(taskId, `Reusing existing bootstrap directory: ${plan.targetDirectory}`);
         return {
           summary: `Reusing existing ${plan.template} project in ${plan.targetDirectory}.`
@@ -12329,9 +15498,9 @@ body {
     }
 
     if (plan.template === "static") {
-      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "index.html"), this.buildStaticBootstrapHtml(plan.projectName));
-      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "styles.css"), this.buildStaticBootstrapCss());
-      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "app.js"), this.buildStaticBootstrapJs(plan.projectName));
+      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "index.html"), this.buildStaticBootstrapHtml(plan.projectName, plan.starterProfile));
+      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "styles.css"), this.buildStaticBootstrapCss(plan.starterProfile));
+      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "app.js"), this.buildStaticBootstrapJs(plan.projectName, plan.starterProfile));
       await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, "package.json"), JSON.stringify({
         name: plan.projectName,
         private: true,
@@ -12341,12 +15510,14 @@ body {
           start: "python -m http.server 4173"
         }
       }, null, 2) + "\n");
+      await this.ensureBootstrapProjectReadme(plan);
       this.appendLog(taskId, `Static app scaffold created in ${plan.targetDirectory}`);
       return { summary: plan.summary };
     }
 
     if (plan.template === "node-package") {
       await this.writeBootstrapNodePackage(plan);
+      await this.ensureBootstrapProjectReadme(plan);
       this.appendLog(taskId, `Node package scaffold created in ${plan.targetDirectory}`);
       return { summary: plan.summary };
     }
@@ -12358,6 +15529,8 @@ body {
           throw new Error(this.buildCommandFailureMessage("Bootstrap", result, `failed while running ${result.commandLine}`));
         }
       }
+      await this.applyBootstrapStarterProfile(plan);
+      await this.ensureBootstrapProjectReadme(plan);
     } catch (err) {
       this.appendLog(taskId, `Cleaning up failed bootstrap directory: ${plan.targetDirectory}`);
       await rm(targetPath, { recursive: true, force: true });
@@ -12395,6 +15568,12 @@ body {
           this.joinWorkspacePath(plan.targetDirectory, "node_modules/react/package.json")
         ];
 
+    if (plan.starterProfile === "electron-desktop") {
+      requiredPaths.push(this.joinWorkspacePath(plan.targetDirectory, "electron/main.mjs"));
+      requiredPaths.push(this.joinWorkspacePath(plan.targetDirectory, "electron/preload.mjs"));
+      requiredPaths.push(this.joinWorkspacePath(plan.targetDirectory, "scripts/desktop-launch.mjs"));
+    }
+
     for (const relPath of requiredPaths) {
       try {
         await stat(this.resolveWorkspacePath(relPath));
@@ -12402,7 +15581,28 @@ body {
         return false;
       }
     }
+
+    if (plan.starterProfile === "electron-desktop") {
+      try {
+        const raw = await readFile(this.resolveWorkspacePath(this.joinWorkspacePath(plan.targetDirectory, "package.json")), "utf8");
+        const parsed = this.parseLoosePackageManifest(raw);
+        const scripts = parsed?.scripts ?? {};
+        if (typeof scripts["package:win"] !== "string" || !scripts["package:win"].trim()) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
     return true;
+  }
+
+  private async applyBootstrapStarterProfile(plan: BootstrapPlan): Promise<void> {
+    if (plan.template !== "react-vite") return;
+
+    for (const file of this.buildReactBootstrapStarterFiles(plan)) {
+      await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, file.path), file.content);
+    }
   }
 
   private async ensureStaticWorkspaceScripts(targetDirectory: string): Promise<void> {
@@ -12456,72 +15656,213 @@ body {
     if (artifactType === "api-service") {
       return {
         build: "node -e \"console.log('Service ready')\"",
+        test: "node --test",
         start: "node src/server.js"
       };
     }
     if (artifactType === "library") {
       return {
-        build: "node -e \"console.log('Package ready')\""
+        build: "node -e \"console.log('Package ready')\"",
+        test: "node --test"
       };
     }
     return {
       build: "node -e \"console.log('Tool ready')\"",
+      test: "node --test",
       start: "node src/index.js"
     };
   }
 
-  private buildNodePackageStarterContent(projectName: string, artifactType?: AgentArtifactType): Array<{ path: string; content: string }> {
+  private buildNodePackageManifest(projectName: string, artifactType?: AgentArtifactType): PackageManifest {
+    const manifest: PackageManifest = {
+      name: projectName,
+      private: true,
+      version: "0.1.0",
+      type: "module",
+      scripts: this.buildNodePackageScripts(artifactType)
+    };
+
+    if (artifactType === "library") {
+      manifest.main = "./src/index.js";
+      manifest.exports = {
+        ".": "./src/index.js"
+      };
+    } else if (artifactType === "script-tool") {
+      manifest.bin = {
+        [projectName]: "./bin/cli.mjs"
+      };
+    } else if (artifactType === "api-service") {
+      manifest.main = "./src/server.js";
+    }
+
+    return manifest;
+  }
+
+  private buildNodePackageStarterContent(
+    projectName: string,
+    artifactType?: AgentArtifactType,
+    domainFocus: DomainFocus = "generic"
+  ): Array<{ path: string; content: string }> {
     if (artifactType === "api-service") {
-      return [{
-        path: "src/server.js",
-        content: [
-          "import http from 'node:http';",
-          "",
-          "const server = http.createServer((_req, res) => {",
-          "  res.writeHead(200, { 'content-type': 'application/json' });",
-          `  res.end(JSON.stringify({ service: '${projectName}', status: 'ok' }));`,
-          "});",
-          "",
-          "server.listen(process.env.PORT || 3000, () => {",
-          `  console.log('${projectName} listening');`,
-          "});"
-        ].join("\n") + "\n"
-      }];
+      const entity = this.buildApiEntityForDomain(domainFocus);
+      return [
+        {
+          path: "src/server.js",
+          content: [
+            "import http from 'node:http';",
+            "import { randomUUID } from 'node:crypto';",
+            "",
+            `const ${entity.plural} = [`,
+            `  { id: randomUUID(), ${entity.primaryField}: '${entity.defaultPrimaryValue}', status: 'active' }`,
+            "];",
+            "",
+            "function sendJson(res, statusCode, payload) {",
+            "  res.writeHead(statusCode, { 'content-type': 'application/json' });",
+            "  res.end(JSON.stringify(payload));",
+            "}",
+            "",
+            "function readJsonBody(req) {",
+            "  return new Promise((resolve, reject) => {",
+            "    let raw = '';",
+            "    req.on('data', (chunk) => { raw += chunk; });",
+            "    req.on('end', () => {",
+            "      if (!raw.trim()) return resolve({});",
+            "      try { resolve(JSON.parse(raw)); } catch (error) { reject(error); }",
+            "    });",
+            "    req.on('error', reject);",
+            "  });",
+            "}",
+            "",
+            "const server = http.createServer(async (req, res) => {",
+            "  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);",
+            "  if (req.method === 'GET' && url.pathname === '/health') {",
+            `    return sendJson(res, 200, { service: '${projectName}', status: 'ok', resource: '${entity.plural}' });`,
+            "  }",
+            `  if (req.method === 'GET' && url.pathname === '${entity.collectionPath}') {`,
+            `    return sendJson(res, 200, { ${entity.plural} });`,
+            "  }",
+            `  if (req.method === 'POST' && url.pathname === '${entity.collectionPath}') {`,
+            "    const body = await readJsonBody(req);",
+            `    const ${entity.singular} = {`,
+            "      id: randomUUID(),",
+            `      ${entity.primaryField}: String(body.${entity.primaryField} ?? '${entity.defaultPrimaryValue}'),`,
+            "      status: String(body.status ?? 'active')",
+            "    };",
+            `    ${entity.plural}.unshift(${entity.singular});`,
+            `    return sendJson(res, 201, ${entity.singular});`,
+            "  }",
+            "  return sendJson(res, 404, { error: 'Not found' });",
+            "});",
+            "",
+            "server.listen(process.env.PORT || 3000, () => {",
+            `  console.log('${projectName} listening');`,
+            "});"
+          ].join("\n") + "\n"
+        },
+        {
+          path: "test/server.test.js",
+          content: [
+            "import test from 'node:test';",
+            "import assert from 'node:assert/strict';",
+            "",
+            "test('service smoke placeholder', () => {",
+            "  assert.equal(typeof process.version, 'string');",
+            "});"
+          ].join("\n") + "\n"
+        }
+      ];
     }
 
     if (artifactType === "library") {
-      return [{
-        path: "src/index.js",
-        content: [
-          `export function describe${projectName.replace(/(^|[-_\s]+)([a-z])/gi, (_match, _sep, char) => char.toUpperCase())}() {`,
-          `  return '${projectName} package ready';`,
-          "}"
-        ].join("\n") + "\n"
-      }];
+      return [
+        {
+          path: "src/index.js",
+          content: [
+            `export function describe${projectName.replace(/(^|[-_\s]+)([a-z])/gi, (_match, _sep, char) => char.toUpperCase())}() {`,
+            `  return '${projectName} package ready';`,
+            "}",
+            "",
+            "export function formatCompactCount(value) {",
+            "  return new Intl.NumberFormat('en', { notation: 'compact' }).format(Number(value || 0));",
+            "}",
+            "",
+            "export function formatPercentDelta(value) {",
+            "  const amount = Number(value || 0);",
+            "  const prefix = amount > 0 ? '+' : '';",
+            "  return `${prefix}${amount.toFixed(1)}%`;",
+            "}"
+          ].join("\n") + "\n"
+        },
+        {
+          path: "test/index.test.js",
+          content: [
+            "import test from 'node:test';",
+            "import assert from 'node:assert/strict';",
+            "import { formatCompactCount } from '../src/index.js';",
+            "",
+            "test('formatCompactCount returns a compact number string', () => {",
+            "  assert.equal(typeof formatCompactCount(1200), 'string');",
+            "});"
+          ].join("\n") + "\n"
+        }
+      ];
     }
 
-    return [{
-      path: "src/index.js",
-      content: [
-        "#!/usr/bin/env node",
-        "",
-        "const input = process.argv.slice(2).join(' ').trim();",
-        `console.log(input || '${projectName} tool ready');`
-      ].join("\n") + "\n"
-    }];
+    return [
+      {
+        path: "src/index.js",
+        content: [
+          "#!/usr/bin/env node",
+          "",
+          "import { readFile } from 'node:fs/promises';",
+          "",
+          "const [targetPath, ...rest] = process.argv.slice(2);",
+          "const inlineText = rest.join(' ').trim();",
+          "",
+          "if (targetPath) {",
+          "  try {",
+          "    const content = await readFile(targetPath, 'utf8');",
+          "    const lines = content.split(/\\r?\\n/).filter(Boolean);",
+          `    console.log(JSON.stringify({ tool: '${projectName}', file: targetPath, lines: lines.length, preview: lines.slice(0, 3) }, null, 2));`,
+          "    process.exit(0);",
+          "  } catch (error) {",
+          "    console.error(`Unable to read ${targetPath}: ${error instanceof Error ? error.message : String(error)}`);",
+          "    process.exit(1);",
+          "  }",
+          "}",
+          "",
+          `console.log(inlineText || '${projectName} tool ready');`
+        ].join("\n") + "\n"
+      },
+      {
+        path: "bin/cli.mjs",
+        content: [
+          "#!/usr/bin/env node",
+          "import '../src/index.js';"
+        ].join("\n") + "\n"
+      },
+      {
+        path: "test/index.test.js",
+        content: [
+          "import test from 'node:test';",
+          "import assert from 'node:assert/strict';",
+          "",
+          "test('cli smoke placeholder', () => {",
+          "  assert.equal(2 + 2, 4);",
+          "});"
+        ].join("\n") + "\n"
+      }
+    ];
   }
 
   private async writeBootstrapNodePackage(plan: BootstrapPlan): Promise<void> {
     const packageJsonPath = this.joinWorkspacePath(plan.targetDirectory, "package.json");
-    await this.writeWorkspaceFile(packageJsonPath, JSON.stringify({
-      name: plan.projectName,
-      private: true,
-      version: "0.1.0",
-      type: "module",
-      scripts: this.buildNodePackageScripts(plan.artifactType)
-    }, null, 2) + "\n");
+    await this.writeWorkspaceFile(
+      packageJsonPath,
+      JSON.stringify(this.buildNodePackageManifest(plan.projectName, plan.artifactType), null, 2) + "\n"
+    );
 
-    for (const file of this.buildNodePackageStarterContent(plan.projectName, plan.artifactType)) {
+    for (const file of this.buildNodePackageStarterContent(plan.projectName, plan.artifactType, plan.domainFocus)) {
       await this.writeWorkspaceFile(this.joinWorkspacePath(plan.targetDirectory, file.path), file.content);
     }
   }
@@ -12547,7 +15888,264 @@ body {
       || ".";
   }
 
-  private buildStaticBootstrapHtml(projectName: string): string {
+  private buildGeneralReactStarterApp(projectName: string): string {
+    return `import "./App.css";
+
+const highlights = [
+  { label: "Starter profile", value: "React app" },
+  { label: "Surface", value: "Workspace shell" },
+  { label: "Next move", value: "Add domain logic" }
+];
+
+export default function App() {
+  return (
+    <main className="starter-shell">
+      <section className="starter-hero">
+        <p className="starter-eyebrow">React starter</p>
+        <h1>${projectName}</h1>
+        <p className="starter-copy">
+          This starter begins with a real layout, visible actions, and structured sections so the agent can extend the app without rewriting a blank scaffold.
+        </p>
+        <div className="starter-actions">
+          <button type="button">Primary action</button>
+          <a href="#details">Inspect sections</a>
+        </div>
+      </section>
+
+      <section className="starter-grid">
+        {highlights.map((item) => (
+          <article key={item.label} className="starter-card">
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </article>
+        ))}
+      </section>
+
+      <section id="details" className="starter-panel">
+        <p className="starter-eyebrow">Next steps</p>
+        <h2>Replace this with the product workflow</h2>
+        <ul>
+          <li>Preserve the current file structure and project conventions.</li>
+          <li>Swap starter sections for the real app surface.</li>
+          <li>Keep the primary action visible while new features are added.</li>
+        </ul>
+      </section>
+    </main>
+  );
+}
+`;
+  }
+
+  private buildGeneralReactStarterCss(): string {
+    return `.starter-shell {
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.16), transparent 24%),
+    linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+  color: #0f172a;
+}
+
+.starter-hero,
+.starter-panel,
+.starter-card {
+  border-radius: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
+}
+
+.starter-hero,
+.starter-panel {
+  padding: 28px;
+}
+
+.starter-eyebrow {
+  margin: 0 0 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 12px;
+  color: #2563eb;
+}
+
+.starter-hero h1,
+.starter-panel h2 {
+  margin: 0 0 12px;
+}
+
+.starter-copy {
+  margin: 0;
+  max-width: 720px;
+  line-height: 1.7;
+  color: #334155;
+}
+
+.starter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.starter-actions button,
+.starter-actions a {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font: inherit;
+  text-decoration: none;
+}
+
+.starter-actions button {
+  background: linear-gradient(135deg, #0f172a, #2563eb);
+  color: #fff;
+}
+
+.starter-actions a {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+}
+
+.starter-grid {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.starter-card {
+  padding: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.starter-card span {
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.starter-card strong {
+  font-size: 1.1rem;
+}
+
+.starter-panel {
+  margin-top: 20px;
+}
+
+.starter-panel ul {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: #334155;
+  line-height: 1.7;
+}
+
+@media (max-width: 820px) {
+  .starter-shell {
+    padding: 20px;
+  }
+
+  .starter-grid {
+    grid-template-columns: 1fr;
+  }
+}
+`;
+  }
+
+  private buildGeneralReactStarterIndexCss(): string {
+    return `:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f172a;
+  background: #f8fafc;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+`;
+  }
+
+  private buildStaticBootstrapHtml(projectName: string, starterProfile: StarterProfile = "static-marketing"): string {
+    if (starterProfile === "static-marketing") {
+      return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${projectName}</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="marketing-shell">
+      <section class="hero">
+        <p class="eyebrow">Starter app</p>
+        <h1>${projectName}</h1>
+        <p class="lede">A stronger starter app with a hero section, feature grid, proof strip, and CTA so the agent begins from a real landing page shape.</p>
+        <div class="hero-actions">
+          <button id="cta" type="button">Start trial</button>
+          <a href="#features">See features</a>
+        </div>
+      </section>
+
+      <section class="proof-strip" aria-label="Proof points">
+        <span>Teams onboarded in 2 days</span>
+        <span>Operational visibility in one workspace</span>
+        <span>Built for lean software teams</span>
+      </section>
+
+      <section id="features" class="feature-grid">
+        <article>
+          <h2>Focused workflow</h2>
+          <p>Start with a clear content hierarchy instead of a blank shell.</p>
+        </article>
+        <article>
+          <h2>Fast iteration</h2>
+          <p>Keep sections and styling easy for the agent to extend in later passes.</p>
+        </article>
+        <article>
+          <h2>Conversion-ready</h2>
+          <p>Primary CTA, proof points, and product value cues are already present.</p>
+        </article>
+      </section>
+
+      <section class="cta-panel">
+        <div>
+          <p class="eyebrow">Ready to ship</p>
+          <h2>Turn this into a full product page</h2>
+        </div>
+        <p id="status" class="status">Starter ready for feature-specific copy and branding.</p>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
+`;
+    }
+
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -12570,6 +16168,48 @@ body {
 `;
   }
 
+  private buildReactBootstrapStarterFiles(plan: BootstrapPlan): Array<{ path: string; content: string }> {
+    const title = this.toDisplayNameFromDirectory(plan.targetDirectory);
+    switch (plan.starterProfile) {
+      case "electron-desktop":
+        return [
+          { path: "src/App.tsx", content: this.buildDesktopBootstrapAppTsx(title, plan.domainFocus) },
+          { path: "src/App.css", content: this.buildDesktopBootstrapAppCss() },
+          { path: "src/index.css", content: this.buildDesktopBootstrapIndexCss() }
+        ];
+      case "react-dashboard":
+        return [
+          { path: "src/App.tsx", content: this.buildDashboardTsx(title, plan.domainFocus) },
+          { path: "src/App.css", content: this.buildDashboardCss() },
+          { path: "src/index.css", content: this.buildDashboardIndexCss() }
+        ];
+      case "react-crud":
+        return [
+          { path: "src/App.tsx", content: this.buildCrudAppTsx(title, plan.domainFocus) },
+          { path: "src/App.css", content: this.buildCrudAppCss() },
+          { path: "src/index.css", content: this.buildCrudIndexCss() }
+        ];
+      case "react-kanban":
+        return [
+          { path: "src/App.tsx", content: this.buildKanbanBoardTsx(title) },
+          { path: "src/App.css", content: this.buildDashboardCss() },
+          { path: "src/index.css", content: this.buildDashboardIndexCss() }
+        ];
+      case "react-notes":
+        return [
+          { path: "src/App.tsx", content: this.buildNotesAppTsx(title, { wantsSearch: true, wantsDelete: true, wantsAdd: true }) },
+          { path: "src/App.css", content: this.buildNotesAppCss() },
+          { path: "src/index.css", content: this.buildNotesIndexCss() }
+        ];
+      default:
+        return [
+          { path: "src/App.tsx", content: this.buildGeneralReactStarterApp(title) },
+          { path: "src/App.css", content: this.buildGeneralReactStarterCss() },
+          { path: "src/index.css", content: this.buildGeneralReactStarterIndexCss() }
+        ];
+    }
+  }
+
   private buildReactBootstrapHtml(projectName: string): string {
     return `<!doctype html>
 <html lang="en">
@@ -12583,6 +16223,209 @@ body {
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+`;
+  }
+
+  private buildDesktopBootstrapAppTsx(title: string, domainFocus: DomainFocus = "generic"): string {
+    const content = this.buildDesktopDomainContent(domainFocus);
+    return `const activity = ${JSON.stringify(content.activity, null, 2)};
+
+const shortcuts = ${JSON.stringify(content.shortcuts, null, 2)};
+
+export default function App() {
+  return (
+    <main className="desktop-starter-shell">
+      <section className="desktop-starter-hero">
+        <div>
+          <p className="desktop-starter-kicker">${content.kicker}</p>
+          <h1>${title}</h1>
+          <p className="desktop-starter-copy">
+            ${content.copy}
+          </p>
+        </div>
+        <div className="desktop-starter-card">
+          <span>Current mode</span>
+          <strong>${content.modeValue}</strong>
+          <p>${content.modeCopy}</p>
+        </div>
+      </section>
+
+      <section className="desktop-starter-grid">
+        <article className="desktop-starter-panel">
+          <h2>${content.checklistTitle}</h2>
+          <ul>
+            ${content.checklistItems.map((item) => `<li>${item}</li>`).join("\n            ")}
+          </ul>
+        </article>
+        <article className="desktop-starter-panel">
+          <h2>${content.actionTitle}</h2>
+          <div className="desktop-starter-actions">
+            {shortcuts.map((shortcut) => (
+              <button key={shortcut} type="button">{shortcut}</button>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="desktop-starter-panel">
+        <h2>${content.activityTitle}</h2>
+        <div className="desktop-starter-activity">
+          {activity.map((item) => (
+            <article key={item.label}>
+              <strong>{item.label}</strong>
+              <p>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
+}
+`;
+  }
+
+  private buildDesktopBootstrapAppCss(): string {
+    return `.desktop-starter-shell {
+  min-height: 100vh;
+  padding: 32px;
+  display: grid;
+  gap: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.2), transparent 28%),
+    linear-gradient(180deg, #08111f 0%, #0f172a 100%);
+  color: #e2e8f0;
+}
+
+.desktop-starter-hero,
+.desktop-starter-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.desktop-starter-hero {
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
+  align-items: stretch;
+}
+
+.desktop-starter-kicker {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+
+.desktop-starter-hero h1,
+.desktop-starter-panel h2 {
+  margin: 0;
+}
+
+.desktop-starter-copy,
+.desktop-starter-card p,
+.desktop-starter-activity p {
+  color: #cbd5e1;
+}
+
+.desktop-starter-card,
+.desktop-starter-panel,
+.desktop-starter-activity article {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.28);
+}
+
+.desktop-starter-card,
+.desktop-starter-panel {
+  padding: 22px;
+}
+
+.desktop-starter-card span {
+  display: block;
+  font-size: 0.82rem;
+  color: #7dd3fc;
+  margin-bottom: 8px;
+}
+
+.desktop-starter-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.desktop-starter-panel ul {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.desktop-starter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.desktop-starter-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #38bdf8, #2563eb);
+  color: #eff6ff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.desktop-starter-activity {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.desktop-starter-activity article {
+  padding: 18px;
+}
+
+@media (max-width: 880px) {
+  .desktop-starter-shell {
+    padding: 20px;
+  }
+
+  .desktop-starter-hero,
+  .desktop-starter-grid,
+  .desktop-starter-activity {
+    grid-template-columns: 1fr;
+  }
+}
+`;
+  }
+
+  private buildDesktopBootstrapIndexCss(): string {
+    return `:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", sans-serif;
+  background: #08111f;
+  color: #e2e8f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
 `;
   }
 
@@ -12616,6 +16459,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: join(__dirname, 'preload.mjs'),
     },
   })
 
@@ -12636,7 +16480,154 @@ app.on('window-all-closed', () => {
 `;
   }
 
-  private buildStaticBootstrapCss(): string {
+  private buildGeneratedDesktopPreloadBridge(): string {
+    return `import { contextBridge } from 'electron'
+
+contextBridge.exposeInMainWorld('desktopRuntime', {
+  platform: process.platform,
+})
+`;
+  }
+
+  private buildStaticBootstrapCss(starterProfile: StarterProfile = "static-marketing"): string {
+    if (starterProfile === "static-marketing") {
+      return `:root {
+  color-scheme: light;
+  font-family: "Segoe UI", sans-serif;
+  background: linear-gradient(180deg, #f8fafc 0%, #dbeafe 100%);
+  color: #0f172a;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.28), transparent 28%),
+    linear-gradient(180deg, #f8fafc 0%, #dbeafe 100%);
+}
+
+.marketing-shell {
+  width: min(1120px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+  display: grid;
+  gap: 24px;
+}
+
+.hero,
+.feature-grid article,
+.cta-panel,
+.proof-strip {
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+}
+
+.hero {
+  padding: 48px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 12px;
+  color: #0ea5e9;
+}
+
+.hero h1,
+.cta-panel h2,
+.feature-grid h2 {
+  margin: 0 0 12px;
+}
+
+.hero h1 {
+  font-size: clamp(2.8rem, 6vw, 4.8rem);
+}
+
+.lede,
+.status,
+.feature-grid p,
+.cta-panel p {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: #334155;
+}
+
+.hero-actions {
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+}
+
+button,
+.hero-actions a {
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  font: inherit;
+  text-decoration: none;
+}
+
+button {
+  background: linear-gradient(135deg, #0f172a, #2563eb);
+  color: #fff;
+  cursor: pointer;
+}
+
+.hero-actions a {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+}
+
+.proof-strip {
+  padding: 18px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  justify-content: space-between;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.feature-grid article {
+  padding: 24px;
+}
+
+.cta-panel {
+  padding: 32px 36px;
+  display: grid;
+  gap: 10px;
+}
+
+@media (max-width: 820px) {
+  .marketing-shell {
+    width: min(100% - 28px, 1120px);
+    padding-top: 24px;
+  }
+
+  .hero,
+  .cta-panel {
+    padding: 28px;
+  }
+
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+}
+`;
+    }
+
     return `:root {
   color-scheme: light;
   font-family: "Segoe UI", sans-serif;
@@ -12690,7 +16681,19 @@ button {
 `;
   }
 
-  private buildStaticBootstrapJs(projectName: string): string {
+  private buildStaticBootstrapJs(projectName: string, starterProfile: StarterProfile = "static-marketing"): string {
+    if (starterProfile === "static-marketing") {
+      return `const statusEl = document.getElementById("status");
+const buttonEl = document.getElementById("cta");
+
+if (statusEl && buttonEl) {
+  buttonEl.addEventListener("click", () => {
+    statusEl.textContent = "Continue building in this workspace. ${projectName} is ready for product-specific copy, pricing, and proof blocks.";
+  });
+}
+`;
+    }
+
     return `const statusEl = document.getElementById("status");
 const buttonEl = document.getElementById("cta");
 
@@ -12720,16 +16723,20 @@ if (statusEl && buttonEl) {
     return "generator";
   }
 
-  private buildStageModelOrder(settings: ReturnType<SettingsStore["get"]>, stage: AgentRoutingStage): string[] {
-    const pool = [
+  private buildStageModelOrder(
+    settings: ReturnType<SettingsStore["get"]>,
+    stage: AgentRoutingStage,
+    options: { requiresVision?: boolean } = {}
+  ): string[] {
+    const localPool = [
       (settings.defaultModel ?? "").trim(),
       (settings.routing?.default ?? "").trim(),
       (settings.routing?.think ?? "").trim(),
       (settings.routing?.longContext ?? "").trim(),
       ...(settings.models ?? []).map((model) => (model ?? "").trim())
-    ].filter(Boolean);
-
-    const preferred = stage === "planner"
+    ]
+      .filter((model) => model.startsWith("ollama/"));
+    const localPreferred = stage === "planner"
       ? [
         (settings.routing?.longContext ?? "").trim(),
         (settings.routing?.think ?? "").trim(),
@@ -12738,9 +16745,9 @@ if (statusEl && buttonEl) {
       ]
       : stage === "repair"
         ? [
-          (settings.routing?.think ?? "").trim(),
           (settings.defaultModel ?? "").trim(),
           (settings.routing?.default ?? "").trim(),
+          (settings.routing?.think ?? "").trim(),
           (settings.routing?.longContext ?? "").trim()
         ]
         : [
@@ -12749,8 +16756,16 @@ if (statusEl && buttonEl) {
           (settings.routing?.think ?? "").trim(),
           (settings.routing?.longContext ?? "").trim()
         ];
+    const cloudStage = stage === "planner" ? "planner" : stage === "repair" ? "repair" : "generator";
+    const cloudOrder = buildStagePreferredCloudModelList(settings, cloudStage, {
+      requiresVision: options.requiresVision
+    });
 
-    return [...new Set([...preferred, ...pool].filter(Boolean))];
+    return [...new Set([
+      ...cloudOrder,
+      ...localPreferred.filter((model) => model.startsWith("ollama/")),
+      ...localPool
+    ].filter(Boolean))];
   }
 
   private parseModelScaleBillions(model: string): number | null {
@@ -12758,9 +16773,13 @@ if (statusEl && buttonEl) {
     return match ? Number.parseFloat(match[1]) : null;
   }
 
-  private isInteractiveFriendlyLocalModel(model: string): boolean {
+  private isInteractiveFriendlyLocalModel(model: string, options: { requiresVision?: boolean } = {}): boolean {
     const normalized = String(model ?? "").trim().toLowerCase();
     if (!normalized) return false;
+    const hints = getModelCapabilityHints(normalized);
+    if (options.requiresVision) {
+      return hints.vision;
+    }
     if (/(^|[-_/])vl([:-]|$)|vision/.test(normalized)) {
       return false;
     }
@@ -12771,24 +16790,36 @@ if (statusEl && buttonEl) {
     return true;
   }
 
-  private getInteractiveLocalCodeModelBias(model: string): number {
+  private getInteractiveLocalStageScore(
+    model: string,
+    stage: AgentRoutingStage,
+    options: { requiresVision?: boolean } = {}
+  ): number {
     const normalized = String(model ?? "").trim().toLowerCase();
     if (!normalized) return 0;
-    if (/coder|code|codellama|starcoder|deepcoder|granite-code|devstral/.test(normalized)) {
-      return 3;
+    const hints = getModelCapabilityHints(normalized);
+    const stageScore = stage === "planner"
+      ? (hints.longContext * 3) + (hints.reasoning * 2) + hints.coding
+      : stage === "repair"
+        ? (hints.coding * 3) + (hints.reasoning * 2) + hints.longContext
+        : (hints.coding * 3) + hints.reasoning + hints.longContext;
+    if (options.requiresVision) {
+      return hints.vision ? stageScore + 18 : stageScore - 24;
     }
-    if (/gemma/.test(normalized)) {
-      return 2;
-    }
-    if (/r1|reason|gpt-oss/.test(normalized)) {
-      return -2;
-    }
-    return 0;
+    return this.isInteractiveFriendlyLocalModel(normalized, options)
+      ? stageScore
+      : stage === "planner"
+        ? stageScore - 2
+        : stageScore - 8;
   }
 
-  private rankInteractiveLocalModels(models: string[]): string[] {
+  private rankInteractiveLocalModels(
+    models: string[],
+    stage: AgentRoutingStage,
+    options: { requiresVision?: boolean } = {}
+  ): string[] {
     return [...models].sort((left, right) => {
-      const biasDelta = this.getInteractiveLocalCodeModelBias(right) - this.getInteractiveLocalCodeModelBias(left);
+      const biasDelta = this.getInteractiveLocalStageScore(right, stage, options) - this.getInteractiveLocalStageScore(left, stage, options);
       if (biasDelta !== 0) return biasDelta;
       const leftScale = this.parseModelScaleBillions(left);
       const rightScale = this.parseModelScaleBillions(right);
@@ -12801,35 +16832,43 @@ if (statusEl && buttonEl) {
     });
   }
 
-  private selectLocalRoutesForStage(localModels: string[], stage: AgentRoutingStage): string[] {
+  private selectLocalRoutesForStage(
+    localModels: string[],
+    stage: AgentRoutingStage,
+    options: { requiresVision?: boolean } = {}
+  ): string[] {
     if (localModels.length === 0) {
       return [];
     }
-    const friendlyLocalModels = localModels.filter((model) => this.isInteractiveFriendlyLocalModel(model));
-    const rankedFriendlyLocalModels = this.rankInteractiveLocalModels(friendlyLocalModels);
+    const friendlyLocalModels = localModels.filter((model) => this.isInteractiveFriendlyLocalModel(model, options));
+    const rankedFriendlyLocalModels = this.rankInteractiveLocalModels(friendlyLocalModels, stage, options);
     const codeFocusedLocalModels = rankedFriendlyLocalModels.filter(
-      (model) => this.getInteractiveLocalCodeModelBias(model) > 0
+      (model) => getModelCapabilityHints(model).coding > 0
     );
-    const selectedLocalModels = stage === "planner"
-      ? (friendlyLocalModels.length > 0 ? rankedFriendlyLocalModels : this.rankInteractiveLocalModels(localModels))
+    const selectedLocalModels = options.requiresVision
+      ? (friendlyLocalModels.length > 0 ? rankedFriendlyLocalModels : this.rankInteractiveLocalModels(localModels, stage, options))
+      : stage === "planner"
+        ? (friendlyLocalModels.length > 0 ? rankedFriendlyLocalModels : this.rankInteractiveLocalModels(localModels, stage, options))
       : this.rankInteractiveLocalModels(
         codeFocusedLocalModels.length > 0
           ? codeFocusedLocalModels
           : friendlyLocalModels.length > 0
             ? friendlyLocalModels
-            : localModels
+            : localModels,
+        stage,
+        options
       );
     return [...new Set(selectedLocalModels.filter(Boolean))];
   }
 
-  private resolveModelRoutes(stageLabel?: string): ModelRoute[] {
+  private resolveModelRoutes(stageLabel?: string, options: { requiresVision?: boolean } = {}): ModelRoute[] {
     const settings = this.settingsStore.get();
     const stage = this.normalizeRoutingStage(stageLabel);
     const defaultModel = (settings.defaultModel ?? "").trim();
     const apiKey = (settings.apiKey ?? "").trim();
     const routes: ModelRoute[] = [];
     const seen = new Set<string>();
-    const stageOrder = this.buildStageModelOrder(settings, stage);
+    const stageOrder = this.buildStageModelOrder(settings, stage, options);
     const stageRank = new Map<string, number>(stageOrder.map((model, index) => [model, index]));
     const pushRoute = (route: ModelRoute | null): void => {
       if (!route) return;
@@ -12844,12 +16883,13 @@ if (statusEl && buttonEl) {
         .map((model) => model.trim())
         .filter((model) => model && !model.startsWith("ollama/"));
       if (cloudCandidates.length === 0) {
-        throw new Error("OpenRouter key is set, but no cloud model is configured for agent fixes.");
+        throw new Error("Cloud API key is set, but no cloud model is configured for agent fixes.");
       }
       for (const model of cloudCandidates) {
         pushRoute({
           model,
-          baseUrl: (settings.baseUrl ?? "").trim() || "https://openrouter.ai/api/v1",
+          baseUrl: (settings.baseUrl ?? "").trim()
+            || getDefaultBaseUrlForCloudProvider(inferCloudProvider(settings.baseUrl, settings.cloudProvider)),
           apiKey,
           skipAuth: false
         });
@@ -12863,7 +16903,7 @@ if (statusEl && buttonEl) {
       ...(settings.ollamaModels ?? []).map((model) => (model ?? "").trim())
     ].filter(Boolean);
 
-    const selectedLocalModels = this.selectLocalRoutesForStage([...new Set(ollamaStageCandidates)], stage);
+    const selectedLocalModels = this.selectLocalRoutesForStage([...new Set(ollamaStageCandidates)], stage, options);
 
     if (settings.ollamaEnabled && selectedLocalModels.length > 0) {
       for (const model of selectedLocalModels) {
@@ -12877,7 +16917,7 @@ if (statusEl && buttonEl) {
     }
 
     if (routes.length === 0) {
-      throw new Error("No model route available for agent fixes. Configure OpenRouter or Ollama first.");
+      throw new Error("No model route available for agent fixes. Configure a cloud provider or Ollama first.");
     }
 
     return routes
@@ -12910,7 +16950,7 @@ if (statusEl && buttonEl) {
       const fullPath = join(current, entry.name);
       const relPath = this.toWorkspaceRelative(fullPath);
       if (entry.isDirectory()) {
-        if (IGNORED_FOLDERS.has(entry.name)) continue;
+        if (isIgnoredWorkspaceFolder(entry.name)) continue;
         acc.push({ path: relPath, type: "directory" });
         if (depth > 0) {
           await this.walkEntries(fullPath, depth - 1, acc);
@@ -12948,28 +16988,54 @@ if (statusEl && buttonEl) {
     if (!Array.isArray(task.telemetry.modelAttempts)) {
       task.telemetry.modelAttempts = [];
     }
+    if (!Array.isArray(task.telemetry.failureMemoryHints)) {
+      task.telemetry.failureMemoryHints = [];
+    }
     return task.telemetry;
   }
 
   private buildTaskRouteTelemetrySummary(taskId: string): AgentTaskRouteTelemetrySummary {
+    const visionRequested = this.taskRequiresVisionRoute(taskId);
     const blacklistedModels = [...(this.taskModelBlacklist.get(taskId) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
     const failureCounts = [...(this.taskModelFailureCounts.get(taskId)?.entries() ?? [])]
-      .map(([model, count]) => ({ model, count }))
+      .map(([model, count]) => {
+        const status = this.buildTaskModelFailureStatus(taskId, model);
+        return {
+          model,
+          count,
+          blacklisted: status.blacklisted,
+          hardFailuresUntilBlacklist: status.hardFailuresUntilBlacklist,
+          transientFailuresUntilBlacklist: status.transientFailuresUntilBlacklist
+        };
+      })
       .sort((a, b) => b.count - a.count || a.model.localeCompare(b.model));
     const activeStageRoutes = [...(this.taskStageRoutes.get(taskId)?.entries() ?? [])]
-      .map(([stage, state]) => ({
-        stage,
-        model: state.route.model,
-        baseUrl: state.route.baseUrl,
-        provider: state.route.skipAuth ? "local" as const : "remote" as const,
-        routeIndex: state.routeIndex,
-        attempt: state.attempt
-      }))
+      .map(([stage, state]) => {
+        const failureStatus = this.buildTaskModelFailureStatus(taskId, state.route.model);
+        return {
+          stage,
+          model: state.route.model,
+          baseUrl: state.route.baseUrl,
+          provider: state.route.skipAuth ? "local" as const : "remote" as const,
+          routeIndex: state.routeIndex,
+          attempt: state.attempt,
+          score: this.getModelRouteScore(state.route),
+          scoreFactors: this.buildModelRouteScoreFactors(state.route),
+          failureCount: failureStatus.count,
+          blacklisted: failureStatus.blacklisted,
+          hardFailuresUntilBlacklist: failureStatus.hardFailuresUntilBlacklist,
+          transientFailuresUntilBlacklist: failureStatus.transientFailuresUntilBlacklist,
+          visionRequested,
+          visionCapable: getModelCapabilityHints(state.route.model).vision,
+          selectionReason: this.buildTaskStageSelectionReason(taskId, stage, state.route, state.routeIndex)
+        };
+      })
       .sort((a, b) => a.stage.localeCompare(b.stage));
 
     return {
       blacklistedModels,
       failureCounts,
+      visionRequested,
       activeStageRoutes
     };
   }
@@ -13099,18 +17165,38 @@ if (statusEl && buttonEl) {
   private cloneTask(task: AgentTask): AgentTask {
     return {
       ...task,
+      attachments: (task.attachments ?? []).map((attachment) => ({ ...attachment })),
       steps: task.steps.map((step) => ({ ...step })),
       output: task.output ? { ...task.output } : undefined,
+      executionSpec: this.cloneExecutionSpec(task.executionSpec),
       telemetry: task.telemetry
         ? {
           ...task.telemetry,
           fallbackUsed: task.telemetry.fallbackUsed ?? false,
+          failureMemoryHints: [...(task.telemetry.failureMemoryHints ?? [])],
           modelAttempts: (task.telemetry.modelAttempts ?? []).map((attempt) => ({ ...attempt })),
           routeDiagnostics: task.telemetry.routeDiagnostics
             ? {
               blacklistedModels: [...task.telemetry.routeDiagnostics.blacklistedModels],
-              failureCounts: task.telemetry.routeDiagnostics.failureCounts.map((entry) => ({ ...entry })),
-              activeStageRoutes: task.telemetry.routeDiagnostics.activeStageRoutes.map((entry) => ({ ...entry }))
+              failureCounts: task.telemetry.routeDiagnostics.failureCounts.map((entry) => ({
+                ...entry,
+                blacklisted: entry.blacklisted ?? false,
+                hardFailuresUntilBlacklist: entry.hardFailuresUntilBlacklist ?? Math.max(0, AGENT_MODEL_BLACKLIST_THRESHOLD - entry.count),
+                transientFailuresUntilBlacklist: entry.transientFailuresUntilBlacklist ?? Math.max(0, AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD - entry.count)
+              })),
+              visionRequested: task.telemetry.routeDiagnostics.visionRequested ?? false,
+              activeStageRoutes: task.telemetry.routeDiagnostics.activeStageRoutes.map((entry) => ({
+                ...entry,
+                score: entry.score ?? 0,
+                scoreFactors: (entry.scoreFactors ?? [{ label: "No reliability history", delta: 0 }]).map((factor) => ({ ...factor })),
+                failureCount: entry.failureCount ?? 0,
+                blacklisted: entry.blacklisted ?? false,
+                hardFailuresUntilBlacklist: entry.hardFailuresUntilBlacklist ?? AGENT_MODEL_BLACKLIST_THRESHOLD,
+                transientFailuresUntilBlacklist: entry.transientFailuresUntilBlacklist ?? AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD,
+                visionRequested: entry.visionRequested ?? false,
+                visionCapable: entry.visionCapable ?? false,
+                selectionReason: entry.selectionReason ?? "Saved route diagnostics do not include a selection explanation yet."
+              }))
             }
             : undefined
         }
@@ -13124,35 +17210,76 @@ if (statusEl && buttonEl) {
     };
   }
 
+  private cloneExecutionSpec(spec?: AgentExecutionSpec): AgentExecutionSpec | undefined {
+    if (!spec) return undefined;
+    return {
+      ...spec,
+      deliverables: [...spec.deliverables],
+      acceptanceCriteria: [...spec.acceptanceCriteria],
+      qualityGates: [...spec.qualityGates],
+      requiredFiles: [...spec.requiredFiles],
+      requiredScriptGroups: spec.requiredScriptGroups.map((group) => ({ label: group.label, options: [...group.options] }))
+    };
+  }
+
   private async createSnapshot(
     label: string,
     taskId?: string,
     options?: { kind?: WorkspaceSnapshot["kind"]; targetPathHint?: string }
   ): Promise<WorkspaceSnapshot> {
+    await this.pruneStoredSnapshots();
+
     const id = `snapshot_${randomUUID()}`;
     const createdAt = new Date().toISOString();
     const snapshotPath = join(this.snapshotRoot, id);
     const filesPath = join(snapshotPath, "files");
-    await mkdir(filesPath, { recursive: true });
-    const fileCount = await this.copyWorkspaceSnapshot(this.workspaceRoot, filesPath);
-    const topLevelEntries = (await readdir(filesPath, { withFileTypes: true }))
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b));
-    const targetEntries = await this.collectSnapshotTargetEntries(filesPath, options?.targetPathHint);
-    const snapshot: WorkspaceSnapshot = {
-      id,
-      createdAt,
-      label: label.trim() || "Workspace snapshot",
-      workspaceRoot: this.workspaceRoot,
-      fileCount,
-      taskId,
-      kind: options?.kind ?? "manual",
-      targetPathHint: options?.targetPathHint,
-      topLevelEntries,
-      targetEntries
+    const buildSnapshot = async (): Promise<WorkspaceSnapshot> => {
+      await mkdir(filesPath, { recursive: true });
+      const fileCount = await this.copyWorkspaceSnapshot(this.workspaceRoot, filesPath);
+      const topLevelEntries = (await readdir(filesPath, { withFileTypes: true }))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+      const targetEntries = await this.collectSnapshotTargetEntries(filesPath, options?.targetPathHint);
+      const snapshot: WorkspaceSnapshot = {
+        id,
+        createdAt,
+        label: label.trim() || "Workspace snapshot",
+        workspaceRoot: this.workspaceRoot,
+        fileCount,
+        taskId,
+        kind: options?.kind ?? "manual",
+        targetPathHint: options?.targetPathHint,
+        topLevelEntries,
+        targetEntries
+      };
+      await writeFile(join(snapshotPath, "meta.json"), JSON.stringify(snapshot, null, 2), "utf8");
+      return snapshot;
     };
-    await writeFile(join(snapshotPath, "meta.json"), JSON.stringify(snapshot, null, 2), "utf8");
-    return snapshot;
+
+    try {
+      return await buildSnapshot();
+    } catch (error) {
+      await this.removeSnapshotDirectory(snapshotPath);
+      if (!this.isNoSpaceLeftError(error)) {
+        throw error;
+      }
+
+      const removed = await this.pruneStoredSnapshots({ aggressive: true });
+      if (removed > 0) {
+        try {
+          return await buildSnapshot();
+        } catch (retryError) {
+          await this.removeSnapshotDirectory(snapshotPath);
+          if (!this.isNoSpaceLeftError(retryError)) {
+            throw retryError;
+          }
+        }
+      }
+
+      throw new Error(
+        `No space left while creating a workspace snapshot. Cleared ${removed} stale snapshot(s), but more disk space is still required under ${this.snapshotRoot}.`
+      );
+    }
   }
 
   private resolveSnapshotScopedRestoreTarget(snapshot: WorkspaceSnapshot | null | undefined): string | null {
@@ -13251,7 +17378,7 @@ if (statusEl && buttonEl) {
       throw error;
     }
     for (const entry of entries) {
-      if (IGNORED_FOLDERS.has(entry.name)) continue;
+      if (isIgnoredWorkspaceFolder(entry.name)) continue;
       const sourcePath = join(sourceDir, entry.name);
       const destinationPath = join(destinationDir, entry.name);
       if (entry.isDirectory()) {
