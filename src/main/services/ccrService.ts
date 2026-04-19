@@ -1,4 +1,8 @@
 import { spawn, ChildProcess } from "node:child_process";
+import {
+  getCloudProviderDisplayName,
+  inferCloudProvider
+} from "../../shared/modelCatalog";
 import type { SettingsStore } from "./settingsStore";
 import type { RouterStatus } from "../../shared/types";
 
@@ -10,6 +14,7 @@ type RichMessage = { role: string; content: string | RichMessagePart[] };
 
 interface SendMessageOptions {
   baseUrl?: string;
+  cloudProvider?: "openrouter" | "nvidia";
   apiKey?: string;
   skipAuth?: boolean;
   timeoutMs?: number;
@@ -27,6 +32,14 @@ interface ParsedStatus {
 }
 
 const CHAT_COMPLETION_TIMEOUT_MS = 30_000;
+
+function inferCloudProviderName(baseUrl: string, preferredProvider?: string): "OpenRouter" | "NVIDIA" {
+  return getCloudProviderDisplayName(inferCloudProvider(baseUrl, preferredProvider));
+}
+
+function isOpenRouterCloudProvider(baseUrl: string, preferredProvider?: string): boolean {
+  return inferCloudProvider(baseUrl, preferredProvider) === "openrouter";
+}
 
 export class CcrService {
   private settingsStore: SettingsStore;
@@ -333,12 +346,14 @@ export class CcrService {
   ): Promise<string> {
     const settings = this.settingsStore.get();
     const baseUrl = (options.baseUrl ?? settings.baseUrl).replace(/\/+$/, "");
+    const cloudProvider = options.cloudProvider ?? settings.cloudProvider;
     const apiKey = options.apiKey ?? settings.apiKey;
     const skipAuth = options.skipAuth ?? false;
     const timeoutMs = Math.max(5_000, options.timeoutMs ?? CHAT_COMPLETION_TIMEOUT_MS);
     const maxOutputTokens = 8192;
+    const providerName = inferCloudProviderName(baseUrl, cloudProvider);
 
-    if (!skipAuth && !apiKey) throw new Error("No API key set. Go to Settings and add your OpenRouter key.");
+    if (!skipAuth && !apiKey) throw new Error(`No API key set. Go to Settings and add your ${providerName} key.`);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json"
@@ -346,8 +361,10 @@ export class CcrService {
 
     if (!skipAuth && apiKey) {
       headers["Authorization"] = `Bearer ${apiKey}`;
-      headers["HTTP-Referer"] = "https://cipher-ai.local";
-      headers["X-Title"] = "Cipher Workspace";
+      if (isOpenRouterCloudProvider(baseUrl, cloudProvider)) {
+        headers["HTTP-Referer"] = "https://cipher-ai.local";
+        headers["X-Title"] = "Cipher Workspace";
+      }
     }
 
     const requestUrl = `${baseUrl}/chat/completions`;
@@ -370,9 +387,9 @@ export class CcrService {
 
     if (!response.ok) {
       const text = await response.text();
-      if (response.status === 401 || response.status === 403) throw new Error("Invalid API key. Check your OpenRouter key in Settings.");
+      if (response.status === 401 || response.status === 403) throw new Error(`Invalid API key. Check your ${providerName} key in Settings.`);
       if (response.status === 402) {
-        throw new Error("Insufficient OpenRouter credits/budget for this request. Add credits or try a cheaper model.");
+        throw new Error(`Insufficient ${providerName} credits/budget for this request. Add credits or try a cheaper model.`);
       }
       if (response.status === 429) throw new Error("Rate limit hit. Try a different model.");
       throw new Error(`API error ${response.status}: ${text.slice(0, 200)}`);
@@ -437,16 +454,17 @@ export class CcrService {
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {
     const settings = this.settingsStore.get();
-    if (!settings.apiKey) return { ok: false, message: "No API key set." };
+    const providerName = inferCloudProviderName(settings.baseUrl, settings.cloudProvider);
+    if (!settings.apiKey) return { ok: false, message: `No API key set for ${providerName}.` };
     try {
       const res = await fetch(`${settings.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${settings.apiKey}` },
         signal: AbortSignal.timeout(8000)
       });
       if (!res.ok) return { ok: false, message: `API returned ${res.status}` };
-      return { ok: true, message: "Connection successful!" };
+      return { ok: true, message: `${providerName} connection successful!` };
     } catch (err) {
-      return { ok: false, message: `Connection failed: ${err instanceof Error ? err.message : "unknown"}` };
+      return { ok: false, message: `${providerName} connection failed: ${err instanceof Error ? err.message : "unknown"}` };
     }
   }
 }

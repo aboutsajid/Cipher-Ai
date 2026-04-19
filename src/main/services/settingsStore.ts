@@ -2,6 +2,13 @@ import { safeStorage } from "electron";
 import Store from "electron-store";
 import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import {
+  buildRecommendedCloudModelList,
+  getDefaultBaseUrlForCloudProvider,
+  getDefaultCloudModelStrategy,
+  inferCloudProvider,
+  isLegacyDefaultCloudModelStrategy
+} from "../../shared/modelCatalog";
 import type { McpServerConfig, PromptTemplate, Settings } from "../../shared/types";
 
 const MODEL_ID_MIGRATIONS: Record<string, string> = {
@@ -9,11 +16,18 @@ const MODEL_ID_MIGRATIONS: Record<string, string> = {
   "google/gemini-2.5-flash-lite-preview": "google/gemini-2.5-flash-lite-preview-09-2025",
   "gemma4:31b-cloud": "google/gemma-4-31b-it",
   "google/gemma4:31b-cloud": "google/gemma-4-31b-it",
+  "qwen/qwen3-coder-next": "qwen/qwen3.6-plus",
   "qwen/qwen-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct",
   "qwen/qwen2.5-coder-32b-instruct": "qwen/qwen-2.5-coder-32b-instruct"
 };
 
 const ENCRYPTED_SECRET_PREFIX = "cipher-protected:";
+const SMOKE_SENTINEL_BASE_URLS = new Set([
+  "http://127.0.0.1:9",
+  "http://127.0.0.1:9/v1",
+  "http://localhost:9",
+  "http://localhost:9/v1"
+]);
 
 function isSafeStorageEncryptionAvailable(): boolean {
   try {
@@ -23,32 +37,26 @@ function isSafeStorageEncryptionAvailable(): boolean {
   }
 }
 
+function isSmokeSentinelBaseUrl(value: string | undefined): boolean {
+  const normalized = (value ?? "").trim().replace(/\/+$/, "").toLowerCase();
+  return SMOKE_SENTINEL_BASE_URLS.has(normalized);
+}
+
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
-  baseUrl: "https://openrouter.ai/api/v1",
-  defaultModel: "qwen/qwen3-coder:free",
+  baseUrl: getDefaultBaseUrlForCloudProvider("openrouter"),
+  cloudProvider: "openrouter",
+  imageProvider: "openrouter",
+  ...getDefaultCloudModelStrategy(),
   routerPort: 3456,
   customTemplates: [],
   ollamaEnabled: false,
   ollamaBaseUrl: "http://localhost:11434/v1",
   ollamaModels: [],
+  comfyuiBaseUrl: "http://127.0.0.1:8000",
   localVoiceEnabled: false,
   localVoiceModel: "base",
   mcpServers: [],
-  models: [
-    "qwen/qwen3-coder:free",
-    "qwen/qwen-2.5-coder-32b-instruct",
-    "google/gemma-4-31b-it",
-    "google/gemini-2.0-flash-001",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-14b",
-    "deepseek/deepseek-chat-v3-0324"
-  ],
-  routing: {
-    default: "qwen/qwen3-coder:free",
-    think: "meta-llama/llama-3.3-70b-instruct:free",
-    longContext: "google/gemini-2.0-flash-001"
-  }
 };
 
 export class SettingsStore {
@@ -68,16 +76,34 @@ export class SettingsStore {
 
   async init(): Promise<void> {
     const storedApiKey = this.store.get("apiKey", DEFAULT_SETTINGS.apiKey);
+    const storedBaseUrl = this.store.get("baseUrl", DEFAULT_SETTINGS.baseUrl);
+    const cloudProvider = inferCloudProvider(
+      storedBaseUrl,
+      this.store.has("cloudProvider") ? this.store.get("cloudProvider") : undefined
+    );
+    const baseUrl = isSmokeSentinelBaseUrl(storedBaseUrl)
+      ? getDefaultBaseUrlForCloudProvider(cloudProvider)
+      : storedBaseUrl;
+    const imageProvider = this.store.has("imageProvider")
+      ? this.store.get("imageProvider")
+      : cloudProvider;
+    const storedOllamaBaseUrl = this.store.get("ollamaBaseUrl", DEFAULT_SETTINGS.ollamaBaseUrl);
+    const ollamaBaseUrl = isSmokeSentinelBaseUrl(storedOllamaBaseUrl)
+      ? DEFAULT_SETTINGS.ollamaBaseUrl
+      : storedOllamaBaseUrl;
     this.settings = {
       apiKey: this.readStoredApiKey(storedApiKey),
-      baseUrl: this.store.get("baseUrl", DEFAULT_SETTINGS.baseUrl),
+      baseUrl,
+      cloudProvider,
+      imageProvider: imageProvider ?? DEFAULT_SETTINGS.imageProvider,
       defaultModel: this.store.get("defaultModel", DEFAULT_SETTINGS.defaultModel),
       routerPort: this.store.get("routerPort", DEFAULT_SETTINGS.routerPort),
       models: this.store.get("models", DEFAULT_SETTINGS.models),
       customTemplates: this.store.get("customTemplates", DEFAULT_SETTINGS.customTemplates),
       ollamaEnabled: this.store.get("ollamaEnabled", DEFAULT_SETTINGS.ollamaEnabled),
-      ollamaBaseUrl: this.store.get("ollamaBaseUrl", DEFAULT_SETTINGS.ollamaBaseUrl),
+      ollamaBaseUrl,
       ollamaModels: this.store.get("ollamaModels", DEFAULT_SETTINGS.ollamaModels),
+      comfyuiBaseUrl: this.store.get("comfyuiBaseUrl") ?? DEFAULT_SETTINGS.comfyuiBaseUrl,
       localVoiceEnabled: false,
       localVoiceModel: this.store.get("localVoiceModel", DEFAULT_SETTINGS.localVoiceModel),
       mcpServers: this.store.get("mcpServers", DEFAULT_SETTINGS.mcpServers),
@@ -102,6 +128,7 @@ export class SettingsStore {
         this.settings = {
           ...this.settings,
           ...legacy,
+          cloudProvider: inferCloudProvider(legacy.baseUrl ?? this.settings.baseUrl, legacy.cloudProvider),
           routing: legacy.routing ?? this.settings.routing,
           apiKey: ""
         };
@@ -112,7 +139,15 @@ export class SettingsStore {
       }
     }
 
+    if (baseUrl !== storedBaseUrl) {
+      this.store.set("baseUrl", baseUrl);
+    }
+    if (ollamaBaseUrl !== storedOllamaBaseUrl) {
+      this.store.set("ollamaBaseUrl", ollamaBaseUrl);
+    }
+
     this.applyModelIdMigration();
+    this.applyRecommendedModelStrategyMigration();
     this.store.set("apiKey", this.serializeApiKey(this.settings.apiKey));
     this.store.set("localVoiceEnabled", false);
   }
@@ -135,6 +170,10 @@ export class SettingsStore {
     const normalizedPartial: Partial<Settings> = Object.prototype.hasOwnProperty.call(partial, "localVoiceEnabled")
       ? { ...partial, localVoiceEnabled: false }
       : partial;
+    const normalizedBaseUrl = typeof normalizedPartial.baseUrl === "string"
+      ? normalizedPartial.baseUrl
+      : this.settings.baseUrl;
+    normalizedPartial.cloudProvider = inferCloudProvider(normalizedBaseUrl, normalizedPartial.cloudProvider ?? this.settings.cloudProvider);
     this.settings = { ...this.settings, ...normalizedPartial };
     for (const [k, v] of Object.entries(normalizedPartial)) {
       if (k === "apiKey") {
@@ -271,9 +310,12 @@ export class SettingsStore {
       if (!parsed) continue;
 
       const baseUrl = typeof parsed.baseUrl === "string" && parsed.baseUrl ? parsed.baseUrl : undefined;
+      const cloudProvider = typeof parsed.cloudProvider === "string" ? parsed.cloudProvider : undefined;
       const defaultModel = typeof parsed.defaultModel === "string" && parsed.defaultModel ? parsed.defaultModel : undefined;
       const routerPort = typeof parsed.routerPort === "number" ? parsed.routerPort : undefined;
       const models = Array.isArray(parsed.models) ? parsed.models.filter((m): m is string => typeof m === "string" && m.length > 0) : undefined;
+      const imageProvider = typeof parsed.imageProvider === "string" ? parsed.imageProvider as Settings["imageProvider"] : undefined;
+      const comfyuiBaseUrl = typeof parsed.comfyuiBaseUrl === "string" && parsed.comfyuiBaseUrl ? parsed.comfyuiBaseUrl : undefined;
       const routing = parsed.routing && typeof parsed.routing === "object"
         && typeof parsed.routing.default === "string"
         && typeof parsed.routing.think === "string"
@@ -281,9 +323,9 @@ export class SettingsStore {
         ? parsed.routing
         : undefined;
 
-      if (!baseUrl && !defaultModel && routerPort === undefined && !models?.length && !routing) continue;
+      if (!baseUrl && !defaultModel && routerPort === undefined && !models?.length && !routing && !imageProvider && !comfyuiBaseUrl) continue;
 
-      return { baseUrl, defaultModel, routerPort, models, routing };
+      return { baseUrl, cloudProvider, imageProvider, defaultModel, routerPort, models, comfyuiBaseUrl, routing };
     }
 
     return null;
@@ -313,6 +355,21 @@ export class SettingsStore {
     };
 
     if (!changed) return;
+    this.store.set("defaultModel", this.settings.defaultModel);
+    this.store.set("models", this.settings.models);
+    this.store.set("routing", this.settings.routing);
+  }
+
+  private applyRecommendedModelStrategyMigration(): void {
+    if (!isLegacyDefaultCloudModelStrategy(this.settings)) {
+      return;
+    }
+
+    const provider = inferCloudProvider(this.settings.baseUrl, this.settings.cloudProvider);
+    const next = getDefaultCloudModelStrategy(provider);
+    this.settings.defaultModel = next.defaultModel;
+    this.settings.models = buildRecommendedCloudModelList(next.models, provider);
+    this.settings.routing = { ...next.routing };
     this.store.set("defaultModel", this.settings.defaultModel);
     this.store.set("models", this.settings.models);
     this.store.set("routing", this.settings.routing);

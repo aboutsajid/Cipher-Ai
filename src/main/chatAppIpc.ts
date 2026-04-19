@@ -1,5 +1,7 @@
-import { ipcMain, BrowserWindow, dialog, clipboard, WebContents } from "electron";
+import { ipcMain, BrowserWindow, dialog, clipboard, WebContents, app } from "electron";
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { normalizeAttachments } from "./attachmentSupport";
 import { exportChatFile, importChatFile } from "./chatFileSupport";
 import { buildChatStats, formatConversationHistory, normalizeGeneratedTitle } from "./chatSupport";
@@ -13,15 +15,17 @@ import {
   workspaceTargetExists
 } from "./previewSupport";
 import { sendUtilityPrompt } from "./utilityPromptSupport";
+import { getDefaultBaseUrlForCloudProvider } from "../shared/modelCatalog";
 import type { ChatsStore } from "./services/chatsStore";
 import type { SettingsStore } from "./services/settingsStore";
 import type { CcrService } from "./services/ccrService";
 import type { AgentTaskRunner } from "./services/agentTaskRunner";
-import type { AttachmentPayload, Message } from "../shared/types";
+import type { AttachmentPayload, ChatContext, Message } from "../shared/types";
 
 interface ChatSendOptions {
   attachments?: AttachmentPayload[];
   compareModel?: string;
+  context?: ChatContext;
   enabledTools?: string[];
 }
 
@@ -37,6 +41,28 @@ interface Deps {
   broadcastToWindows: (channel: string, ...args: unknown[]) => void;
   transcribeAudio: (settingsStore: SettingsStore, bytes: Uint8Array, mimeType?: string) => Promise<string>;
   normalizeAudioBytes: (raw: unknown) => Uint8Array;
+}
+
+function readVersionFromPackageJson(packageJsonPath: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveDisplayAppVersion(): string {
+  const runtimeVersion = (app.getVersion() ?? "").trim();
+  if (runtimeVersion && runtimeVersion !== process.versions.electron) return runtimeVersion;
+
+  const appPathVersion = readVersionFromPackageJson(join(app.getAppPath(), "package.json"));
+  if (appPathVersion) return appPathVersion;
+
+  const cwdVersion = readVersionFromPackageJson(join(process.cwd(), "package.json"));
+  if (cwdVersion) return cwdVersion;
+
+  return runtimeVersion || "0.0.0";
 }
 
 export function registerChatAppIpcHandlers(deps: Deps): void {
@@ -62,8 +88,35 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
     broadcastToWindows("chat:storeChanged", payload);
   };
 
+  const resolveChatRouteOptions = (context?: ChatContext) => {
+    const settings = settingsStore.get();
+    const provider = context?.provider;
+    if (provider === "ollama") {
+      return {
+        baseUrl: settings.ollamaBaseUrl,
+        apiKey: "",
+        skipAuth: true as const
+      };
+    }
+    if (provider === "nvidia" || provider === "openrouter") {
+      return {
+        baseUrl: settings.cloudProvider === provider ? settings.baseUrl : getDefaultBaseUrlForCloudProvider(provider),
+        cloudProvider: provider,
+        apiKey: settings.apiKey,
+        skipAuth: false as const
+      };
+    }
+    return undefined;
+  };
+
   ipcMain.removeHandler("app:workspacePath");
   ipcMain.handle("app:workspacePath", () => agentTaskRunner.getWorkspaceRoot());
+
+  ipcMain.removeHandler("app:getInfo");
+  ipcMain.handle("app:getInfo", () => ({
+    name: "Cipher Workspace",
+    version: resolveDisplayAppVersion()
+  }));
 
   ipcMain.removeHandler("app:newWindow");
   ipcMain.handle("app:newWindow", async () => {
@@ -81,8 +134,8 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
   });
 
   ipcMain.removeHandler("chat:create");
-  ipcMain.handle("chat:create", async () => {
-    const chat = await chatsStore.create();
+  ipcMain.handle("chat:create", async (_e, context?: ChatContext) => {
+    const chat = await chatsStore.create(context);
     emitChatStoreChanged({ chatId: chat.id, reason: "create" });
     return chat;
   });
@@ -133,6 +186,13 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
   ipcMain.handle("chat:updateMessage", async (_e, chatId: string, messageId: string, patch: Partial<Message>) => {
     await chatsStore.updateMessage(chatId, messageId, patch);
     return true;
+  });
+
+  ipcMain.removeHandler("chat:setContext");
+  ipcMain.handle("chat:setContext", async (_e, id: string, context: ChatContext) => {
+    const updated = await chatsStore.setContext(id, context);
+    if (updated) emitChatStoreChanged({ chatId: id, reason: "context" });
+    return updated;
   });
 
   ipcMain.removeHandler("chat:setSystemPrompt");
@@ -205,6 +265,10 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
     const normalizedAttachments = normalizeAttachments(options?.attachments);
     const attachmentNames = normalizedAttachments.map((attachment) => attachment.name);
     const enabledTools = (options?.enabledTools ?? []).map((tool) => tool.trim()).filter(Boolean);
+    const nextContext = options?.context;
+    if (nextContext) {
+      await chatsStore.setContext(chatId, nextContext);
+    }
 
     const userMsg = createOutgoingUserMessage(messageText, attachmentNames);
     await chatsStore.appendMessage(chatId, userMsg);
@@ -225,6 +289,7 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
     const chat = chatsStore.get(chatId);
     const assistantIds = new Set(assistantMessages.map((message) => message.id));
     const history = buildChatHistory(chat, userMsg, normalizedAttachments, enabledTools, assistantIds);
+    const routeOptions = resolveChatRouteOptions(chat?.context ?? nextContext);
 
     try {
       await streamAssistantResponses({
@@ -232,6 +297,7 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
         history,
         chatId,
         fallbackModel: model,
+        routeOptions,
         signal: controller.signal,
         getSettings: () => settingsStore.get(),
         sendMessage: (messageHistory, selectedModel, onChunk, signal, routeOptions) => {

@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Chat, ChatSummary, Message } from "../../shared/types";
+import type { Chat, ChatContext, ChatSummary, Message } from "../../shared/types";
 
 function now(): string {
   return new Date().toISOString();
@@ -9,6 +9,44 @@ function now(): string {
 
 function makeId(prefix: string): string {
   return `${prefix}_${randomUUID()}`;
+}
+
+const CHAT_PROVIDERS = new Set<ChatContext["provider"]>(["openrouter", "nvidia", "ollama", "claude"]);
+
+function normalizeChatContext(context: Chat["context"] | null | undefined): Chat["context"] {
+  if (!context || typeof context !== "object") return undefined;
+
+  const provider = typeof context.provider === "string" && CHAT_PROVIDERS.has(context.provider as ChatContext["provider"])
+    ? context.provider as ChatContext["provider"]
+    : undefined;
+  if (!provider) return undefined;
+
+  const selectedModel = typeof context.selectedModel === "string" ? context.selectedModel.trim() : "";
+  const compareModel = typeof context.compareModel === "string" ? context.compareModel.trim() : "";
+  const compareEnabled = provider !== "claude" && Boolean(context.compareEnabled && compareModel);
+
+  return {
+    provider,
+    ...(selectedModel ? { selectedModel } : {}),
+    ...(compareEnabled ? { compareEnabled: true, compareModel } : {})
+  };
+}
+
+function cloneChat(chat: Chat): Chat {
+  return {
+    ...chat,
+    context: chat.context ? { ...chat.context } : undefined,
+    messages: chat.messages.map((message) => ({ ...message }))
+  };
+}
+
+function normalizeStoredChat(chat: Chat): Chat {
+  return {
+    ...chat,
+    systemPrompt: chat.systemPrompt ?? "",
+    context: normalizeChatContext(chat.context),
+    messages: Array.isArray(chat.messages) ? chat.messages.map((message) => ({ ...message })) : []
+  };
 }
 
 export class ChatsStore {
@@ -26,7 +64,7 @@ export class ChatsStore {
       await mkdir(join(this.filePath, ".."), { recursive: true });
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
-      this.chats = Array.isArray(parsed.chats) ? parsed.chats : [];
+      this.chats = Array.isArray(parsed.chats) ? parsed.chats.map(normalizeStoredChat) : [];
       if (this.chats.length === 0) {
         const legacyChats = await this.loadLegacyChats();
         if (legacyChats.length > 0) {
@@ -47,22 +85,28 @@ export class ChatsStore {
   }
 
   get(id: string): Chat | undefined {
-    return this.chats.find((c) => c.id === id);
+    const chat = this.chats.find((c) => c.id === id);
+    return chat ? cloneChat(chat) : undefined;
   }
 
   getAll(): Chat[] {
-    return this.chats.map((chat) => ({
-      ...chat,
-      messages: chat.messages.map((message) => ({ ...message }))
-    }));
+    return this.chats.map(cloneChat);
   }
 
-  async create(): Promise<Chat> {
+  async create(context?: Chat["context"]): Promise<Chat> {
     const t = now();
-    const chat: Chat = { id: makeId("chat"), title: "New Chat", createdAt: t, updatedAt: t, messages: [], systemPrompt: "" };
+    const chat: Chat = {
+      id: makeId("chat"),
+      title: "New Chat",
+      createdAt: t,
+      updatedAt: t,
+      messages: [],
+      systemPrompt: "",
+      context: normalizeChatContext(context)
+    };
     this.chats.unshift(chat);
     await this.persist();
-    return { ...chat };
+    return cloneChat(chat);
   }
 
   async delete(id: string): Promise<boolean> {
@@ -73,7 +117,7 @@ export class ChatsStore {
   }
 
   async rename(id: string, title: string): Promise<boolean> {
-    const chat = this.get(id);
+    const chat = this.chats.find((candidate) => candidate.id === id);
     if (!chat) return false;
     chat.title = title.trim() || "New Chat";
     chat.updatedAt = now();
@@ -82,7 +126,7 @@ export class ChatsStore {
   }
 
   async setSystemPrompt(id: string, systemPrompt: string): Promise<boolean> {
-    const chat = this.get(id);
+    const chat = this.chats.find((candidate) => candidate.id === id);
     if (!chat) return false;
     chat.systemPrompt = systemPrompt;
     chat.updatedAt = now();
@@ -90,7 +134,16 @@ export class ChatsStore {
     return true;
   }
 
-  async importChat(input: { title: string; messages: Message[]; systemPrompt?: string }): Promise<Chat> {
+  async setContext(id: string, context: Chat["context"]): Promise<boolean> {
+    const chat = this.chats.find((candidate) => candidate.id === id);
+    if (!chat) return false;
+    chat.context = normalizeChatContext(context);
+    chat.updatedAt = now();
+    await this.persist();
+    return true;
+  }
+
+  async importChat(input: { title: string; messages: Message[]; systemPrompt?: string; context?: Chat["context"] }): Promise<Chat> {
     const t = now();
     const normalizedMessages = (input.messages ?? [])
       .filter((message) => message && typeof message.content === "string" && typeof message.role === "string")
@@ -106,16 +159,17 @@ export class ChatsStore {
       createdAt: t,
       updatedAt: t,
       messages: normalizedMessages,
-      systemPrompt: input.systemPrompt ?? ""
+      systemPrompt: input.systemPrompt ?? "",
+      context: normalizeChatContext(input.context)
     };
 
     this.chats.unshift(chat);
     await this.persist();
-    return { ...chat, messages: chat.messages.map((message) => ({ ...message })) };
+    return cloneChat(chat);
   }
 
   async appendMessage(chatId: string, message: Message): Promise<void> {
-    const chat = this.get(chatId);
+    const chat = this.chats.find((candidate) => candidate.id === chatId);
     if (!chat) return;
     const wasEmptyBeforeAppend = chat.messages.length === 0;
     const normalized: Message = {
@@ -137,7 +191,7 @@ export class ChatsStore {
   }
 
   async updateMessage(chatId: string, messageId: string, patch: Partial<Message>): Promise<void> {
-    const chat = this.get(chatId);
+    const chat = this.chats.find((candidate) => candidate.id === chatId);
     if (!chat) return;
     const msg = chat.messages.find((m) => m.id === messageId);
     if (!msg) return;
@@ -179,7 +233,7 @@ export class ChatsStore {
         const raw = await readFile(path, "utf8");
         const parsed = JSON.parse(raw) as { chats?: Chat[] };
         if (Array.isArray(parsed?.chats)) {
-          return parsed.chats;
+          return parsed.chats.map(normalizeStoredChat);
         }
       } catch {
         // Ignore unreadable legacy files.

@@ -33,6 +33,39 @@ export function createAssistantMessages(modelsToRun: string[]): Message[] {
   }));
 }
 
+export function buildAttachmentAwarePromptMessages(
+  prompt: string,
+  attachments: AttachmentPayload[]
+): ChatHistoryEntry[] {
+  const textAttachmentMessages = attachments
+    .filter((attachment) => attachment.type === "text")
+    .map((attachment) => ({
+      role: "system",
+      content: `File: ${attachment.name}\n\n${attachment.content}`
+    }));
+  const imageParts = attachments
+    .filter((attachment) => attachment.type === "image")
+    .map((attachment) => ({
+      type: "image_url" as const,
+      image_url: { url: attachment.content }
+    }));
+
+  if (imageParts.length > 0) {
+    return [
+      ...textAttachmentMessages,
+      {
+        role: "user",
+        content: [...imageParts, { type: "text", text: prompt }]
+      }
+    ];
+  }
+
+  return [
+    ...textAttachmentMessages,
+    { role: "user", content: prompt }
+  ];
+}
+
 export function buildChatHistory(
   chat: Chat | undefined,
   userMessage: Message,
@@ -54,33 +87,12 @@ export function buildChatHistory(
     });
   }
 
-  const textAttachmentMessages = attachments
-    .filter((attachment) => attachment.type === "text")
-    .map((attachment) => ({
-      role: "system",
-      content: `File: ${attachment.name}\n\n${attachment.content}`
-    }));
-  const imageParts = attachments
-    .filter((attachment) => attachment.type === "image")
-    .map((attachment) => ({
-      type: "image_url" as const,
-      image_url: { url: attachment.content }
-    }));
-
   for (const message of chat?.messages ?? []) {
     if (message.role === "system") continue;
     if (assistantIds.has(message.id)) continue;
 
     if (message.id === userMessage.id) {
-      history.push(...textAttachmentMessages);
-      if (imageParts.length > 0) {
-        history.push({
-          role: "user",
-          content: [...imageParts, { type: "text", text: message.content }]
-        });
-      } else {
-        history.push({ role: message.role, content: message.content });
-      }
+      history.push(...buildAttachmentAwarePromptMessages(message.content, attachments));
       continue;
     }
 

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChatHistory, createAssistantMessages, createOutgoingUserMessage } from "../main/chatSendSupport";
+import {
+  buildAttachmentAwarePromptMessages,
+  buildChatHistory,
+  createAssistantMessages,
+  createOutgoingUserMessage
+} from "../main/chatSendSupport";
 import type { AttachmentPayload, Chat } from "../shared/types";
 
 test("createOutgoingUserMessage includes attachment metadata only when needed", () => {
@@ -55,4 +60,18 @@ test("buildChatHistory injects tool hints, text attachments, and image content o
   assert.ok(Array.isArray(history[4]?.content));
   assert.equal(history[4]?.content[0]?.type, "image_url");
   assert.equal(history[4]?.content[1]?.type, "text");
+});
+
+test("buildAttachmentAwarePromptMessages injects text attachments and image blocks for a standalone prompt", () => {
+  const messages = buildAttachmentAwarePromptMessages("Inspect this issue", [
+    { name: "notes.txt", type: "text", content: "Repro steps here." },
+    { name: "bug.png", type: "image", content: "data:image/png;base64,YWJj", mimeType: "image/png" }
+  ]);
+
+  assert.equal(messages[0]?.role, "system");
+  assert.match(String(messages[0]?.content), /File: notes\.txt/);
+  assert.equal(messages[1]?.role, "user");
+  assert.ok(Array.isArray(messages[1]?.content));
+  assert.equal(messages[1]?.content[0]?.type, "image_url");
+  assert.equal(messages[1]?.content[1]?.type, "text");
 });
