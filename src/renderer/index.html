@@ -173,8 +173,8 @@
             <div class="image-studio-head">
               <div class="image-studio-heading">
                 <div class="preview-kicker">Image Studio</div>
-                <h2 class="image-studio-title">Generate, review, and save images in one workspace.</h2>
-                <p class="image-studio-subtitle">Prompt, iterate, and keep your visual assets organized without leaving the canvas.</p>
+                <h2 class="image-studio-title">Generate images in one workspace.</h2>
+                <p class="image-studio-subtitle">Prompt, iterate, and keep recent renders close without leaving the canvas.</p>
               </div>
               <button id="image-studio-refresh-btn" class="btn-ghost-sm" type="button">Refresh History</button>
             </div>
@@ -183,7 +183,8 @@
               <button id="image-provider-nvidia-btn" class="btn-ghost-sm provider-mode-btn" type="button">NVIDIA</button>
               <button id="image-provider-comfyui-btn" class="btn-ghost-sm provider-mode-btn" type="button">ComfyUI Local</button>
             </div>
-            <p id="image-studio-help" class="field-help">Use your configured cloud image provider here. Press Ctrl+Enter inside the prompt to generate.</p>
+            <p id="image-studio-help" class="field-help">Press Ctrl+Enter inside the prompt to generate.</p>
+            <p id="image-studio-status" class="field-help">Recent renders appear here.</p>
             <label class="field-label" for="image-studio-prompt-input">Prompt</label>
             <textarea
               id="image-studio-prompt-input"
@@ -192,8 +193,8 @@
               placeholder="Describe the image you want to generate."
               spellcheck="true"
             ></textarea>
-            <div class="image-studio-grid">
-              <div>
+            <div class="image-studio-toolbar">
+              <div class="image-studio-toolbar-field image-studio-toolbar-field-model">
                 <label class="field-label" for="image-studio-model-input">Model</label>
                 <input
                   id="image-studio-model-input"
@@ -203,7 +204,7 @@
                   placeholder="black-forest-labs/flux.1-schnell"
                 />
               </div>
-              <div>
+              <div class="image-studio-toolbar-field image-studio-toolbar-field-aspect">
                 <label class="field-label" for="image-studio-aspect-select">Aspect Ratio</label>
                 <select id="image-studio-aspect-select" class="field-input">
                   <option value="1:1">1:1</option>
@@ -220,20 +221,19 @@
                   <option value="3:4">3:4</option>
                 </select>
               </div>
+              <div class="btn-row image-studio-actions image-studio-toolbar-actions">
+                <button id="image-studio-clear-btn" class="btn-ghost" type="button">Clear Prompt</button>
+                <button id="image-studio-generate-btn" class="btn-primary" type="button">Generate Image</button>
+              </div>
             </div>
-            <div class="btn-row image-studio-actions">
-              <button id="image-studio-generate-btn" class="btn-primary" type="button">Generate Image</button>
-              <button id="image-studio-clear-btn" class="btn-ghost" type="button">Clear Prompt</button>
-            </div>
-            <p id="image-studio-status" class="field-help">Latest generated images appear below.</p>
           </div>
 
           <div class="image-studio-results">
             <div class="image-studio-results-head">
               <div class="image-studio-results-heading">
                 <div class="preview-kicker image-studio-results-kicker">Gallery</div>
-                <h3 class="image-studio-results-title">Recent Results</h3>
-                <p id="image-studio-empty" class="field-help">No generated images in history yet.</p>
+                <h3 class="image-studio-results-title">Recent Images</h3>
+                <p id="image-studio-empty" class="field-help">No image history yet.</p>
               </div>
             </div>
             <div id="image-studio-history-list" class="image-history-list image-studio-history-list"></div>

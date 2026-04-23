@@ -57,6 +57,17 @@ test("renderer keeps Claude chat output in exact plain-text mode and binds Claud
   assert.match(rendererSource, /window\.api\.claude\.send\(claudePrompt, \{\s*chatId,/);
 });
 
+test("renderer only enables Claude managed write mode when prompts include explicit workspace or file write signals", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+
+  assert.match(rendererSource, /function isClaudeManagedWriteRequest\(prompt: string, attachments: AttachmentPayload\[\] = \[\]\): boolean/);
+  assert.match(rendererSource, /const hasWriteContext = editableAttachmentPaths\.length > 0 \|\| writableAttachmentRoots\.length > 0;/);
+  assert.match(rendererSource, /const fileTarget = \/\\b\(workspace\|repo\|repository\|package\|file\|files\|folder\|folders\|directory\|directories\|component\|components\|module\|modules\|script\|scripts\|source\|src\|readme\|package\\\.json\)\\b\//);
+  assert.match(rendererSource, /const productTarget = \/\\b\(project\|app\|application\|service\|api\|library\|tool\|website\|site\)\\b\//);
+  assert.match(rendererSource, /const workspaceScopeHint = \/\\b\(in\|inside\|within\|under\)\\s\+\(\?:this\\s\+\)\?\(workspace\|repo\|repository\|folder\|directory\|project\)\\b\//);
+  assert.match(rendererSource, /isClaudeManagedWriteRequest\(prompt, attachmentsToSend\)/);
+});
+
 test("renderer preserves Claude system notices and applies sparse-chat density state", () => {
   const rendererSource = readProjectFile("src/renderer/app.ts");
 

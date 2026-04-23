@@ -1693,9 +1693,9 @@ async function sendClaudePrompt(): Promise<void> {
   const attachmentsToSend = [...activeAttachments];
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   const prompt = rawPrompt || "Please review the attached files.";
-  const workspaceRoot = isClaudeManagedWriteRequest(prompt) ? await ensureWorkspaceRootPath() : "";
+  const workspaceRoot = isClaudeManagedWriteRequest(prompt, attachmentsToSend) ? await ensureWorkspaceRootPath() : "";
   const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
-  const managedWritePermissions: ClaudeManagedEditPermissions = isClaudeManagedWriteRequest(prompt) && workspaceRoot
+  const managedWritePermissions: ClaudeManagedEditPermissions = isClaudeManagedWriteRequest(prompt, attachmentsToSend) && workspaceRoot
     ? {
         allowedPaths: getEditableSourcePaths(attachmentsToSend),
         allowedRoots: [workspaceRoot]
@@ -1957,6 +1957,7 @@ function applyInteractionMode(mode: InteractionMode): void {
   }
 
   currentInteractionMode = mode;
+  document.body.dataset["interactionMode"] = mode;
 
   const chatBtn = document.getElementById("interaction-chat-btn");
   const agentBtn = document.getElementById("interaction-agent-btn");
@@ -3524,16 +3525,26 @@ function isVagueEditRequest(prompt: string): boolean {
   return vaguePatterns.includes(normalized);
 }
 
-function isClaudeManagedWriteRequest(prompt: string): boolean {
+function isClaudeManagedWriteRequest(prompt: string, attachments: AttachmentPayload[] = []): boolean {
   const normalized = (prompt ?? "").trim().toLowerCase();
   if (!normalized) return false;
 
   const pathHint = /[a-z0-9._-]+[\\/][a-z0-9._-]+/i.test(prompt ?? "");
-  const createVerb = /\b(create|build|make|scaffold|generate|write|add|set up|setup|implement)\b/.test(normalized);
-  const updateVerb = /\b(edit|modify|update|rewrite|refactor|change|save)\b/.test(normalized);
-  const fileTarget = /\b(project|app|workspace|repo|repository|package|service|api|library|tool|file|files|folder|directory|component|module|script)\b/.test(normalized);
+  const editableAttachmentPaths = getEditableSourcePaths(attachments);
+  const writableAttachmentRoots = getWritableRootPaths(attachments);
+  const hasWriteContext = editableAttachmentPaths.length > 0 || writableAttachmentRoots.length > 0;
+  const createVerb = /\b(create|scaffold|generate|add|set up|setup)\b/.test(normalized);
+  const writeVerb = /\b(build|make|write|implement)\b/.test(normalized);
+  const updateVerb = /\b(edit|modify|update|rewrite|refactor|change|save|patch|apply)\b/.test(normalized);
+  const fileTarget = /\b(workspace|repo|repository|package|file|files|folder|folders|directory|directories|component|components|module|modules|script|scripts|source|src|readme|package\.json)\b/.test(normalized);
+  const productTarget = /\b(project|app|application|service|api|library|tool|website|site)\b/.test(normalized);
+  const workspaceScopeHint = /\b(in|inside|within|under)\s+(?:this\s+)?(workspace|repo|repository|folder|directory|project)\b/.test(normalized);
 
-  return (createVerb && (fileTarget || pathHint)) || (updateVerb && (fileTarget || pathHint));
+  if (pathHint) return true;
+  if (updateVerb && (fileTarget || hasWriteContext || workspaceScopeHint)) return true;
+  if ((createVerb || writeVerb) && fileTarget && (hasWriteContext || workspaceScopeHint)) return true;
+  if ((createVerb || writeVerb) && productTarget && (hasWriteContext || workspaceScopeHint)) return true;
+  return false;
 }
 
 function buildClaudeManagedWritePrompt(
@@ -6021,13 +6032,13 @@ function updateImageStudioHelp(provider: ImageProviderMode): void {
   const status = document.getElementById("image-studio-status");
   if (help instanceof HTMLElement) {
     help.textContent = provider === "comfyui"
-      ? "Image Studio uses your local ComfyUI server. Use a checkpoint like sd_xl_base_1.0.safetensors and press Ctrl+Enter to generate."
+      ? "Local ComfyUI is active. Use a checkpoint like sd_xl_base_1.0.safetensors."
       : provider === "nvidia"
-        ? "Image Studio uses NVIDIA cloud image APIs in the current MVP path. Press Ctrl+Enter inside the prompt to generate."
-        : "Image Studio uses OpenRouter hosted image generation. Press Ctrl+Enter inside the prompt to generate.";
+        ? "NVIDIA cloud image generation is active."
+        : "OpenRouter hosted image generation is active.";
   }
   if (status instanceof HTMLElement && !imageGenerationSubmitting) {
-    status.textContent = `Active provider: ${getImageProviderDisplayName(provider)}. Latest generated images appear below.`;
+    status.textContent = `${getImageProviderDisplayName(provider)} selected. Press Ctrl+Enter to generate.`;
   }
 }
 
