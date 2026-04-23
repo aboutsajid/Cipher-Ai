@@ -9,12 +9,15 @@ import type { ChatsStore } from "./services/chatsStore";
 import type { SettingsStore } from "./services/settingsStore";
 import type { CcrService } from "./services/ccrService";
 import type { AgentTaskRunner } from "./services/agentTaskRunner";
+import type { ImageGenerationService } from "./services/imageGenerationService";
 
 interface Deps {
   settingsStore: SettingsStore;
   chatsStore: ChatsStore;
   ccrService: CcrService;
   agentTaskRunner: AgentTaskRunner;
+  imageGenerationService: ImageGenerationService;
+  claudeChatWorkingDirectory: string;
   createWindow: (initialChatId?: string, startDraftChat?: boolean) => Promise<BrowserWindow>;
   getWindowForSender: (sender: WebContents) => BrowserWindow | null;
   getPrimaryWindow: () => BrowserWindow | null;
@@ -29,6 +32,8 @@ export function registerIpcHandlers(deps: Deps): void {
     chatsStore,
     ccrService,
     agentTaskRunner,
+    imageGenerationService,
+    claudeChatWorkingDirectory,
     createWindow,
     getWindowForSender,
     getPrimaryWindow,
@@ -37,6 +42,8 @@ export function registerIpcHandlers(deps: Deps): void {
   const mcpRuntimeManager = new McpRuntimeManager(settingsStore);
   const claudeSessionManager = new ClaudeSessionManager((channel, payload) => {
     broadcastToWindows(channel, payload);
+  }, {
+    workingDirectory: claudeChatWorkingDirectory
   });
 
   ccrService.setLogHandler((line) => {
@@ -58,7 +65,9 @@ export function registerIpcHandlers(deps: Deps): void {
 
   registerToolingIpcHandlers({
     settingsStore,
+    chatsStore,
     ccrService,
+    imageGenerationService,
     mcpRuntimeManager,
     claudeSessionManager,
     getWindowForSender,

@@ -22,6 +22,10 @@ const MODEL_ID_MIGRATIONS: Record<string, string> = {
 };
 
 const ENCRYPTED_SECRET_PREFIX = "cipher-protected:";
+const DEFAULT_CLAUDE_CHAT_FILESYSTEM = {
+  roots: [],
+  allowWrite: false
+};
 const SMOKE_SENTINEL_BASE_URLS = new Set([
   "http://127.0.0.1:9",
   "http://127.0.0.1:9/v1",
@@ -56,6 +60,7 @@ const DEFAULT_SETTINGS: Settings = {
   comfyuiBaseUrl: "http://127.0.0.1:8000",
   localVoiceEnabled: false,
   localVoiceModel: "base",
+  claudeChatFilesystem: DEFAULT_CLAUDE_CHAT_FILESYSTEM,
   mcpServers: [],
 };
 
@@ -106,6 +111,7 @@ export class SettingsStore {
       comfyuiBaseUrl: this.store.get("comfyuiBaseUrl") ?? DEFAULT_SETTINGS.comfyuiBaseUrl,
       localVoiceEnabled: false,
       localVoiceModel: this.store.get("localVoiceModel", DEFAULT_SETTINGS.localVoiceModel),
+      claudeChatFilesystem: this.store.get("claudeChatFilesystem", DEFAULT_CLAUDE_CHAT_FILESYSTEM),
       mcpServers: this.store.get("mcpServers", DEFAULT_SETTINGS.mcpServers),
       routing: this.store.get("routing", DEFAULT_SETTINGS.routing)
     };
@@ -158,6 +164,10 @@ export class SettingsStore {
       models: [...this.settings.models],
       customTemplates: this.settings.customTemplates.map((template) => ({ ...template })),
       ollamaModels: [...this.settings.ollamaModels],
+      claudeChatFilesystem: {
+        roots: [...(this.settings.claudeChatFilesystem?.roots ?? [])],
+        allowWrite: this.settings.claudeChatFilesystem?.allowWrite === true
+      },
       mcpServers: this.settings.mcpServers.map((server) => ({ ...server, args: [...server.args] }))
     };
   }

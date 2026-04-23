@@ -55,6 +55,7 @@ interface MessageMetadata {
   compareGroup?: string;
   compareSlot?: "A" | "B";
   generatedImageAssetIds?: string[];
+  systemNotice?: boolean;
 }
 interface Message { id: string; role: string; content: string; createdAt: string; model?: string; error?: string; metadata?: MessageMetadata; }
 type ChatProvider = "openrouter" | "nvidia" | "ollama" | "claude";
@@ -232,6 +233,7 @@ interface AgentRouteDiagnostics {
 interface AgentTaskRequest {
   prompt: string;
   attachments?: AttachmentPayload[];
+  targetPath?: string;
 }
 interface AgentTask {
   id: string;
@@ -354,6 +356,10 @@ interface Settings {
   comfyuiBaseUrl?: string;
   localVoiceEnabled: boolean;
   localVoiceModel: string;
+  claudeChatFilesystem?: {
+    roots: string[];
+    allowWrite: boolean;
+  };
   mcpServers: McpServerConfig[];
   routing: { default: string; think: string; longContext: string; };
 }
@@ -441,7 +447,13 @@ interface Window {
       start: () => Promise<ClaudeSessionResult>;
       send: (
         prompt: string,
-        options?: { attachments?: AttachmentPayload[]; enabledTools?: string[]; includeFullTextAttachments?: boolean }
+        options?: {
+          chatId?: string;
+          attachments?: AttachmentPayload[];
+          enabledTools?: string[];
+          includeFullTextAttachments?: boolean;
+          filesystemAccess?: { roots: string[]; allowWrite: boolean };
+        }
       ) => Promise<ClaudeSessionResult>;
       inspectEdits: (
         edits: ClaudeManagedEdit[],
@@ -557,6 +569,8 @@ let cachedAgentSnapshots: WorkspaceSnapshot[] = [];
 let cachedAgentRouteDiagnostics: AgentRouteDiagnostics | null = null;
 const taskTargetExistsById = new Map<string, boolean>();
 let agentHistoryFilter: "all" | AgentTask["status"] = "all";
+let agentHistoryExpanded = false;
+let agentHistoryCollapsedPanelWidth: number | null = null;
 let pendingSnapshotRestoreId: string | null = null;
 let activeAgentRestoreState: AgentSnapshotRestoreResult | null = null;
 const autoOpenedAgentPreviewTasks = new Set<string>();
@@ -574,6 +588,7 @@ let activeStreamChatId: string | null = null;
 let pendingStreamResponses = 0;
 let claudeSessionRunning = false;
 let claudeSessionStarting = false;
+let claudeSessionChatId: string | null = null;
 let activeClaudeAssistantMessageId: string | null = null;
 let speechRecognition: SpeechRecognitionLike | null = null;
 let voiceRecording = false;
@@ -606,6 +621,7 @@ let suppressClaudeExitNotice = false;
 let pendingChatSaveGuard: (ClaudeSaveGuard & { chatId: string | null }) | null = null;
 let pendingManagedSavePreview: ManagedSavePreviewState | null = null;
 let managedSaveApplying = false;
+let pendingAgentTargetPromptResolve: ((choice: AgentTargetPromptChoice | null) => void) | null = null;
 const chatSaveGuardByMessageId = new Map<string, ClaudeSaveGuard>();
 const CLAUDE_RENDER_BATCH_MS = 80;
 const CLAUDE_MODEL_LABEL = "claude/minimax-m2.5:cloud";
@@ -671,6 +687,8 @@ interface DirectSaveStatus {
   badge: string;
   detail: string;
 }
+
+type AgentTargetPromptChoice = "suggested" | "choose" | "skip";
 
 interface SpeechRecognitionResultLike {
   0: { transcript: string };
@@ -1119,6 +1137,25 @@ function appendClaudeLine(text: string, kind: "stdout" | "stderr" | "system" | "
       void loadChatList();
     }
     activeClaudeAssistantMessageId = null;
+    maybeAutoScroll();
+    return;
+  }
+
+  if (kind === "system") {
+    const message: Message = {
+      id: nextClientMessageId("claude-system"),
+      role: "system",
+      content: lines.join("\n"),
+      createdAt: new Date().toISOString(),
+      metadata: {
+        systemNotice: true
+      }
+    };
+    appendMessage(message);
+    if (currentChatId) {
+      void window.api.chat.appendMessage(currentChatId, message);
+      void loadChatList();
+    }
     maybeAutoScroll();
     return;
   }
@@ -1683,10 +1720,9 @@ async function sendClaudePrompt(): Promise<void> {
     return;
   }
 
-  const ready = await ensureClaudeSessionStarted();
+  const chatId = await ensureActiveChatId();
+  const ready = await ensureClaudeChatSessionReady(chatId);
   if (!ready) return;
-
-  await ensureActiveChatId();
 
   activeAttachments = [];
   renderComposerAttachments();
@@ -1703,8 +1739,10 @@ async function sendClaudePrompt(): Promise<void> {
       ? buildClaudeManagedWritePrompt(prompt, attachmentsToSend, managedWritePermissions)
       : prompt;
     const res = await window.api.claude.send(claudePrompt, {
+      chatId,
       attachments: attachmentsToSend,
-      enabledTools: getEnabledToolNames()
+      enabledTools: getEnabledToolNames(),
+      filesystemAccess: settings?.claudeChatFilesystem
     });
     claudeSessionRunning = Boolean(res.running);
     if (!res.ok) {
@@ -1782,6 +1820,85 @@ function syncComposerAgentPrompts(source: "composer" | "agent"): void {
 
   composerInput.value = agentInput.value;
   composerInput.dispatchEvent(new Event("input"));
+}
+
+function resolveAgentPromptInput(): { input: HTMLTextAreaElement; source: "composer" | "agent" } | null {
+  const composerInput = document.getElementById("composer-input");
+  const agentInput = document.getElementById("agent-prompt-input");
+  if (!(composerInput instanceof HTMLTextAreaElement) || !(agentInput instanceof HTMLTextAreaElement)) return null;
+
+  const composerPrompt = composerInput.value.trim();
+  const agentPrompt = agentInput.value.trim();
+  const activeElement = document.activeElement;
+
+  if (activeElement === agentInput && agentPrompt) return { input: agentInput, source: "agent" };
+  if (activeElement === composerInput && composerPrompt) return { input: composerInput, source: "composer" };
+  if (agentPrompt) return { input: agentInput, source: "agent" };
+  if (composerPrompt) return { input: composerInput, source: "composer" };
+  return null;
+}
+
+function clearAgentPrompts(): void {
+  const composerInput = document.getElementById("composer-input");
+  const agentInput = document.getElementById("agent-prompt-input");
+  if (composerInput instanceof HTMLTextAreaElement) {
+    composerInput.value = "";
+    composerInput.dispatchEvent(new Event("input"));
+  }
+  if (agentInput instanceof HTMLTextAreaElement) {
+    agentInput.value = "";
+    agentInput.dispatchEvent(new Event("input"));
+  }
+}
+
+async function ensureClaudeChatSessionReady(chatId: string): Promise<boolean> {
+  const normalizedChatId = (chatId ?? "").trim();
+  if (!normalizedChatId) return ensureClaudeSessionStarted();
+  if (!claudeSessionRunning || !claudeSessionChatId || claudeSessionChatId === normalizedChatId) {
+    const ready = await ensureClaudeSessionStarted();
+    if (ready) claudeSessionChatId = normalizedChatId;
+    return ready;
+  }
+
+  if (claudeSessionResetting) {
+    setClaudeStatus("Resetting Claude Code...", "busy");
+    return false;
+  }
+
+  claudeSessionResetting = true;
+  suppressClaudeExitNotice = true;
+  claudeSessionRunning = false;
+  claudeSessionChatId = null;
+  setClaudeStatus("Switching Claude chat context...", "busy");
+
+  try {
+    await window.api.claude.stop();
+  } catch {
+    // A failed stop is non-fatal here; a fresh start will surface a real error if needed.
+  }
+
+  try {
+    const res = await window.api.claude.start();
+    claudeSessionRunning = Boolean(res.running);
+    if (!res.ok) {
+      setClaudeStatus(res.message, "err");
+      showToast(res.message, 3500);
+      appendClaudeLine(res.message, "stderr");
+      return false;
+    }
+    claudeSessionChatId = normalizedChatId;
+    setClaudeStatus("Ready", "ok");
+    return true;
+  } catch (err) {
+    claudeSessionRunning = false;
+    const msg = err instanceof Error ? err.message : "Failed to switch Claude chat context.";
+    setClaudeStatus(msg, "err");
+    showToast(msg, 3500);
+    appendClaudeLine(msg, "stderr");
+    return false;
+  } finally {
+    claudeSessionResetting = false;
+  }
 }
 
 function getComposerPlaceholder(): string {
@@ -1902,6 +2019,12 @@ function applyInteractionMode(mode: InteractionMode): void {
   if (isAgentMode) {
     syncComposerAgentPrompts("composer");
     setAgentStatus("Agent mode active. Send will start a supervised task.");
+    openPanel("agent");
+    const agentInput = document.getElementById("agent-prompt-input");
+    if (agentInput instanceof HTMLTextAreaElement) {
+      agentInput.focus();
+      agentInput.setSelectionRange(agentInput.value.length, agentInput.value.length);
+    }
   }
   if (isImageMode) {
     syncImageStudioControls(true);
@@ -2644,6 +2767,195 @@ async function ensureWorkspaceRootPath(): Promise<string> {
   }
 }
 
+function getAgentTargetInput(): HTMLInputElement | null {
+  const input = document.getElementById("agent-target-input");
+  return input instanceof HTMLInputElement ? input : null;
+}
+
+function setAgentTargetInputValue(value: string): void {
+  const targetInput = getAgentTargetInput();
+  if (!targetInput) return;
+  targetInput.value = value;
+  targetInput.dispatchEvent(new Event("input"));
+}
+
+function normalizeAgentTargetPath(value: string, workspaceRoot = workspaceRootPath): string {
+  let normalized = (value ?? "").trim().replace(/\\/g, "/");
+  if (!normalized) return "";
+
+  const normalizedWorkspaceRoot = (workspaceRoot ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (normalizedWorkspaceRoot) {
+    const loweredPath = normalized.toLowerCase();
+    const loweredRoot = normalizedWorkspaceRoot.toLowerCase();
+    if (loweredPath === loweredRoot) {
+      return ".";
+    }
+    if (loweredPath.startsWith(`${loweredRoot}/`)) {
+      normalized = normalized.slice(normalizedWorkspaceRoot.length).replace(/^\/+/, "");
+    }
+  }
+
+  normalized = normalized.replace(/^\.\/+/, "").replace(/\/+/g, "/").replace(/\/+$/, "");
+  return normalized || ".";
+}
+
+function getRequestedAgentTargetPath(): string {
+  return normalizeAgentTargetPath(getAgentTargetInput()?.value ?? "");
+}
+
+function shouldPromptForAgentTargetSelection(prompt: string): boolean {
+  const normalizedPrompt = (prompt ?? "").trim().toLowerCase();
+  if (!normalizedPrompt) return false;
+  if (normalizedPrompt.includes("generated-apps/")) return false;
+
+  const actionSignals = ["build", "create", "make", "start", "bootstrap", "scaffold", "give me", "i want", "i need"];
+  const scopeSignals = [
+    "app",
+    "project",
+    "page",
+    "site",
+    "website",
+    "landing page",
+    "pricing page",
+    "microsite",
+    "showcase page",
+    "marketing page",
+    "dashboard",
+    "admin panel",
+    "analytics",
+    "crud",
+    "inventory",
+    "contacts",
+    "api",
+    "service",
+    "tool",
+    "cli",
+    "script",
+    "library",
+    "package",
+    "module",
+    "sdk",
+    "kanban",
+    "board",
+    "workspace",
+    "desktop",
+    "desk",
+    "tracker"
+  ];
+  const explicitlyNew = ["new app", "new project", "from scratch"].some((term) => normalizedPrompt.includes(term));
+  const hasAction = actionSignals.some((term) => normalizedPrompt.includes(term));
+  const hasScope = scopeSignals.some((term) => normalizedPrompt.includes(term));
+  return (hasAction && hasScope) || explicitlyNew;
+}
+
+function extractAgentPromptTerms(prompt: string): string[] {
+  const stopWords = new Set([
+    "a", "an", "and", "app", "application", "build", "create", "for", "from", "in", "into", "make", "new",
+    "page", "project", "site", "that", "the", "to", "tool", "with"
+  ]);
+  return (prompt ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length > 1 && !stopWords.has(term))
+    .slice(0, 3);
+}
+
+function buildSuggestedAgentTargetPath(prompt: string): string {
+  const namedMatch = /(?:called|named)\s+["']?([a-z0-9][a-z0-9 -]{1,40})["']?/i.exec(prompt);
+  const rawName = namedMatch?.[1] ?? extractAgentPromptTerms(prompt).join("-");
+  const slug = rawName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+  return `generated-apps/${slug || "agent-app"}`;
+}
+
+function closeAgentTargetPromptModal(choice: AgentTargetPromptChoice | null = null): void {
+  const modal = document.getElementById("agent-target-modal");
+  if (modal instanceof HTMLElement) {
+    modal.style.display = "none";
+  }
+  const resolvePrompt = pendingAgentTargetPromptResolve;
+  pendingAgentTargetPromptResolve = null;
+  resolvePrompt?.(choice);
+}
+
+function openAgentTargetPromptModal(prompt: string): Promise<AgentTargetPromptChoice | null> {
+  if (pendingAgentTargetPromptResolve) {
+    closeAgentTargetPromptModal(null);
+  }
+
+  const modal = $("agent-target-modal");
+  const suggestion = buildSuggestedAgentTargetPath(prompt);
+  $("agent-target-modal-suggestion").textContent = suggestion;
+  modal.style.display = "flex";
+  const suggestBtn = document.getElementById("agent-target-modal-suggest-btn");
+  if (suggestBtn instanceof HTMLButtonElement) {
+    suggestBtn.focus();
+  }
+  return new Promise((resolve) => {
+    pendingAgentTargetPromptResolve = resolve;
+  });
+}
+
+async function ensureAgentTargetSelectionBeforeStart(prompt: string): Promise<boolean> {
+  if (getRequestedAgentTargetPath()) return true;
+  if (!shouldPromptForAgentTargetSelection(prompt)) return true;
+
+  const choice = await openAgentTargetPromptModal(prompt);
+  if (choice === "suggested") {
+    setAgentTargetInputValue(buildSuggestedAgentTargetPath(prompt));
+    return true;
+  }
+  if (choice === "choose") {
+    const picked = await pickAgentTargetFolder();
+    if (!picked) {
+      setAgentStatus("Agent start paused. No target folder selected.");
+      return false;
+    }
+    return true;
+  }
+  if (choice === "skip") {
+    return true;
+  }
+
+  setAgentStatus("Agent start cancelled.");
+  return false;
+}
+
+async function pickAgentTargetFolder(): Promise<boolean> {
+  const picked = await window.api.attachments.pickWritableRoots();
+  const pickedPath = (picked[0]?.writableRoot ?? "").trim();
+  if (!pickedPath) {
+    return false;
+  }
+
+  const workspaceRoot = await ensureWorkspaceRootPath();
+  const normalizedWorkspaceRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedPickedPath = pickedPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const loweredRoot = normalizedWorkspaceRoot.toLowerCase();
+  const loweredPicked = normalizedPickedPath.toLowerCase();
+
+  if (!normalizedWorkspaceRoot || (loweredPicked !== loweredRoot && !loweredPicked.startsWith(`${loweredRoot}/`))) {
+    const message = "Choose a folder inside the current workspace root.";
+    setAgentStatus(message, "err");
+    showToast(message, 2800);
+    return false;
+  }
+
+  const targetInput = getAgentTargetInput();
+  if (!targetInput) return false;
+
+  targetInput.value = normalizeAgentTargetPath(pickedPath, workspaceRoot);
+  targetInput.dispatchEvent(new Event("input"));
+  targetInput.focus();
+  showToast(`Agent target set to ${targetInput.value || "."}.`, 2200);
+  return true;
+}
+
 function pickPreferredLocalCoderModel(models: string[]): string {
   const normalized = models
     .map((model) => model.trim())
@@ -3052,6 +3364,7 @@ function applyLoadedSettingsToUi(loaded: Settings): void {
   renderOllamaModels(loaded.ollamaModels ?? []);
   setProviderMode(getProviderModeFromSettings(loaded));
   autoSwitchToOllamaIfNeeded();
+  renderClaudeChatFilesystemSettingsUi(loaded.claudeChatFilesystem);
   refreshRouteStrategyUi();
   renderSettingsModelHealth(cachedAgentRouteDiagnostics, activeAgentTaskId ? (cachedAgentTasks.find((item) => item.id === activeAgentTaskId) ?? null) : null);
   updateVoiceUi();
@@ -3621,6 +3934,49 @@ function updateHeaderBuildLabel(name: string, version: string): void {
   buildLabel.title = trimmedVersion ? `${trimmedName} v${trimmedVersion}` : trimmedName;
 }
 
+function normalizeClaudeChatFilesystemRoots(value: string | string[]): string[] {
+  const raw = Array.isArray(value) ? value.join("\n") : value;
+  return [...new Set(
+    String(raw ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  )];
+}
+
+function getClaudeChatFilesystemSettingsDraft(): { roots: string[]; allowWrite: boolean } {
+  const rootsInput = document.getElementById("claude-chat-fs-roots");
+  const writeToggle = document.getElementById("claude-chat-fs-write-toggle");
+  return {
+    roots: normalizeClaudeChatFilesystemRoots(rootsInput instanceof HTMLTextAreaElement ? rootsInput.value : ""),
+    allowWrite: writeToggle instanceof HTMLInputElement && writeToggle.checked
+  };
+}
+
+function renderClaudeChatFilesystemSettingsUi(filesystem: { roots: string[]; allowWrite: boolean } | null | undefined): void {
+  const rootsInput = document.getElementById("claude-chat-fs-roots");
+  const writeToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const status = document.getElementById("claude-chat-fs-status");
+  const normalized = {
+    roots: normalizeClaudeChatFilesystemRoots(filesystem?.roots ?? []),
+    allowWrite: filesystem?.allowWrite === true
+  };
+
+  if (rootsInput instanceof HTMLTextAreaElement) {
+    rootsInput.value = normalized.roots.join("\n");
+  }
+  if (writeToggle instanceof HTMLInputElement) {
+    writeToggle.checked = normalized.allowWrite;
+  }
+  if (status instanceof HTMLElement) {
+    status.textContent = normalized.roots.length === 0
+      ? "Claude chat filesystem access is off."
+      : normalized.allowWrite
+        ? `Claude chat can read and write inside ${normalized.roots.length} approved folder${normalized.roots.length === 1 ? "" : "s"}.`
+        : `Claude chat can read, list, and search inside ${normalized.roots.length} approved folder${normalized.roots.length === 1 ? "" : "s"}.`;
+  }
+}
+
 async function loadAppInfo(): Promise<void> {
   try {
     const info = await window.api.app.info();
@@ -4128,9 +4484,10 @@ async function loadChat(id: string) {
   resetClaudeRenderState();
   virtualItemHeights.clear();
   $("messages").scrollTop = 0;
-  renderedMessages = chat.messages.filter((msg) => msg.role !== "system");
+  renderedMessages = [...chat.messages];
   normalizeRenderedMessageOrder();
   rebuildVirtualItems();
+  updateMessageDensityState();
   scheduleVirtualRender(true);
 
   activeAttachments = [];
@@ -4217,7 +4574,7 @@ function createEmptyStateElement(): HTMLDivElement {
   grid.appendChild(quickSection);
 
   const recentSection = document.createElement("section");
-  recentSection.className = "empty-panel";
+  recentSection.className = `empty-panel${currentInteractionMode === "agent" ? " empty-panel-wide" : ""}`;
   recentSection.innerHTML = currentInteractionMode === "agent"
     ? `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Tasks</span><strong>${cachedAgentTasks.length > 0 ? "Continue agent work from here" : "No recent tasks yet"}</strong></div>`
     : `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Chats</span><strong>${recentChats.length > 0 ? "Jump back into your work" : "No recent chats yet"}</strong></div>`;
@@ -4303,6 +4660,7 @@ function clearMessages() {
   virtualItemHeights.clear();
   shouldAutoScroll = true;
   $("messages").appendChild(createEmptyStateElement());
+  updateMessageDensityState();
   updateChatHeaderTitle(null);
   $("rename-btn").style.display = "none";
   $("export-btn").style.display = "none";
@@ -4335,6 +4693,7 @@ function openDraftChat(
   if (showEmptyState) {
     messages.appendChild(createEmptyStateElement());
   }
+  updateMessageDensityState();
   updateChatHeaderTitle(null);
   $("rename-btn").style.display = "none";
   $("export-btn").style.display = "none";
@@ -4350,8 +4709,21 @@ function openDraftChat(
 }
 // Render Message
 function renderMessageBody(contentEl: HTMLElement, content: string, done: boolean): void {
+  const renderMode = contentEl.dataset["renderMode"] ?? "markdown";
+
   if (rawModeEnabled) {
     contentEl.textContent = content;
+    return;
+  }
+
+  contentEl.classList.toggle("is-plain", renderMode === "plain");
+  if (renderMode === "plain") {
+    contentEl.textContent = content;
+    if (!done) {
+      const cursor = document.createElement("span");
+      cursor.className = "cursor-blink";
+      contentEl.appendChild(cursor);
+    }
     return;
   }
 
@@ -4360,6 +4732,18 @@ function renderMessageBody(contentEl: HTMLElement, content: string, done: boolea
   } else {
     contentEl.innerHTML = renderMarkdown(content) + '<span class="cursor-blink"></span>';
   }
+}
+
+function shouldRenderMessageAsPlainText(msg: Message | undefined): boolean {
+  return msg?.role === "assistant" && msg.model === CLAUDE_MODEL_LABEL;
+}
+
+function updateMessageDensityState(): void {
+  const container = document.getElementById("messages");
+  if (!(container instanceof HTMLElement)) return;
+  const hasEmptyState = Boolean(container.querySelector(":scope > .empty-state"));
+  const sparseConversation = !hasEmptyState && renderedMessages.length > 0 && renderedMessages.length <= 2;
+  container.classList.toggle("messages-sparse", sparseConversation);
 }
 
 function applyGeneratedImageAssetIds(contentEl: HTMLElement, msg: Message | undefined): void {
@@ -4378,21 +4762,22 @@ function rerenderAllMessageBodies(done = true): void {
     const contentEl = wrapper.querySelector<HTMLElement>(".msg-content");
     if (!contentEl) return;
     const raw = contentEl.dataset["raw"] ?? "";
-    renderMessageBody(contentEl, raw, done);
     const messageId = wrapper.dataset["id"] ?? "";
     const message = renderedMessages.find((item) => item.id === messageId);
+    contentEl.dataset["renderMode"] = shouldRenderMessageAsPlainText(message) ? "plain" : "markdown";
+    renderMessageBody(contentEl, raw, done);
     applyGeneratedImageAssetIds(contentEl, message);
   });
 }
 
 function createMessageWrapper(msg: Message): HTMLElement {
   const wrapper = document.createElement("div");
-  wrapper.className = `msg-wrapper${msg.model === "Agent" ? " msg-wrapper-agent" : ""}`;
+  wrapper.className = `msg-wrapper${msg.role === "system" ? " msg-wrapper-system" : ""}${msg.model === "Agent" ? " msg-wrapper-agent" : ""}`;
   wrapper.dataset["id"] = msg.id;
 
   const avatar = document.createElement("div");
   avatar.className = "msg-avatar " + msg.role;
-  avatar.textContent = msg.role === "user" ? "U" : "AI";
+  avatar.textContent = msg.role === "user" ? "U" : msg.role === "system" ? "i" : "AI";
 
   const body = document.createElement("div");
   body.className = "msg-body";
@@ -4402,7 +4787,7 @@ function createMessageWrapper(msg: Message): HTMLElement {
 
   const role = document.createElement("div");
   role.className = "msg-role";
-  role.textContent = msg.role === "user" ? "You" : "Assistant";
+  role.textContent = msg.role === "user" ? "You" : msg.role === "system" ? "System" : "Assistant";
 
   const metaSide = document.createElement("div");
   metaSide.className = "msg-meta-side";
@@ -4414,6 +4799,7 @@ function createMessageWrapper(msg: Message): HTMLElement {
   const content = document.createElement("div");
   content.className = "msg-content" + (msg.error ? " error" : "");
   content.dataset["raw"] = msg.content;
+  content.dataset["renderMode"] = shouldRenderMessageAsPlainText(msg) ? "plain" : "markdown";
   if (msg.model === "Agent") {
     renderAgentMessageBody(content, msg.content);
   } else {
@@ -5069,6 +5455,7 @@ function appendMessage(msg: Message): HTMLElement {
 
   normalizeRenderedMessageOrder();
   rebuildVirtualItems();
+  updateMessageDensityState();
   scheduleVirtualRender(true);
   if (shouldAutoScroll || msg.role === "user") {
     requestAnimationFrame(() => scrollToBottom(msg.role === "user"));
@@ -5099,6 +5486,7 @@ function updateMessageContent(msgId: string, content: string, done = false, allo
   if (message?.model === "Agent") {
     renderAgentMessageBody(contentEl, content);
   } else {
+    contentEl.dataset["renderMode"] = shouldRenderMessageAsPlainText(message) ? "plain" : "markdown";
     renderMessageBody(contentEl, content, done);
     applyGeneratedImageAssetIds(contentEl, message);
   }
@@ -6115,15 +6503,13 @@ async function submitImageStudioGeneration(): Promise<void> {
 
 async function sendMessage() {
   if (currentInteractionMode === "agent") {
-    const input = $("composer-input") as HTMLTextAreaElement;
-    const prompt = input.value.trim();
+    const resolvedPromptInput = resolveAgentPromptInput();
+    const prompt = resolvedPromptInput?.input.value.trim() ?? "";
     if (!prompt) return;
-    syncComposerAgentPrompts("composer");
+    syncComposerAgentPrompts(resolvedPromptInput?.source ?? "composer");
     const started = await startAgentTaskPrompt(prompt);
     if (started) {
-      input.value = "";
-      input.dispatchEvent(new Event("input"));
-      syncComposerAgentPrompts("composer");
+      clearAgentPrompts();
     }
     return;
   }
@@ -6294,6 +6680,7 @@ function setupIpcListeners() {
 
     window.api.claude.onError((message) => {
       claudeSessionRunning = false;
+      claudeSessionChatId = null;
       pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
       pendingClaudeManagedBaselines = [];
       pendingClaudeManagedMode = "none";
@@ -6330,10 +6717,12 @@ function setupIpcListeners() {
       if (!claudeSessionResetting) {
         setClaudeStatus("Ready for next prompt", "ok");
         claudeSessionRunning = true;
+        if (currentChatId) claudeSessionChatId = currentChatId;
       }
       return;
     }
     claudeSessionRunning = false;
+    claudeSessionChatId = null;
     if (suppressExitNotice) return;
     const detail = `Claude Code session closed${typeof payload.code === "number" ? ` (code ${payload.code})` : ""}.`;
     appendClaudeLine(detail, "system");
@@ -6369,6 +6758,7 @@ async function saveSettings() {
   const baseUrl = ollamaEnabled ? baseUrlInput : (baseUrlInput || getDefaultBaseUrlForProvider(cloudProvider));
   const ollamaBaseUrl = ($("ollama-base-url-input") as HTMLInputElement).value.trim() || "http://localhost:11434/v1";
   const comfyuiBaseUrl = ((document.getElementById("comfyui-base-url-input") as HTMLInputElement | null)?.value ?? "").trim() || COMFYUI_DEFAULT_BASE_URL;
+  const claudeChatFilesystem = getClaudeChatFilesystemSettingsDraft();
   const modelsInput = [...new Set(($("models-textarea") as HTMLTextAreaElement).value
     .split(/[\n,]+/)
     .map((m) => m.trim())
@@ -6443,7 +6833,8 @@ async function saveSettings() {
     ollamaModels,
     comfyuiBaseUrl,
     localVoiceEnabled: false,
-    localVoiceModel: "base"
+    localVoiceModel: "base",
+    claudeChatFilesystem
   });
   applyLoadedSettingsToUi(saved);
   setStatus("Settings saved!", "ok");
@@ -7518,6 +7909,48 @@ function renderAgentHistoryFilters(): void {
   });
 }
 
+function renderAgentHistoryControls(totalCount: number, visibleCount: number): void {
+  const controlsEl = $("agent-history-controls");
+  const toggleBtn = $("agent-history-toggle-btn") as HTMLButtonElement;
+
+  if (totalCount <= 1) {
+    controlsEl.style.display = "none";
+    toggleBtn.textContent = "Show More";
+    return;
+  }
+
+  controlsEl.style.display = "flex";
+  if (agentHistoryExpanded) {
+    toggleBtn.textContent = "Show Less";
+    return;
+  }
+
+  const hiddenCount = Math.max(0, totalCount - visibleCount);
+  toggleBtn.textContent = hiddenCount > 0 ? `Show More (${hiddenCount})` : "Show More";
+}
+
+function syncAgentHistoryPanelWidth(): void {
+  const panel = document.getElementById("right-panel");
+  const isAgentPanelOpen = panel instanceof HTMLElement
+    && panel.style.display !== "none"
+    && (panel.dataset["openTab"] ?? rightPanelTab) === "agent";
+
+  if (!isAgentPanelOpen) return;
+
+  if (agentHistoryExpanded) {
+    if (agentHistoryCollapsedPanelWidth === null) {
+      agentHistoryCollapsedPanelWidth = currentRightPanelWidth;
+    }
+    applyRightPanelWidth(getRightPanelMaxWidth());
+    return;
+  }
+
+  if (agentHistoryCollapsedPanelWidth !== null) {
+    applyRightPanelWidth(agentHistoryCollapsedPanelWidth);
+    agentHistoryCollapsedPanelWidth = null;
+  }
+}
+
 function renderAgentHistory(tasks: AgentTask[]): void {
   const historyEl = $("agent-history");
   cachedAgentTasks = tasks;
@@ -7529,10 +7962,12 @@ function renderAgentHistory(tasks: AgentTask[]): void {
 
   if (filteredTasks.length === 0) {
     historyEl.innerHTML = '<div class="agent-history-empty">Recent agent tasks will appear here with status and verification details.</div>';
+    renderAgentHistoryControls(0, 0);
     return;
   }
 
-  historyEl.innerHTML = filteredTasks.slice(0, 10).map((task) => {
+  const visibleTasks = agentHistoryExpanded ? filteredTasks : filteredTasks.slice(0, 1);
+  historyEl.innerHTML = visibleTasks.map((task) => {
     const tone = task.status === "completed" ? "ok" : task.status === "failed" ? "err" : "";
     const targetMissing = isTaskTargetMissing(task);
     const verificationBadge = task.verification?.summary
@@ -7587,6 +8022,7 @@ function renderAgentHistory(tasks: AgentTask[]): void {
       </button>
     `;
   }).join("");
+  renderAgentHistoryControls(filteredTasks.length, visibleTasks.length);
 }
 
 function syncActiveAgentTaskSelectionUi(): void {
@@ -8117,11 +8553,16 @@ async function updateAgentTaskInChat(task: AgentTask, logs: string[]): Promise<v
 
 async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
   const normalized = (prompt ?? "").trim();
-  const attachmentsToSend = [...activeAttachments];
   if (!normalized) {
     setAgentStatus("Agent prompt required.", "err");
     return false;
   }
+  const targetReady = await ensureAgentTargetSelectionBeforeStart(normalized);
+  if (!targetReady) {
+    return false;
+  }
+  const attachmentsToSend = [...activeAttachments];
+  const targetPath = getRequestedAgentTargetPath();
 
   try {
     const warning = getAgentApprovalWarning(normalized);
@@ -8129,9 +8570,14 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
       setAgentStatus("Agent task cancelled before start.");
       return false;
     }
+    const targetInput = getAgentTargetInput();
+    if (targetInput) {
+      targetInput.value = targetPath;
+    }
     const task = await window.api.agent.startTask({
       prompt: normalized,
-      attachments: attachmentsToSend
+      attachments: attachmentsToSend,
+      targetPath: targetPath || undefined
     });
     activeAgentRestoreState = null;
     activeAgentTaskId = task.id;
@@ -8201,10 +8647,20 @@ async function restartAgentTaskPrompt(taskId: string, mode: AgentTaskRestartMode
 
 function setupAgentControls(): void {
   const agentInput = $("agent-prompt-input") as HTMLTextAreaElement;
+  const agentTargetInput = $("agent-target-input") as HTMLInputElement;
   agentInput.addEventListener("input", () => {
     if (currentInteractionMode === "agent") {
       syncComposerAgentPrompts("agent");
     }
+  });
+  agentInput.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void sendMessage();
+    }
+  });
+  agentTargetInput.addEventListener("blur", () => {
+    agentTargetInput.value = getRequestedAgentTargetPath();
   });
 
   $("agent-paste-btn").addEventListener("click", async () => {
@@ -8223,6 +8679,15 @@ function setupAgentControls(): void {
     }
   });
 
+  $("agent-target-pick-btn").addEventListener("click", () => {
+    void pickAgentTargetFolder();
+  });
+
+  $("agent-target-clear-btn").addEventListener("click", () => {
+    agentTargetInput.value = "";
+    agentTargetInput.focus();
+  });
+
   $("agent-start-btn").addEventListener("click", async () => {
     const prompt = agentInput.value.trim();
     if (!prompt) {
@@ -8232,7 +8697,10 @@ function setupAgentControls(): void {
     }
 
     syncComposerAgentPrompts("agent");
-    await startAgentTaskPrompt(prompt);
+    const started = await startAgentTaskPrompt(prompt);
+    if (started) {
+      clearAgentPrompts();
+    }
   });
 
   $("agent-stop-btn").addEventListener("click", async () => {
@@ -8451,8 +8919,15 @@ function setupAgentControls(): void {
     button.addEventListener("click", () => {
       const nextFilter = (button.dataset["agentHistoryFilter"] ?? "all") as "all" | AgentTask["status"];
       agentHistoryFilter = nextFilter;
+      agentHistoryExpanded = false;
+      syncAgentHistoryPanelWidth();
       renderAgentHistory(cachedAgentTasks);
     });
+  });
+  $("agent-history-toggle-btn").addEventListener("click", () => {
+    agentHistoryExpanded = !agentHistoryExpanded;
+    syncAgentHistoryPanelWidth();
+    renderAgentHistory(cachedAgentTasks);
   });
   $("agent-snapshots").addEventListener("click", (event: Event) => {
     const target = event.target as HTMLElement | null;
@@ -8526,6 +9001,11 @@ async function openManagedPreview(targetPath: string, preferredUrl = "", auto = 
 }
 
 function openPanel(tab: string) {
+  if (tab !== "agent" && agentHistoryCollapsedPanelWidth !== null) {
+    applyRightPanelWidth(agentHistoryCollapsedPanelWidth);
+    agentHistoryCollapsedPanelWidth = null;
+  }
+
   rightPanelTab = tab;
   const panel = $("right-panel");
   panel.style.display = "flex";
@@ -8558,6 +9038,7 @@ function openPanel(tab: string) {
     void refreshMcpStatus();
   }
   if (tab === "agent") {
+    syncAgentHistoryPanelWidth();
     void refreshAgentTask(true);
   }
 }
@@ -9610,12 +10091,17 @@ function setupKeyboardShortcuts() {
       const imageGenerationModal = document.getElementById("image-generation-modal");
       const imageHistoryModal = document.getElementById("image-history-modal");
       const imagePreviewModal = document.getElementById("image-preview-modal");
+      const agentTargetModal = document.getElementById("agent-target-modal");
       const chatProviderMenu = document.getElementById("chat-provider-menu");
       const headerToolsMenu = document.getElementById("header-tools-menu");
       const codePreviewModal = document.getElementById("code-preview-modal");
       const statsModal = document.getElementById("stats-modal");
       if (activeChatActionMenuId) {
         closeChatItemMenus();
+        return;
+      }
+      if (agentTargetModal instanceof HTMLElement && agentTargetModal.style.display !== "none") {
+        closeAgentTargetPromptModal(null);
         return;
       }
       if (previewWorkspace instanceof HTMLElement && previewWorkspace.style.display !== "none") {
@@ -9847,6 +10333,7 @@ async function init() {
         try {
           const res = await window.api.claude.stop();
           claudeSessionRunning = Boolean(res.running);
+          claudeSessionChatId = null;
           finalizeClaudeAssistantMessage(true);
           setStreamingUi(false);
           setClaudeStatus(res.ok ? "Stopped" : res.message, res.ok ? "" : "err");
@@ -9991,6 +10478,21 @@ async function init() {
   $("snapshot-restore-modal").addEventListener("click", (event: Event) => {
     if (event.target === event.currentTarget) closeSnapshotRestoreModal();
   });
+  $("agent-target-modal-suggest-btn").onclick = () => {
+    closeAgentTargetPromptModal("suggested");
+  };
+  $("agent-target-modal-choose-btn").onclick = () => {
+    closeAgentTargetPromptModal("choose");
+  };
+  $("agent-target-modal-skip-btn").onclick = () => {
+    closeAgentTargetPromptModal("skip");
+  };
+  $("agent-target-modal-cancel-btn").onclick = () => {
+    closeAgentTargetPromptModal(null);
+  };
+  $("agent-target-modal").addEventListener("click", (event: Event) => {
+    if (event.target === event.currentTarget) closeAgentTargetPromptModal(null);
+  });
   $("code-preview-close-btn").onclick = closeCodePreview;
   $("code-preview-modal").addEventListener("click", (event: Event) => {
     if (event.target === event.currentTarget) closeCodePreview();
@@ -10027,6 +10529,30 @@ async function init() {
 
   // Settings
   $("save-settings-btn").onclick = saveSettings;
+  const claudeChatFsRootsInput = document.getElementById("claude-chat-fs-roots");
+  claudeChatFsRootsInput?.addEventListener("input", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  const claudeChatFsWriteToggle = document.getElementById("claude-chat-fs-write-toggle");
+  claudeChatFsWriteToggle?.addEventListener("change", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  $("claude-chat-fs-add-btn").addEventListener("click", async () => {
+    const picked = await window.api.attachments.pickWritableRoots();
+    const nextRoots = normalizeClaudeChatFilesystemRoots([
+      ...getClaudeChatFilesystemSettingsDraft().roots,
+      ...picked.map((item) => item.writableRoot ?? "").filter(Boolean)
+    ]);
+    renderClaudeChatFilesystemSettingsUi({
+      roots: nextRoots,
+      allowWrite: getClaudeChatFilesystemSettingsDraft().allowWrite
+    });
+    showToast(nextRoots.length > 0 ? "Claude chat folders updated. Save Settings dabao." : "No folders selected.", 2400);
+  });
+  $("claude-chat-fs-clear-btn").addEventListener("click", () => {
+    renderClaudeChatFilesystemSettingsUi({ roots: [], allowWrite: false });
+    showToast("Claude chat folders cleared. Save Settings dabao.", 2200);
+  });
   $("model-select").addEventListener("change", () => {
     void syncChatContextAfterUiChange();
   });

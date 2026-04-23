@@ -8,25 +8,51 @@
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: http: https: file:; connect-src 'self' http: https: ws: wss:; media-src 'self' data: blob: file:; frame-src 'self' http: https: file:; child-src 'self' http: https: file:; object-src 'none'; base-uri 'self'; form-action 'self';"
   />
   <title>Cipher Workspace</title>
-    <link rel="icon" type="image/png" href="./assets/cipher-ai-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="./assets/cipher-ai-icon.svg" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <div class="app">
-
-    <aside class="sidebar">
-      <div class="sidebar-header">
+    <header class="app-topbar-panel">
+      <div class="app-topbar-left">
         <div class="brand">
           <div class="brand-icon">
-            <img src="./assets/cipher-ai-icon.png" alt="Cipher logo" class="brand-icon-image" />
+            <img src="./assets/cipher-ai-icon.svg" alt="Cipher logo" class="brand-icon-image" />
           </div>
           <div class="brand-text">
-            <div class="cipher-logo">
+            <div class="cipher-logo" aria-label="Cipher Workspace">
               <span class="word">Cipher</span>
-              <span class="tm">&trade;</span>
-              <span class="tool">AI</span>
+              <span class="tm" aria-hidden="true">&trade;</span>
+              <span class="tool">Workspace</span>
             </div>
-            <span class="brand-motto">Cipher Workspace: Intelligent desktop work, with local control</span>
+            <span class="brand-motto">AI Workspace for Real Output</span>
+          </div>
+        </div>
+      </div>
+      <div id="app-topbar-controls" class="app-topbar-right"></div>
+    </header>
+
+    <div class="app-main-shell">
+
+    <aside class="sidebar">
+      <div
+        id="sidebar-resize-handle"
+        class="sidebar-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin="248"
+        aria-valuemax="420"
+        aria-valuenow="304"
+        tabindex="0"
+      ></div>
+      <div class="sidebar-header sidebar-mobile-header">
+        <div class="sidebar-header-actions">
+          <div class="panel-width-controls" aria-label="Sidebar width controls">
+            <button id="sidebar-width-smaller-btn" class="btn-ghost-sm" type="button" aria-label="Make sidebar narrower">-</button>
+            <span id="sidebar-width-label" class="panel-width-label">304px</span>
+            <button id="sidebar-width-larger-btn" class="btn-ghost-sm" type="button" aria-label="Make sidebar wider">+</button>
+            <button id="sidebar-width-reset-btn" class="btn-ghost-sm" type="button">Reset</button>
           </div>
         </div>
       </div>
@@ -45,34 +71,44 @@
     <main class="chat-area">
       <header class="chat-header">
         <div class="chat-header-left">
-          <div class="chat-title-stack">
-            <span class="chat-title-label">Chat Name</span>
-            <span id="chat-title-display" class="chat-title-display">Open a conversation</span>
+          <div class="chat-title-stack is-empty">
+            <span id="chat-title-display" class="chat-title-display"></span>
           </div>
-          <div class="chat-title-actions">
+          <div class="chat-title-actions" style="display:none">
             <button id="rename-btn" class="btn-plain" style="display:none">Rename</button>
             <button id="export-btn" class="btn-plain" style="display:none">Export</button>
             <button id="system-prompt-toggle-btn" class="btn-plain" style="display:none">System Prompt</button>
           </div>
         </div>
         <div class="chat-header-right">
-          <div class="header-action-group header-action-group-main">
-          <button id="stats-btn" class="btn-plain" type="button">Chat Status</button>
-          <button id="summarize-btn" class="btn-plain" type="button">Summarize</button>
-          <button id="raw-toggle-btn" class="btn-plain" type="button">Raw</button>
-          </div>
           <div class="header-action-group header-action-group-tools">
-          <button id="new-window-btn" class="btn-plain btn-new-window" type="button" title="Open a new Cipher Workspace window" aria-label="Open a new Cipher Workspace window">
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2.5 3.25A1.25 1.25 0 0 1 3.75 2h5.5A1.25 1.25 0 0 1 10.5 3.25v1.25H9V3.5H4v7h1v1.5H3.75A1.25 1.25 0 0 1 2.5 10.75v-7.5Z" />
-              <path d="M6.75 5.25A1.25 1.25 0 0 1 8 4h4.25A1.25 1.25 0 0 1 13.5 5.25v5.5A1.25 1.25 0 0 1 12.25 12H8A1.25 1.25 0 0 1 6.75 10.75v-5.5Z" />
+            <div class="header-tools-menu-shell">
+              <button
+                id="header-tools-menu-btn"
+                class="btn-plain header-tools-menu-btn"
+                type="button"
+                aria-haspopup="menu"
+                aria-controls="header-tools-menu"
+                aria-expanded="false"
+              >
+                Tools
+              </button>
+              <div id="header-tools-menu" class="header-tools-menu" role="menu" style="display:none">
+                <button id="stats-btn" class="btn-plain header-tools-menu-item" type="button" role="menuitem">Chat Status</button>
+                <button id="image-history-btn" class="btn-plain header-tools-menu-item" type="button" role="menuitem">Image History</button>
+                <button id="summarize-btn" class="btn-plain header-tools-menu-item" type="button" role="menuitem">Summarize</button>
+                <button id="raw-toggle-btn" class="btn-plain header-tools-menu-item" type="button" role="menuitem">Raw</button>
+              </div>
+            </div>
+            <button id="new-window-btn" class="btn-plain btn-new-window" type="button" title="Open a new Cipher Workspace window" aria-label="Open a new Cipher Workspace window">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2.5 3.25A1.25 1.25 0 0 1 3.75 2h5.5A1.25 1.25 0 0 1 10.5 3.25v1.25H9V3.5H4v7h1v1.5H3.75A1.25 1.25 0 0 1 2.5 10.75v-7.5Z" />
+                <path d="M6.75 5.25A1.25 1.25 0 0 1 8 4h4.25A1.25 1.25 0 0 1 13.5 5.25v5.5A1.25 1.25 0 0 1 12.25 12H8A1.25 1.25 0 0 1 6.75 10.75v-5.5Z" />
               <path d="M10.125 5.75v4.5M7.875 8h4.5" />
             </svg>
-            <span>New Window</span>
-          </button>
-          <button id="settings-toggle-btn" class="btn-plain" type="button">Settings</button>
-          <button id="router-toggle-btn" class="btn-plain" type="button">Router</button>
-          <button id="agent-toggle-btn" class="btn-plain" type="button">Agent</button>
+            <span class="btn-new-window-label">New Window</span>
+            </button>
+            <button id="settings-toggle-btn" class="btn-plain" type="button">Settings</button>
           </div>
           <div class="header-action-group header-action-group-status">
           <button id="theme-toggle-btn" class="btn-theme" title="Switch to light mode">
@@ -86,8 +122,7 @@
           </div>
           <div class="header-action-group header-action-group-version">
             <span class="header-build-pill">
-              <span class="header-build-label">Version</span>
-              <span class="header-build-value">1.1.0</span>
+              <span id="header-build-value" class="header-build-value">Cipher Workspace</span>
             </span>
           </div>
           <div class="header-action-group header-action-group-compare">
@@ -121,62 +156,156 @@
         <div class="empty-state">
           <div class="empty-icon">✨</div>
           <p>✨ Start a new conversation. Ask anything.</p>
-          <span><span class="empty-subtle-icon">⌘</span> Code, write, think with Cipher Workspace.</span>
+          <span><span class="empty-subtle-icon">⌘</span> Chat, build, and ship with Cipher Workspace.</span>
           <div class="empty-actions">
             <button class="btn-ghost empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>
             <button class="btn-ghost empty-action-btn" type="button" data-empty-action="template">Use a Template</button>
             <button class="btn-ghost empty-action-btn" type="button" data-empty-action="new-chat">Start Chat</button>
           </div>
-          <small class="empty-motto">Cipher Workspace: Intelligent desktop work, with local control</small>
+          <small class="empty-motto">AI Workspace for Real Output</small>
         </div>
         <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" style="display:none" title="Jump to latest message">Latest ↓</button>
       </section>
 
-      <footer class="composer">
-        <div id="templates-dropdown" class="templates-dropdown" style="display:none">
-          <div class="templates-header">
-            <span>Prompt Templates</span>
-            <button id="save-template-btn" class="btn-ghost-sm" type="button">Save Current</button>
+      <section id="image-studio" class="image-studio" style="display:none">
+        <div class="image-studio-shell">
+          <div class="image-studio-form">
+            <div class="image-studio-head">
+              <div class="image-studio-heading">
+                <div class="preview-kicker">Image Studio</div>
+                <h2 class="image-studio-title">Generate, review, and save images in one workspace.</h2>
+                <p class="image-studio-subtitle">Prompt, iterate, and keep your visual assets organized without leaving the canvas.</p>
+              </div>
+              <button id="image-studio-refresh-btn" class="btn-ghost-sm" type="button">Refresh History</button>
+            </div>
+            <div class="provider-mode-row image-studio-provider-row">
+              <button id="image-provider-openrouter-btn" class="btn-ghost-sm provider-mode-btn" type="button">OpenRouter</button>
+              <button id="image-provider-nvidia-btn" class="btn-ghost-sm provider-mode-btn" type="button">NVIDIA</button>
+              <button id="image-provider-comfyui-btn" class="btn-ghost-sm provider-mode-btn" type="button">ComfyUI Local</button>
+            </div>
+            <p id="image-studio-help" class="field-help">Use your configured cloud image provider here. Press Ctrl+Enter inside the prompt to generate.</p>
+            <label class="field-label" for="image-studio-prompt-input">Prompt</label>
+            <textarea
+              id="image-studio-prompt-input"
+              class="field-input image-studio-prompt"
+              rows="5"
+              placeholder="Describe the image you want to generate."
+              spellcheck="true"
+            ></textarea>
+            <div class="image-studio-grid">
+              <div>
+                <label class="field-label" for="image-studio-model-input">Model</label>
+                <input
+                  id="image-studio-model-input"
+                  class="field-input"
+                  type="text"
+                  list="image-generation-model-options"
+                  placeholder="black-forest-labs/flux.1-schnell"
+                />
+              </div>
+              <div>
+                <label class="field-label" for="image-studio-aspect-select">Aspect Ratio</label>
+                <select id="image-studio-aspect-select" class="field-input">
+                  <option value="1:1">1:1</option>
+                  <option value="2:1">2:1</option>
+                  <option value="16:9">16:9</option>
+                  <option value="21:9">21:9</option>
+                  <option value="9:16">9:16</option>
+                  <option value="1:2">1:2</option>
+                  <option value="4:3">4:3</option>
+                  <option value="3:2">3:2</option>
+                  <option value="2:3">2:3</option>
+                  <option value="4:5">4:5</option>
+                  <option value="5:4">5:4</option>
+                  <option value="3:4">3:4</option>
+                </select>
+              </div>
+            </div>
+            <div class="btn-row image-studio-actions">
+              <button id="image-studio-generate-btn" class="btn-primary" type="button">Generate Image</button>
+              <button id="image-studio-clear-btn" class="btn-ghost" type="button">Clear Prompt</button>
+            </div>
+            <p id="image-studio-status" class="field-help">Latest generated images appear below.</p>
           </div>
-          <div id="templates-help" class="field-help" style="padding:0 4px 10px 4px;">Save the current composer text as a reusable template, then click any template to load it.</div>
-          <div id="templates-list" class="templates-list"></div>
+
+          <div class="image-studio-results">
+            <div class="image-studio-results-head">
+              <div class="image-studio-results-heading">
+                <div class="preview-kicker image-studio-results-kicker">Gallery</div>
+                <h3 class="image-studio-results-title">Recent Results</h3>
+                <p id="image-studio-empty" class="field-help">No generated images in history yet.</p>
+              </div>
+            </div>
+            <div id="image-studio-history-list" class="image-history-list image-studio-history-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="composer">
+        <div class="composer-topline">
+          <div class="provider-switcher composer-primary-switcher" id="interaction-switcher">
+            <div class="interaction-chat-shell">
+              <button
+                id="interaction-chat-btn"
+                class="btn-provider-switch active interaction-chat-trigger"
+                type="button"
+                aria-haspopup="menu"
+                aria-controls="chat-provider-menu"
+                aria-expanded="false"
+              >
+                <span>Chat</span>
+                <span class="interaction-chat-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="chat-provider-menu" class="chat-provider-menu" role="menu" style="display:none">
+                <button id="chat-provider-openrouter-btn" class="chat-provider-menu-item" type="button" role="menuitem">OpenRouter</button>
+                <button id="chat-provider-nvidia-btn" class="chat-provider-menu-item" type="button" role="menuitem">NVIDIA</button>
+                <button id="chat-provider-ollama-btn" class="chat-provider-menu-item" type="button" role="menuitem">Ollama</button>
+                <button id="chat-provider-claude-btn" class="chat-provider-menu-item" type="button" role="menuitem">Claude Code</button>
+              </div>
+            </div>
+            <button id="interaction-agent-btn" class="btn-provider-switch" type="button">Agent</button>
+            <button id="generate-image-btn" class="btn-provider-switch" type="button">Image</button>
+          </div>
+          <details id="composer-advanced-shell" class="composer-advanced-shell">
+            <summary class="btn-plain composer-advanced-toggle" aria-label="Open composer tools">More</summary>
+            <div class="composer-advanced-menu">
+              <div class="provider-switcher" id="provider-switcher" style="display:none">
+                <button id="quick-ollama-btn" class="btn-provider-switch" type="button">Ollama</button>
+                <button id="quick-openrouter-btn" class="btn-provider-switch" type="button">OpenRouter</button>
+                <button id="quick-nvidia-btn" class="btn-provider-switch" type="button">NVIDIA</button>
+                <button id="quick-claude-btn" class="btn-provider-switch" type="button">Claude Code</button>
+              </div>
+              <div class="mode-switcher composer-mode-switcher" id="mode-switcher">
+                <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
+                <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
+                <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
+                <button id="mode-edit-btn" class="mode-btn mode-btn-save" data-mode="edit" type="button">Edit &amp; Save</button>
+              </div>
+            </div>
+          </details>
         </div>
         <div id="composer-attachments" class="composer-attachments" style="display:none"></div>
-        <div class="composer-controls-row">
-          <div class="provider-switcher" id="interaction-switcher">
-            <button id="interaction-chat-btn" class="btn-provider-switch active" type="button">Chat</button>
-            <button id="interaction-agent-btn" class="btn-provider-switch" type="button">Agent</button>
-          </div>
-          <div class="provider-switcher" id="provider-switcher">
-            <button id="quick-ollama-btn" class="btn-provider-switch" type="button">Ollama</button>
-            <button id="quick-openrouter-btn" class="btn-provider-switch" type="button">OpenRouter</button>
-            <button id="quick-claude-btn" class="btn-provider-switch" type="button">Claude Code</button>
-          </div>
-          <div class="mode-switcher composer-mode-switcher" id="mode-switcher">
-            <button id="mode-write-btn" class="mode-btn active" data-mode="write" type="button">Write</button>
-            <button id="mode-code-btn" class="mode-btn" data-mode="code" type="button">Code</button>
-            <button id="mode-think-btn" class="mode-btn" data-mode="think" type="button">Think</button>
-            <button id="mode-edit-btn" class="mode-btn mode-btn-save" data-mode="edit" type="button">Edit &amp; Save</button>
-          </div>
-          <div class="composer-tools-row">
-            <button id="templates-btn" class="btn-plain composer-tool-btn" type="button" title="Templates">Templates</button>
-            <button id="save-template-inline-btn" class="btn-plain composer-tool-btn" type="button" title="Save current text as a template">Save Template</button>
-            <button id="attach-btn" class="btn-plain composer-tool-btn btn-attach" type="button" title="Attach files or folders" aria-label="Attach files or folders">Attach</button>
-          </div>
-        </div>
         <div class="composer-inner">
           <textarea id="composer-input" placeholder="Message Cipher Workspace..." rows="1" spellcheck="true" autocorrect="on" autocapitalize="sentences"></textarea>
+          <div class="composer-input-actions">
+            <button id="attach-btn" class="btn-plain composer-inline-attach btn-attach" type="button" title="Attach files or folders" aria-label="Attach files or folders">
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M6 5.25v5.25a2 2 0 1 0 4 0V4.75a3 3 0 1 0-6 0v6.5a4 4 0 1 0 8 0V6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="sr-only">Attach</span>
+            </button>
               <button id="voice-btn" class="btn-icon" type="button" title="Local voice input" aria-label="Local voice input" style="display:none">
                 <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M8 10.5a2.5 2.5 0 0 0 2.5-2.5V5a2.5 2.5 0 1 0-5 0v3A2.5 2.5 0 0 0 8 10.5Z" stroke="currentColor" stroke-width="1.4"/>
                   <path d="M4.5 8.5a3.5 3.5 0 1 0 7 0M8 12.5V14M5.5 14h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
                 </svg>
               </button>
-          <button id="send-btn" class="btn-send">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M2 8L14 8M14 8L9 3M14 8L9 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
+            <button id="send-btn" class="btn-send">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M2 8L14 8M14 8L9 3M14 8L9 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="composer-hint">
           <span id="stream-status"></span>
@@ -218,9 +347,28 @@
     </aside>
 
     <aside id="right-panel" class="right-panel" style="display:none">
+      <div
+        id="panel-resize-handle"
+        class="panel-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize side panel"
+        aria-valuemin="320"
+        aria-valuemax="760"
+        aria-valuenow="356"
+        tabindex="0"
+      ></div>
       <div class="panel-topbar">
         <span id="panel-title" class="panel-title">Settings</span>
-        <button id="panel-close-btn" class="panel-close-btn" type="button" aria-label="Close panel">x</button>
+        <div class="panel-topbar-actions">
+          <div class="panel-width-controls" aria-label="Panel width controls">
+            <button id="panel-width-smaller-btn" class="btn-ghost-sm" type="button" aria-label="Make panel narrower">-</button>
+            <span id="panel-width-label" class="panel-width-label">356px</span>
+            <button id="panel-width-larger-btn" class="btn-ghost-sm" type="button" aria-label="Make panel wider">+</button>
+            <button id="panel-width-reset-btn" class="btn-ghost-sm" type="button">Reset</button>
+          </div>
+          <button id="panel-close-btn" class="panel-close-btn" type="button" aria-label="Close panel">x</button>
+        </div>
       </div>
       <div class="panel-tabs">
         <button class="panel-tab active" data-tab="settings">Settings</button>
@@ -241,9 +389,13 @@
           <label class="field-label">AI Provider</label>
           <div class="provider-mode-row">
             <button id="provider-openrouter-btn" class="btn-ghost-sm provider-mode-btn" type="button">OpenRouter API</button>
+            <button id="provider-nvidia-btn" class="btn-ghost-sm provider-mode-btn" type="button">NVIDIA API</button>
             <button id="provider-ollama-btn" class="btn-ghost-sm provider-mode-btn" type="button">Ollama Local</button>
           </div>
           <small id="provider-help-text" class="field-help">Choose how Cipher should send your requests.</small>
+        </div>
+        <div class="btn-row">
+          <button id="save-settings-btn" class="btn-primary">Save Settings</button>
         </div>
         <div class="panel-section local-agent-card settings-card settings-card-primary">
           <label class="field-label">Free Local Coding Agent</label>
@@ -258,58 +410,65 @@
           </div>
           <p id="local-agent-status" class="status-msg"></p>
         </div>
-        <div id="local-voice-settings" class="panel-section settings-card settings-card-primary">
-          <label class="field-label">Free Local Voice</label>
-          <div class="field-row" style="align-items:center;justify-content:space-between;">
-            <label for="local-voice-enabled-input" class="field-help" style="margin:0;">Enable local speech-to-text with faster-whisper</label>
-            <input id="local-voice-enabled-input" type="checkbox" />
+        <div class="panel-section settings-card">
+          <label class="field-label">Claude Chat Filesystem</label>
+          <p class="field-help">Approve specific PC folders for Claude chat mode. Chat mode can read, list, and search only inside these roots. Write access is optional and stays limited to the same roots.</p>
+          <textarea id="claude-chat-fs-roots" class="field-input" rows="4" placeholder="One approved folder path per line"></textarea>
+          <div class="btn-row">
+            <button id="claude-chat-fs-add-btn" class="btn-ghost" type="button">Add Folders</button>
+            <button id="claude-chat-fs-clear-btn" class="btn-ghost-sm" type="button">Clear</button>
           </div>
-          <label class="field-label" for="local-voice-model-select">Voice Model</label>
-          <select id="local-voice-model-select" class="field-input">
-            <option value="tiny">tiny</option>
-            <option value="base">base</option>
-            <option value="small">small</option>
-            <option value="medium">medium</option>
-          </select>
-          <small class="field-help">Local voice input is currently disabled in this build.</small>
+          <label class="toggle-field" for="claude-chat-fs-write-toggle">
+            <input id="claude-chat-fs-write-toggle" type="checkbox" />
+            <span>Allow Claude chat writes inside approved folders</span>
+          </label>
+          <small id="claude-chat-fs-status" class="field-help">Claude chat filesystem access is off.</small>
         </div>
+        <small id="simple-ui-note" class="field-help simple-ui-note">Simple UI keeps setup focused on provider, key, and default model. Switch back to Advanced UI for base URLs, route tuning, and diagnostics.</small>
         <div class="settings-group-label">Connection &amp; Models</div>
         <div id="openrouter-api-section" class="panel-section">
-          <label class="field-label">OpenRouter API Key (Optional for Ollama-only)</label>
+          <label id="provider-api-key-label" class="field-label">OpenRouter API Key (Optional for Ollama-only)</label>
           <div class="field-row">
             <input id="api-key-input" type="password" class="field-input" placeholder="Paste your OpenRouter key" />
             <button id="toggle-key-btn" class="btn-ghost-sm">Show</button>
           </div>
-          <small class="field-help">Required for OpenRouter models, summaries, and auto-title.</small>
+          <small id="provider-api-key-help" class="field-help">Required for OpenRouter models, summaries, and auto-title.</small>
         </div>
-        <div id="openrouter-base-section" class="panel-section">
-          <label class="field-label">OpenRouter Base URL</label>
+        <div id="openrouter-base-section" class="panel-section settings-advanced-only">
+          <label id="provider-base-url-label" class="field-label">OpenRouter Base URL</label>
           <input id="base-url-input" type="text" class="field-input" />
         </div>
-        <div id="ollama-settings" class="panel-section" style="display:none">
+        <div id="ollama-settings" class="panel-section settings-advanced-only" style="display:none">
           <label class="field-label">Ollama Base URL</label>
           <input id="ollama-base-url-input" type="text" class="field-input" placeholder="http://localhost:11434/v1" />
         </div>
-        <div id="ollama-models-section" class="panel-section" style="display:none">
+        <div id="ollama-models-section" class="panel-section settings-advanced-only" style="display:none">
           <div class="field-row" style="justify-content:space-between;align-items:center;">
             <label class="field-label">Ollama Models</label>
             <button id="refresh-ollama-models-btn" class="btn-ghost-sm" type="button">Refresh</button>
           </div>
           <div id="ollama-models-list" class="router-log" style="height:120px"></div>
         </div>
+        <div id="comfyui-settings-section" class="panel-section settings-advanced-only">
+          <label class="field-label">ComfyUI Base URL</label>
+          <input id="comfyui-base-url-input" type="text" class="field-input" placeholder="http://127.0.0.1:8000" />
+          <small class="field-help">Used by Image Studio when the image provider is set to ComfyUI Local. Cipher will also try port 8188 as a fallback.</small>
+        </div>
         <div class="panel-section">
           <label class="field-label">Default Model</label>
           <select id="default-model-select" class="field-input"></select>
-          <input id="default-model-input" type="text" class="field-input" placeholder="qwen/qwen-2.5-coder-32b-instruct or ollama/qwen3:8b" />
+          <div class="settings-advanced-inline">
+            <input id="default-model-input" type="text" class="field-input" placeholder="qwen/qwen-2.5-coder-32b-instruct or ollama/qwen3:8b" />
+          </div>
         </div>
-        <div id="advanced-models-section" class="panel-section">
+        <div id="advanced-models-section" class="panel-section settings-advanced-only">
           <div class="field-row" style="justify-content:space-between;align-items:center;">
             <label class="field-label">Available Models (one per line)</label>
             <button id="fill-models-btn" class="btn-ghost-sm" type="button">Use Recommended</button>
           </div>
           <textarea id="models-textarea" class="field-input" rows="6"></textarea>
         </div>
-        <div id="route-strategy-section" class="panel-section">
+        <div id="route-strategy-section" class="panel-section settings-advanced-only">
           <div class="field-row" style="justify-content:space-between;align-items:center;">
             <label class="field-label">Agent Route Strategy</label>
             <span class="route-strategy-kicker">Inspectable policy</span>
@@ -334,11 +493,24 @@
           </div>
           <div id="route-strategy-preview" class="route-strategy-preview"></div>
         </div>
+        <div id="model-health-section" class="panel-section settings-advanced-only">
+          <div class="field-row" style="justify-content:space-between;align-items:center;">
+            <label class="field-label">Model Health</label>
+            <button id="model-health-refresh-btn" class="btn-ghost-sm" type="button">Refresh</button>
+          </div>
+          <p class="field-help">See which configured models are actually working, which one is active right now, and which ones are failing or blacklisted.</p>
+          <div id="settings-model-health" class="settings-model-health"></div>
+        </div>
         <div class="btn-row">
-          <button id="save-settings-btn" class="btn-primary">Save Settings</button>
-          <button id="test-conn-btn" class="btn-ghost">Test OpenRouter</button>
+          <button id="test-conn-btn" class="btn-ghost">Test Cloud API</button>
         </div>
         <p id="settings-status" class="status-msg"></p>
+        <div class="settings-group-label settings-experimental-label">Experimental</div>
+        <div id="local-voice-settings" class="panel-section settings-card settings-card-muted settings-experimental-section">
+          <label class="field-label">Local Voice</label>
+          <p class="field-help">Voice input is not available in this build yet, so it stays out of the main setup path.</p>
+          <small class="field-help">When restored, it will use fully local speech-to-text rather than a cloud round-trip.</small>
+        </div>
       </div>
 
       <div class="panel-body" data-panel="router">
@@ -395,6 +567,17 @@
             rows="4"
             placeholder="Describe the coding task. The agent will inspect the workspace, verify the build, and try controlled fixes on failures."
           ></textarea>
+          <div class="field-row" style="align-items:center; gap:8px; flex-wrap:wrap;">
+            <input
+              id="agent-target-input"
+              type="text"
+              class="field-input"
+              placeholder="Optional target folder inside workspace, e.g. generated-apps/my-app"
+            />
+            <button id="agent-target-pick-btn" class="btn-ghost-sm" type="button">Choose Folder</button>
+            <button id="agent-target-clear-btn" class="btn-ghost-sm" type="button">Clear</button>
+          </div>
+          <small class="field-help">Optional. When set, the agent will create or update files in this workspace folder instead of choosing its own default location.</small>
           <div class="btn-row">
             <button id="agent-start-btn" class="btn-primary" type="button">Start Agent</button>
             <button id="agent-stop-btn" class="btn-ghost" type="button">Stop Agent</button>
@@ -414,6 +597,9 @@
             <button class="btn-ghost-sm" type="button" data-agent-history-filter="failed">Failed</button>
           </div>
           <div id="agent-history" class="agent-history-list"></div>
+          <div id="agent-history-controls" class="agent-history-controls" style="display:none">
+            <button id="agent-history-toggle-btn" class="btn-ghost-sm" type="button">Show More</button>
+          </div>
         </div>
         <div class="panel-section">
           <div class="field-row" style="justify-content:space-between; align-items:center;">
@@ -446,6 +632,7 @@
       </div>
 
     </aside>
+    </div>
   </div>
 
   <div id="rename-modal" class="modal-overlay" style="display:none">
@@ -520,6 +707,89 @@
     </div>
   </div>
 
+  <div id="image-history-modal" class="modal-overlay" style="display:none">
+    <div class="modal image-history-modal">
+      <div class="code-preview-header">
+        <p class="modal-title">Generated Images</p>
+        <div class="field-row">
+          <button id="image-history-refresh-btn" class="btn-ghost-sm" type="button">Refresh</button>
+          <button id="image-history-close-btn" class="btn-ghost-sm" type="button">Close</button>
+        </div>
+      </div>
+      <p class="field-help">Saved history stays inside Cipher so you can reopen, export, or delete generated assets later.</p>
+      <p id="image-history-empty" class="field-help">No generated images in history yet.</p>
+      <div id="image-history-list" class="image-history-list"></div>
+    </div>
+  </div>
+
+  <div id="image-preview-modal" class="modal-overlay" style="display:none">
+    <div class="modal image-preview-modal">
+      <div class="code-preview-header">
+        <div>
+          <p id="image-preview-title" class="modal-title">Image Preview</p>
+          <p id="image-preview-meta" class="field-help">Generated image</p>
+        </div>
+        <button id="image-preview-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <div class="image-preview-shell">
+        <img id="image-preview-image" class="image-preview-image" alt="Generated image preview" />
+      </div>
+    </div>
+  </div>
+
+  <div id="image-generation-modal" class="modal-overlay" style="display:none">
+    <div class="modal image-generation-modal">
+      <div class="code-preview-header">
+        <p class="modal-title">Generate Image</p>
+        <button id="image-generation-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <p id="image-generation-help" class="field-help">Hosted image generation uses OpenRouter. Press Ctrl+Enter to submit.</p>
+      <label class="field-label" for="image-generation-prompt-input">Prompt</label>
+      <textarea
+        id="image-generation-prompt-input"
+        class="field-input"
+        rows="5"
+        placeholder="Describe the image you want to generate."
+        spellcheck="true"
+      ></textarea>
+      <label class="field-label" for="image-generation-model-input">Model</label>
+      <input
+        id="image-generation-model-input"
+        class="field-input"
+        type="text"
+        list="image-generation-model-options"
+        placeholder="google/gemini-2.5-flash-image"
+      />
+      <datalist id="image-generation-model-options">
+        <option value="google/gemini-2.5-flash-image"></option>
+        <option value="google/gemini-3.1-flash-image-preview"></option>
+        <option value="black-forest-labs/flux.2-flex"></option>
+        <option value="black-forest-labs/flux.2-pro"></option>
+        <option value="black-forest-labs/flux.1-schnell"></option>
+        <option value="black-forest-labs/flux.1-dev"></option>
+      </datalist>
+      <label class="field-label" for="image-generation-aspect-select">Aspect Ratio</label>
+      <select id="image-generation-aspect-select" class="field-input">
+        <option value="1:1">1:1</option>
+        <option value="2:1">2:1</option>
+        <option value="16:9">16:9</option>
+        <option value="21:9">21:9</option>
+        <option value="9:16">9:16</option>
+        <option value="1:2">1:2</option>
+        <option value="4:3">4:3</option>
+        <option value="3:2">3:2</option>
+        <option value="2:3">2:3</option>
+        <option value="4:5">4:5</option>
+        <option value="5:4">5:4</option>
+        <option value="3:4">3:4</option>
+      </select>
+      <div class="btn-row">
+        <button id="image-generation-submit-btn" class="btn-primary" type="button">Generate</button>
+        <button id="image-generation-cancel-btn" class="btn-ghost" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="snapshot-restore-modal" class="modal-overlay" style="display:none">
     <div class="modal snapshot-restore-modal">
       <div class="code-preview-header">
@@ -569,9 +839,43 @@
           <strong>Use Cloud AI with OpenRouter</strong>
           <span>Best if you already have an API key and want quick access to hosted models.</span>
         </button>
+        <button id="onboarding-nvidia-btn" class="onboarding-option" type="button">
+          <strong>Use Cloud AI with NVIDIA</strong>
+          <span>Best if you want NVIDIA-hosted models for coding, reasoning, or long-context workflows.</span>
+        </button>
       </div>
       <div class="btn-row">
         <button id="onboarding-close-btn" class="btn-ghost" type="button">Skip for now</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="agent-target-modal" class="modal-overlay" style="display:none">
+    <div class="modal agent-target-modal">
+      <div class="onboarding-kicker">TARGET FOLDER</div>
+      <p class="modal-title">Choose where the new agent output should go</p>
+      <p class="field-help">This prompt looks like a new project or scaffold request. Set a target folder now, or continue with the default location.</p>
+      <div class="agent-target-suggestion-card">
+        <span class="agent-target-suggestion-label">Suggested folder</span>
+        <code id="agent-target-modal-suggestion" class="local-agent-workspace-path">generated-apps/agent-app</code>
+      </div>
+      <div class="onboarding-options">
+        <button id="agent-target-modal-suggest-btn" class="onboarding-option onboarding-option-recommended" type="button">
+          <span class="onboarding-badge">Recommended</span>
+          <strong>Use Suggested Folder</strong>
+          <span>Fill the target folder automatically and start the agent there.</span>
+        </button>
+        <button id="agent-target-modal-choose-btn" class="onboarding-option" type="button">
+          <strong>Choose Folder</strong>
+          <span>Pick a different folder inside the current workspace before the task starts.</span>
+        </button>
+        <button id="agent-target-modal-skip-btn" class="onboarding-option" type="button">
+          <strong>Continue Without Custom Folder</strong>
+          <span>Let the agent decide its default output path for this task.</span>
+        </button>
+      </div>
+      <div class="btn-row">
+        <button id="agent-target-modal-cancel-btn" class="btn-ghost" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -581,3 +885,4 @@
   <script src="./app.js"></script>
 </body>
 </html>
+

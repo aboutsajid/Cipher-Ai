@@ -22,6 +22,11 @@ export interface ChatContext {
   compareEnabled?: boolean;
 }
 
+export interface ClaudeChatFilesystemSettings {
+  roots: string[];
+  allowWrite: boolean;
+}
+
 export interface Chat {
   id: string;
   title: string;
@@ -55,6 +60,7 @@ export interface Settings {
   comfyuiBaseUrl?: string;
   localVoiceEnabled: boolean;
   localVoiceModel: string;
+  claudeChatFilesystem?: ClaudeChatFilesystemSettings;
   mcpServers: McpServerConfig[];
   routing: {
     default: string;
@@ -367,6 +373,7 @@ export interface AgentRouteDiagnostics {
 export interface AgentTaskRequest {
   prompt: string;
   attachments?: AttachmentPayload[];
+  targetPath?: string;
 }
 
 export interface AgentTaskOutput {

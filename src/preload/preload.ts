@@ -4,6 +4,7 @@ import type {
   AgentTaskRestartMode,
   AgentRouteDiagnostics,
   AgentSnapshotRestoreResult,
+  ClaudeChatFilesystemSettings,
   ChatContext,
   ClaudeManagedEditPermissions,
   GeneratedImageHistoryItem,
@@ -101,9 +102,11 @@ const api = {
       send: (
         prompt: string,
         options?: {
+          chatId?: string;
           attachments?: Array<{ name: string; type: "text" | "image"; content: string; mimeType?: string; sourcePath?: string }>;
           enabledTools?: string[];
           includeFullTextAttachments?: boolean;
+          filesystemAccess?: ClaudeChatFilesystemSettings;
         }
       ) => ipcRenderer.invoke("claude:send", prompt, options),
       inspectEdits: (

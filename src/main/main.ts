@@ -1,11 +1,13 @@
-import { app, BrowserWindow, ipcMain, Menu, shell, WebContents } from "electron";
-import { mkdirSync } from "node:fs";
+import { app, BrowserWindow, ipcMain, Menu, screen, shell, WebContents } from "electron";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { registerIpcHandlers } from "./ipc";
 import { ChatsStore } from "./services/chatsStore";
 import { SettingsStore } from "./services/settingsStore";
 import { CcrService } from "./services/ccrService";
 import { AgentTaskRunner } from "./services/agentTaskRunner";
+import { ImageGenerationService } from "./services/imageGenerationService";
+import { GeneratedImagesStore } from "./services/generatedImagesStore";
 import { getDebugLogPath, initDebugLogger, writeDebugLog } from "./services/debugLogger";
 import type { IpcChannel } from "../shared/types";
 
@@ -13,6 +15,8 @@ const workspaceWindows = new Set<BrowserWindow>();
 let settingsStore: SettingsStore | null = null;
 let chatsStore: ChatsStore | null = null;
 let ccrService: CcrService | null = null;
+let imageGenerationService: ImageGenerationService | null = null;
+let generatedImagesStore: GeneratedImagesStore | null = null;
 let agentTaskRunner: AgentTaskRunner | null = null;
 const APP_NAME = "Cipher Workspace";
 const APP_USER_MODEL_ID = "com.cipher.ai";
@@ -22,8 +26,34 @@ const GENERATED_DESKTOP_URL = (process.env["CIPHER_GENERATED_DESKTOP_URL"] ?? ""
 const GENERATED_DESKTOP_TITLE = (process.env["CIPHER_GENERATED_DESKTOP_TITLE"] ?? "").trim() || "Generated Desktop App";
 const GENERATED_DESKTOP_SHELL_ENABLED = GENERATED_DESKTOP_URL.length > 0;
 const GENERATED_DESKTOP_READY_TIMEOUT_MS = Number.parseInt(process.env["CIPHER_GENERATED_DESKTOP_READY_TIMEOUT_MS"] ?? "8000", 10);
+const OVERRIDE_USER_DATA_PATH = (process.env["CIPHER_USER_DATA_PATH"] ?? "").trim();
+const SINGLE_INSTANCE_DISABLED = (process.env["CIPHER_DISABLE_SINGLE_INSTANCE"] ?? "").trim() === "1";
 let startupSmokeCompleted = false;
 let startupSmokeTimer: NodeJS.Timeout | null = null;
+const DEFAULT_WORKSPACE_WINDOW_BOUNDS = {
+  width: 1680,
+  height: 1040
+};
+const DEFAULT_GENERATED_WINDOW_BOUNDS = {
+  width: 1280,
+  height: 860
+};
+const MIN_WORKSPACE_WINDOW_BOUNDS = {
+  width: 1280,
+  height: 780
+};
+const MIN_GENERATED_WINDOW_BOUNDS = {
+  width: 980,
+  height: 720
+};
+
+interface StoredWorkspaceWindowState {
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  isMaximized?: boolean;
+}
 
 if (STARTUP_SMOKE_ENABLED) {
   app.disableHardwareAcceleration();
@@ -61,8 +91,94 @@ function resolveAgentWorkspaceRoot(): string {
   return root;
 }
 
+function resolveClaudeChatWorkingDirectory(userDataPath: string): string {
+  const configured = (process.env["CIPHER_CLAUDE_CHAT_CWD"] ?? "").trim();
+  const root = configured
+    ? resolve(configured)
+    : join(userDataPath, "cipher-workspace", "claude-chat-neutral");
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function resolveWorkspaceWindowStatePath(userDataPath: string): string {
+  const stateDir = join(userDataPath, "cipher-workspace");
+  mkdirSync(stateDir, { recursive: true });
+  return join(stateDir, "workspace-window-state.json");
+}
+
+function clampWindowDimension(value: unknown, fallback: number, min: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.round(parsed));
+}
+
+function parseWorkspaceWindowState(raw: unknown): StoredWorkspaceWindowState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Record<string, unknown>;
+  const width = clampWindowDimension(candidate.width, DEFAULT_WORKSPACE_WINDOW_BOUNDS.width, MIN_WORKSPACE_WINDOW_BOUNDS.width);
+  const height = clampWindowDimension(candidate.height, DEFAULT_WORKSPACE_WINDOW_BOUNDS.height, MIN_WORKSPACE_WINDOW_BOUNDS.height);
+  const x = Number(candidate.x);
+  const y = Number(candidate.y);
+  return {
+    width,
+    height,
+    x: Number.isFinite(x) ? Math.round(x) : undefined,
+    y: Number.isFinite(y) ? Math.round(y) : undefined,
+    isMaximized: candidate.isMaximized === true
+  };
+}
+
+function isVisibleWindowState(state: StoredWorkspaceWindowState): boolean {
+  if (!Number.isFinite(state.x) || !Number.isFinite(state.y)) return false;
+  const area = { x: state.x!, y: state.y!, width: state.width, height: state.height };
+  const display = screen.getDisplayMatching(area);
+  const workArea = display.workArea;
+  return area.x < workArea.x + workArea.width
+    && area.x + area.width > workArea.x
+    && area.y < workArea.y + workArea.height
+    && area.y + area.height > workArea.y;
+}
+
+function loadWorkspaceWindowState(userDataPath: string): StoredWorkspaceWindowState | null {
+  try {
+    const filePath = resolveWorkspaceWindowStatePath(userDataPath);
+    return parseWorkspaceWindowState(JSON.parse(readFileSync(filePath, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function persistWorkspaceWindowState(window: BrowserWindow, userDataPath: string): void {
+  if (window.isDestroyed()) return;
+  const bounds = window.isMaximized() || window.isMinimized()
+    ? window.getNormalBounds()
+    : window.getBounds();
+  const state: StoredWorkspaceWindowState = {
+    width: clampWindowDimension(bounds.width, DEFAULT_WORKSPACE_WINDOW_BOUNDS.width, MIN_WORKSPACE_WINDOW_BOUNDS.width),
+    height: clampWindowDimension(bounds.height, DEFAULT_WORKSPACE_WINDOW_BOUNDS.height, MIN_WORKSPACE_WINDOW_BOUNDS.height),
+    x: Number.isFinite(bounds.x) ? Math.round(bounds.x) : undefined,
+    y: Number.isFinite(bounds.y) ? Math.round(bounds.y) : undefined,
+    isMaximized: window.isMaximized()
+  };
+  try {
+    writeFileSync(resolveWorkspaceWindowStatePath(userDataPath), JSON.stringify(state, null, 2), "utf8");
+  } catch (error) {
+    writeDebugLog("WINDOW", "failed to persist workspace window state", error);
+  }
+}
+
+function registerWorkspaceWindowStatePersistence(window: BrowserWindow, userDataPath: string): void {
+  const persist = () => persistWorkspaceWindowState(window, userDataPath);
+  window.on("resize", persist);
+  window.on("move", persist);
+  window.on("maximize", persist);
+  window.on("unmaximize", persist);
+  window.on("close", persist);
+}
+
 const IPC_CHANNELS: IpcChannel[] = [
   "app:workspacePath",
+  "app:getInfo",
   "app:newWindow",
   "app:openExternal",
   "app:openPreview",
@@ -76,6 +192,7 @@ const IPC_CHANNELS: IpcChannel[] = [
   "chat:import",
   "chat:appendMessage",
   "chat:updateMessage",
+  "chat:setContext",
   "chat:setSystemPrompt",
   "chat:summarize",
   "chat:generateTitle",
@@ -83,6 +200,10 @@ const IPC_CHANNELS: IpcChannel[] = [
   "chat:send",
   "chat:stop",
   "stats:get",
+  "images:generate",
+  "images:listHistory",
+  "images:save",
+  "images:deleteHistory",
   "attachments:pick",
   "attachments:pickWritableRoots",
   "templates:list",
@@ -105,6 +226,7 @@ const IPC_CHANNELS: IpcChannel[] = [
   "agent:getLogs",
   "agent:getRouteDiagnostics",
   "agent:startTask",
+  "agent:restartTask",
   "agent:stopTask",
   "agent:listSnapshots",
   "agent:getRestoreState",
@@ -132,10 +254,38 @@ function attachEditableContextMenu(window: BrowserWindow): void {
     const selection = (params.selectionText ?? "").trim();
     const hasSelection = selection.length > 0;
     const isEditable = Boolean(params.isEditable);
+    const misspelledWord = (params.misspelledWord ?? "").trim();
+    const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions.filter(Boolean) : [];
 
-    if (!isEditable && !hasSelection) return;
+    if (!isEditable && !hasSelection && !misspelledWord) return;
 
     const template: Electron.MenuItemConstructorOptions[] = [];
+    if (isEditable && misspelledWord) {
+      if (suggestions.length > 0) {
+        template.push(...suggestions.slice(0, 6).map((suggestion) => ({
+          label: suggestion,
+          click: () => {
+            window.webContents.replaceMisspelling(suggestion);
+          }
+        })));
+      } else {
+        template.push({
+          label: "No spelling suggestions",
+          enabled: false
+        });
+      }
+
+      template.push(
+        {
+          label: "Add to Dictionary",
+          click: () => {
+            window.webContents.session.addWordToSpellCheckerDictionary(misspelledWord);
+          }
+        },
+        { type: "separator" }
+      );
+    }
+
     if (isEditable) {
       template.push(
         { role: "undo" },
@@ -216,6 +366,10 @@ async function ensureGeneratedDesktopPreviewVisible(window: BrowserWindow, showW
 }
 
 async function createWindow(initialChatId?: string, startDraftChat = false): Promise<BrowserWindow> {
+  const savedWindowState = GENERATED_DESKTOP_SHELL_ENABLED ? null : loadWorkspaceWindowState(app.getPath("userData"));
+  const defaultBounds = GENERATED_DESKTOP_SHELL_ENABLED ? DEFAULT_GENERATED_WINDOW_BOUNDS : DEFAULT_WORKSPACE_WINDOW_BOUNDS;
+  const minBounds = GENERATED_DESKTOP_SHELL_ENABLED ? MIN_GENERATED_WINDOW_BOUNDS : MIN_WORKSPACE_WINDOW_BOUNDS;
+  const shouldUseSavedPosition = Boolean(savedWindowState && isVisibleWindowState(savedWindowState));
   const appIconPath = process.platform === "win32"
     ? (app.isPackaged
       ? join(process.resourcesPath, "assets", "cipher-ai-icon.ico")
@@ -223,12 +377,18 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
     : join(__dirname, "..", "renderer", "assets", "cipher-ai-icon.png");
 
   const window = new BrowserWindow({
-    width: GENERATED_DESKTOP_SHELL_ENABLED ? 1280 : 1680,
-    height: GENERATED_DESKTOP_SHELL_ENABLED ? 860 : 1040,
-    minWidth: GENERATED_DESKTOP_SHELL_ENABLED ? 980 : 1280,
-    minHeight: GENERATED_DESKTOP_SHELL_ENABLED ? 720 : 780,
+    width: savedWindowState?.width ?? defaultBounds.width,
+    height: savedWindowState?.height ?? defaultBounds.height,
+    minWidth: minBounds.width,
+    minHeight: minBounds.height,
     show: false,
-    center: true,
+    center: !shouldUseSavedPosition,
+    ...(shouldUseSavedPosition
+      ? {
+        x: savedWindowState!.x,
+        y: savedWindowState!.y
+      }
+      : {}),
     autoHideMenuBar: true,
     title: GENERATED_DESKTOP_SHELL_ENABLED ? GENERATED_DESKTOP_TITLE : "Cipher Workspace",
     icon: appIconPath,
@@ -245,6 +405,9 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
   });
 
   workspaceWindows.add(window);
+  if (!GENERATED_DESKTOP_SHELL_ENABLED) {
+    registerWorkspaceWindowStatePersistence(window, app.getPath("userData"));
+  }
 
   window.removeMenu();
   window.setMenuBarVisibility(false);
@@ -317,7 +480,9 @@ async function createWindow(initialChatId?: string, startDraftChat = false): Pro
     if (STARTUP_SMOKE_ENABLED) return;
     if (window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();
-    if (!GENERATED_DESKTOP_SHELL_ENABLED && !window.isMaximized()) window.maximize();
+    if (!GENERATED_DESKTOP_SHELL_ENABLED && savedWindowState?.isMaximized === true && !window.isMaximized()) {
+      window.maximize();
+    }
     if (!window.isVisible()) window.show();
     window.focus();
   };
@@ -395,7 +560,7 @@ async function createFreshChatWindow(): Promise<BrowserWindow> {
 }
 
 function registerIpcHandlersOnce(): void {
-  if (!settingsStore || !chatsStore || !ccrService || !agentTaskRunner) {
+  if (!settingsStore || !chatsStore || !ccrService || !imageGenerationService || !agentTaskRunner) {
     throw new Error("Services not initialized.");
   }
 
@@ -407,7 +572,9 @@ function registerIpcHandlersOnce(): void {
     settingsStore,
     chatsStore,
     ccrService,
+    imageGenerationService,
     agentTaskRunner,
+    claudeChatWorkingDirectory: resolveClaudeChatWorkingDirectory(app.getPath("userData")),
     createWindow,
     getWindowForSender,
     getPrimaryWindow,
@@ -434,9 +601,9 @@ async function bootstrap(): Promise<boolean> {
     : GENERATED_DESKTOP_SHELL_ENABLED
       ? join(app.getPath("appData"), APP_NAME, "generated-desktop-shell")
       : join(app.getPath("appData"), APP_NAME);
-  app.setPath("userData", userDataPath);
+  app.setPath("userData", OVERRIDE_USER_DATA_PATH || userDataPath);
 
-  if (!STARTUP_SMOKE_ENABLED && !GENERATED_DESKTOP_SHELL_ENABLED) {
+  if (!STARTUP_SMOKE_ENABLED && !GENERATED_DESKTOP_SHELL_ENABLED && !SINGLE_INSTANCE_DISABLED) {
     const hasSingleInstanceLock = app.requestSingleInstanceLock();
     if (!hasSingleInstanceLock) {
       return false;
@@ -464,11 +631,14 @@ async function bootstrap(): Promise<boolean> {
   writeDebugLog("WORKSPACE", `workspace root: ${workspaceRoot}`);
   settingsStore = new SettingsStore(resolvedUserDataPath);
   chatsStore = new ChatsStore(resolvedUserDataPath);
+  generatedImagesStore = new GeneratedImagesStore(resolvedUserDataPath);
   ccrService = new CcrService(settingsStore);
+  imageGenerationService = new ImageGenerationService(settingsStore, generatedImagesStore);
   agentTaskRunner = new AgentTaskRunner(workspaceRoot, settingsStore, ccrService);
 
   await settingsStore.init();
   await chatsStore.init();
+  await generatedImagesStore.init();
 
   registerIpcHandlersOnce();
   await createWindow();

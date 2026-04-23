@@ -15,10 +15,12 @@ import {
 } from "./settingsSupport";
 import { probeOllamaInstalled, ClaudeSessionManager } from "./claudeSupport";
 import type { CcrService } from "./services/ccrService";
+import type { ChatsStore } from "./services/chatsStore";
 import type { ImageGenerationService } from "./services/imageGenerationService";
 import type { SettingsStore } from "./services/settingsStore";
 import type {
   AttachmentPayload,
+  ClaudeChatFilesystemSettings,
   ClaudeManagedEdit,
   ClaudeManagedEditPermissions,
   ImageGenerationRequest,
@@ -27,13 +29,16 @@ import type {
 } from "../shared/types";
 
 interface ClaudeSendOptions {
+  chatId?: string;
   attachments?: AttachmentPayload[];
   enabledTools?: string[];
   includeFullTextAttachments?: boolean;
+  filesystemAccess?: ClaudeChatFilesystemSettings;
 }
 
 interface Deps {
   settingsStore: SettingsStore;
+  chatsStore: ChatsStore;
   ccrService: CcrService;
   imageGenerationService: ImageGenerationService;
   mcpRuntimeManager: McpRuntimeManager;
@@ -46,6 +51,7 @@ interface Deps {
 export function registerToolingIpcHandlers(deps: Deps): void {
   const {
     settingsStore,
+    chatsStore,
     ccrService,
     imageGenerationService,
     mcpRuntimeManager,
@@ -174,7 +180,21 @@ export function registerToolingIpcHandlers(deps: Deps): void {
 
   ipcMain.removeHandler("claude:send");
   ipcMain.handle("claude:send", async (_e, prompt: string, options?: ClaudeSendOptions) => {
-    return sendClaudePrompt(claudeSessionManager, prompt, options);
+    const normalizedChatId = (options?.chatId ?? "").trim();
+    const chat = normalizedChatId ? chatsStore.get(normalizedChatId) : undefined;
+    return sendClaudePrompt(claudeSessionManager, prompt, {
+      ...options,
+      filesystemAccess: options?.filesystemAccess ?? settingsStore.get().claudeChatFilesystem,
+      conversation: chat
+        ? {
+          systemPrompt: chat.systemPrompt,
+          history: chat.messages.map((message) => ({
+            role: message.role,
+            content: message.content
+          }))
+        }
+        : undefined
+    });
   });
 
   ipcMain.removeHandler("claude:applyEdits");

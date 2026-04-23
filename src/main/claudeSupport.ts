@@ -1,15 +1,20 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { buildClaudeMessageContent } from "./attachmentSupport";
-import type { AttachmentPayload } from "../shared/types";
+import { executeClaudeChatFilesystemTool, type ClaudeChatFilesystemToolCall } from "./claudeChatFilesystem";
+import type { AttachmentPayload, ClaudeChatFilesystemSettings } from "../shared/types";
 
 interface ClaudeRuntime {
   process: ChildProcess;
   stdoutBuffer: string;
   awaitingResult: boolean;
+  assistantTextBuffer: string;
+  pendingPromptOptions: ClaudePromptOptions;
+  toolCallCount: number;
 }
 
 interface ClaudePromptOptions {
   includeFullTextAttachments?: boolean;
+  filesystemAccess?: ClaudeChatFilesystemSettings;
 }
 
 type ClaudeOutputStream = "stdout" | "stderr" | "system";
@@ -19,6 +24,7 @@ interface ClaudeSessionManagerDeps {
   spawnCommand?: typeof spawn;
   model?: string;
   platform?: NodeJS.Platform;
+  workingDirectory?: string;
 }
 
 export interface ClaudeSessionStatus {
@@ -34,6 +40,7 @@ export interface ClaudeSessionResult extends ClaudeSessionStatus {
 
 const DEFAULT_CLAUDE_MODEL = "minimax-m2.5:cloud";
 const CLAUDE_STREAM_SUFFIX = ["--", "-p", "--bare", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
+const MAX_CLAUDE_TOOL_CALLS = 8;
 
 export async function probeOllamaInstalled(
   spawnCommand: typeof spawn = spawn,
@@ -75,14 +82,16 @@ export class ClaudeSessionManager {
   private readonly spawnCommand: typeof spawn;
   private readonly model: string;
   private readonly platform: NodeJS.Platform;
+  private readonly workingDirectory: string | undefined;
 
   constructor(
     private readonly sendToRenderer: ClaudeRendererSender,
     deps: ClaudeSessionManagerDeps = {}
-  ) {
+    ) {
     this.spawnCommand = deps.spawnCommand ?? spawn;
     this.model = deps.model ?? DEFAULT_CLAUDE_MODEL;
     this.platform = deps.platform ?? process.platform;
+    this.workingDirectory = deps.workingDirectory?.trim() || undefined;
   }
 
   status(): ClaudeSessionStatus {
@@ -133,9 +142,10 @@ export class ClaudeSessionManager {
 
     try {
       const content = buildClaudeMessageContent(prompt, attachments, enabledTools, options);
-      const packet = JSON.stringify({ type: "user", message: { role: "user", content } });
-      runtime.process.stdin.write(`${packet}\n`);
-      runtime.awaitingResult = true;
+      runtime.assistantTextBuffer = "";
+      runtime.pendingPromptOptions = { ...options };
+      runtime.toolCallCount = 0;
+      this.sendUserPacket(runtime, content);
       return this.buildResult(true, "Prompt sent.");
     } catch (err) {
       runtime.awaitingResult = false;
@@ -180,6 +190,93 @@ export class ClaudeSessionManager {
     this.sendToRenderer("claude:error", normalized);
   }
 
+  private extractJsonObjectCandidate(input: string): string | null {
+    const trimmed = (input ?? "").trim();
+    if (!trimmed) return null;
+    const fenceMatch = trimmed.match(/^```json\s*([\s\S]*?)```$/i) ?? trimmed.match(/^```\s*([\s\S]*?)```$/i);
+    const candidate = (fenceMatch?.[1] ?? trimmed).trim();
+    if (!candidate.startsWith("{") || !candidate.endsWith("}")) return null;
+    return candidate;
+  }
+
+  private parseFilesystemToolCall(input: string): ClaudeChatFilesystemToolCall | null {
+    const candidate = this.extractJsonObjectCandidate(input);
+    if (!candidate) return null;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      try {
+        const repaired = candidate.replace(
+          /"path"\s*:\s*"([^"]*)"/g,
+          (_match, rawPath: string) => `"path":"${rawPath.replace(/\\/g, "\\\\")}"`
+        );
+        parsed = JSON.parse(repaired);
+      } catch {
+        return null;
+      }
+    }
+
+    if (!parsed || typeof parsed !== "object") return null;
+    const record = parsed as { tool?: unknown; args?: unknown };
+    const tool = typeof record.tool === "string" ? record.tool.trim() : "";
+    if (!["list_files", "read_file", "search_files", "write_file"].includes(tool)) return null;
+    return {
+      tool: tool as ClaudeChatFilesystemToolCall["tool"],
+      args: record.args && typeof record.args === "object" ? record.args as Record<string, unknown> : {}
+    };
+  }
+
+  private sendUserPacket(runtime: ClaudeRuntime, content: unknown): void {
+    if (!runtime.process.stdin || runtime.process.stdin.writableEnded) {
+      throw new Error("Claude Code session is not connected.");
+    }
+    const packet = JSON.stringify({ type: "user", message: { role: "user", content } });
+    runtime.process.stdin.write(`${packet}\n`);
+    runtime.awaitingResult = true;
+  }
+
+  private async handleFilesystemToolCall(runtime: ClaudeRuntime, toolCall: ClaudeChatFilesystemToolCall): Promise<boolean> {
+    const filesystemAccess = runtime.pendingPromptOptions.filesystemAccess;
+    if (!filesystemAccess || !Array.isArray(filesystemAccess.roots) || filesystemAccess.roots.length === 0) {
+      this.emitError("Claude chat filesystem access is not configured.");
+      return false;
+    }
+    if (runtime.toolCallCount >= MAX_CLAUDE_TOOL_CALLS) {
+      this.emitError("Claude chat filesystem tool limit reached for this turn.");
+      return false;
+    }
+
+    runtime.toolCallCount += 1;
+    try {
+      const result = await executeClaudeChatFilesystemTool(toolCall, filesystemAccess);
+      this.sendUserPacket(
+        runtime,
+        [
+          `[Claude tool result] ${toolCall.tool}`,
+          JSON.stringify(result, null, 2),
+          "Continue the same task.",
+          "If you need another filesystem action, reply with the next strict JSON tool call only.",
+          "Otherwise reply with the final answer for the user."
+        ].join("\n\n")
+      );
+      return true;
+    } catch (err) {
+      this.sendUserPacket(
+        runtime,
+        [
+          `[Claude tool error] ${toolCall.tool}`,
+          err instanceof Error ? err.message : "Unknown filesystem tool error.",
+          "Continue the same task.",
+          "If another filesystem action is needed, reply with the next strict JSON tool call only.",
+          "Otherwise explain the limitation to the user."
+        ].join("\n\n")
+      );
+      return true;
+    }
+  }
+
   private isModelUnavailableLine(input: string): boolean {
     const lower = input.toLowerCase();
     return (lower.includes("model") && lower.includes("not found"))
@@ -187,7 +284,7 @@ export class ClaudeSessionManager {
       || lower.includes("no such model");
   }
 
-  private parseStreamLine(runtime: ClaudeRuntime, rawLine: string): void {
+  private async parseStreamLine(runtime: ClaudeRuntime, rawLine: string): Promise<void> {
     const line = rawLine.trim();
     if (!line) return;
 
@@ -208,20 +305,43 @@ export class ClaudeSessionManager {
       if (!message || typeof message !== "object") return;
       const content = (message as Record<string, unknown>).content;
       if (!Array.isArray(content)) return;
+      const collected: string[] = [];
       for (const part of content) {
         if (!part || typeof part !== "object") continue;
         const typed = part as Record<string, unknown>;
         if (typed.type !== "text") continue;
         const text = typeof typed.text === "string" ? typed.text.trim() : "";
-        if (text) this.emitOutput(text, "stdout");
+        if (text) collected.push(text);
+      }
+      if (collected.length > 0) {
+        runtime.assistantTextBuffer = [runtime.assistantTextBuffer, collected.join("\n")].filter(Boolean).join("\n");
       }
       return;
     }
 
     if (packetType === "result") {
-      runtime.awaitingResult = false;
       const resultText = typeof packet.result === "string" ? packet.result.trim() : "";
-      if (packet.is_error === true && resultText) this.emitOutput(resultText, "stderr");
+      const assistantText = runtime.assistantTextBuffer.trim();
+      runtime.assistantTextBuffer = "";
+
+      if (packet.is_error === true) {
+        runtime.awaitingResult = false;
+        runtime.toolCallCount = 0;
+        if (assistantText) this.emitOutput(assistantText, "stderr");
+        if (resultText) this.emitOutput(resultText, "stderr");
+        this.sendToRenderer("claude:exit", { code: 0, signal: null });
+        return;
+      }
+
+      const toolCall = this.parseFilesystemToolCall(assistantText);
+      if (toolCall) {
+        const continued = await this.handleFilesystemToolCall(runtime, toolCall);
+        if (continued) return;
+      }
+
+      runtime.awaitingResult = false;
+      runtime.toolCallCount = 0;
+      if (assistantText) this.emitOutput(assistantText, "stdout");
       this.sendToRenderer("claude:exit", { code: 0, signal: null });
     }
   }
@@ -234,6 +354,7 @@ export class ClaudeSessionManager {
     let proc: ChildProcess;
     try {
       proc = this.spawnCommand("ollama", ["launch", "claude", "--model", this.model, ...CLAUDE_STREAM_SUFFIX], {
+        cwd: this.workingDirectory,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true
       });
@@ -243,14 +364,23 @@ export class ClaudeSessionManager {
       return this.buildResult(false, `Failed to start Claude Code: ${message}`);
     }
 
-    const runtime: ClaudeRuntime = { process: proc, stdoutBuffer: "", awaitingResult: false };
+    const runtime: ClaudeRuntime = {
+      process: proc,
+      stdoutBuffer: "",
+      awaitingResult: false,
+      assistantTextBuffer: "",
+      pendingPromptOptions: {},
+      toolCallCount: 0
+    };
     this.runtime = runtime;
 
-    proc.stdout?.on("data", (chunk: Buffer) => {
+    proc.stdout?.on("data", async (chunk: Buffer) => {
       runtime.stdoutBuffer += chunk.toString().replace(/\r/g, "");
       const lines = runtime.stdoutBuffer.split("\n");
       runtime.stdoutBuffer = lines.pop() ?? "";
-      for (const line of lines) this.parseStreamLine(runtime, line);
+      for (const line of lines) {
+        await this.parseStreamLine(runtime, line);
+      }
     });
 
     proc.stderr?.on("data", (chunk: Buffer) => {
@@ -270,9 +400,11 @@ export class ClaudeSessionManager {
       this.sendToRenderer("claude:exit", { code: null, signal: "error" });
     });
 
-    proc.once("exit", (code, signal) => {
-      if (runtime.stdoutBuffer.trim()) this.parseStreamLine(runtime, runtime.stdoutBuffer);
+    proc.once("exit", async (code, signal) => {
+      if (runtime.stdoutBuffer.trim()) await this.parseStreamLine(runtime, runtime.stdoutBuffer);
       runtime.stdoutBuffer = "";
+      runtime.assistantTextBuffer = "";
+      runtime.toolCallCount = 0;
       if (this.runtime?.process === proc) this.runtime = null;
       const stoppedByUser = signal === "SIGTERM";
       if (!stoppedByUser) {
@@ -307,13 +439,13 @@ export class ClaudeSessionManager {
       }
 
       if (this.platform === "win32") {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolvePromise) => {
           const killer = this.spawnCommand("taskkill", ["/pid", String(pid), "/f", "/t"], {
             stdio: "ignore",
             windowsHide: true
           });
-          killer.once("error", () => resolve());
-          killer.once("exit", () => resolve());
+          killer.once("error", () => resolvePromise());
+          killer.once("exit", () => resolvePromise());
         });
         return;
       }

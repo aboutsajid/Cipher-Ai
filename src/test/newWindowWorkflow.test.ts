@@ -46,3 +46,33 @@ test("renderer can open an unsaved draft chat from the window query string", () 
   assert.match(rendererSource, /new URLSearchParams\(window\.location\.search\)\.get\("draftChat"\)/);
   assert.match(rendererSource, /openDraftChat\(\);/);
 });
+
+test("renderer keeps Claude chat output in exact plain-text mode and binds Claude sessions to a chat id", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+
+  assert.match(rendererSource, /function shouldRenderMessageAsPlainText\(msg: Message \| undefined\): boolean/);
+  assert.match(rendererSource, /msg\.model === CLAUDE_MODEL_LABEL/);
+  assert.match(rendererSource, /contentEl\.dataset\["renderMode"\] = shouldRenderMessageAsPlainText\(message\) \? "plain" : "markdown"/);
+  assert.match(rendererSource, /const ready = await ensureClaudeChatSessionReady\(chatId\);/);
+  assert.match(rendererSource, /window\.api\.claude\.send\(claudePrompt, \{\s*chatId,/);
+});
+
+test("renderer preserves Claude system notices and applies sparse-chat density state", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+
+  assert.match(rendererSource, /role: "system"/);
+  assert.match(rendererSource, /metadata:\s*\{\s*systemNotice: true\s*\}/);
+  assert.match(rendererSource, /renderedMessages = \[\.\.\.chat\.messages\];/);
+  assert.match(rendererSource, /function updateMessageDensityState\(\): void/);
+  assert.match(rendererSource, /container\.classList\.toggle\("messages-sparse", sparseConversation\)/);
+});
+
+test("main window restores saved bounds and no longer force-maximizes on every launch", () => {
+  const mainSource = readProjectFile("src/main/main.ts");
+
+  assert.match(mainSource, /function loadWorkspaceWindowState\(userDataPath: string\): StoredWorkspaceWindowState \| null/);
+  assert.match(mainSource, /function registerWorkspaceWindowStatePersistence\(window: BrowserWindow, userDataPath: string\): void/);
+  assert.match(mainSource, /const savedWindowState = GENERATED_DESKTOP_SHELL_ENABLED \? null : loadWorkspaceWindowState\(app\.getPath\("userData"\)\);/);
+  assert.match(mainSource, /if \(!GENERATED_DESKTOP_SHELL_ENABLED && savedWindowState\?\.isMaximized === true && !window\.isMaximized\(\)\) \{\s*window\.maximize\(\);/);
+  assert.doesNotMatch(mainSource, /if \(!GENERATED_DESKTOP_SHELL_ENABLED && !window\.isMaximized\(\)\) window\.maximize\(\);/);
+});
