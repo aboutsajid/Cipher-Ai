@@ -17,7 +17,8 @@ interface ClaudeSendOptions {
 
 export function shouldExposeClaudeChatFilesystem(
   prompt: string,
-  attachments: AttachmentPayload[] = []
+  attachments: AttachmentPayload[] = [],
+  conversation?: ClaudeConversationContext
 ): boolean {
   const normalized = (prompt ?? "").trim().toLowerCase();
   if (!normalized) return false;
@@ -26,15 +27,32 @@ export function shouldExposeClaudeChatFilesystem(
   const hasFileTarget = /\b(file|files|folder|folders|directory|directories|path|paths|root|roots|source code|codebase|code)\b/.test(normalized);
   const hasProjectTarget = /\b(project|repo|repository|workspace)\b/.test(normalized);
   const hasApprovedFolderReference = /\b(allowed|approved)\s+(file|files|folder|folders|directory|directories|path|paths|root|roots)\b/.test(normalized);
+  const hasSelectedFolderReference = /\b(allowed|approved|selected|chosen)\s+(folder|folders|directory|directories|path|paths|root|roots)\b/.test(normalized);
   const hasInspectVerb = /\b(read|open|inspect|review|analy[sz]e|scan|search|find|list|browse|explore|look through|check|access)\b/.test(normalized);
   const hasContentsIntent = /\b(inside|content|contents|what(?:'| i)?s inside|whats inside|tell me what(?:'| i)?s inside|show me)\b/.test(normalized);
-  const hasWriteVerb = /\b(edit|modify|rewrite|refactor|write|create|save|add|implement)\b/.test(normalized);
+  const hasWriteVerb = /\b(edit|modify|rewrite|refactor|write|create|save|add|implement|build|scaffold|generate|bootstrap|initialize|setup|set up)\b/.test(normalized);
+  const hasContinuationCue = /\b(try(?: again| now)?|again|continue|go ahead|do it|proceed|start|resume|now|yes|okay|ok)\b/.test(normalized);
   const hasRelevantAttachment = attachments.some((attachment) => attachment.type === "text" && Boolean(attachment.sourcePath?.trim()));
+  const transcript = Array.isArray(conversation?.history)
+    ? conversation!.history
+      .map((entry) => (entry?.content ?? "").trim())
+      .filter(Boolean)
+      .join("\n\n")
+    : "";
+  const normalizedTranscript = transcript.toLowerCase();
+  const transcriptSuggestsFilesystemTask = Boolean(normalizedTranscript) && (
+    shouldExposeClaudeChatFilesystem(transcript)
+    || (
+      /\b(can't|cannot|still don't|do not|no)\s+(have|got)\s+(filesystem\s+)?access\b/.test(normalizedTranscript)
+      && /([a-z]:\\|\\\\|\/|[a-z0-9._-]+\.[a-z0-9]+)\S*/i.test(transcript)
+    )
+  );
 
   if (hasExplicitPathHint) return true;
-  if (hasApprovedFolderReference && (hasInspectVerb || hasContentsIntent || hasWriteVerb)) return true;
+  if ((hasApprovedFolderReference || hasSelectedFolderReference) && (hasInspectVerb || hasContentsIntent || hasWriteVerb)) return true;
   if (hasInspectVerb && (hasFileTarget || hasProjectTarget)) return true;
-  if (hasWriteVerb && hasFileTarget) return true;
+  if (hasWriteVerb && (hasFileTarget || hasProjectTarget)) return true;
+  if (transcriptSuggestsFilesystemTask && (hasInspectVerb || hasContentsIntent || hasWriteVerb || hasContinuationCue)) return true;
   if (hasRelevantAttachment && (hasInspectVerb || hasWriteVerb)) return true;
   return false;
 }
@@ -92,31 +110,61 @@ export function buildClaudeConversationPrompt(
   const normalizedRoots = Array.isArray(filesystemAccess?.roots)
     ? filesystemAccess!.roots.map((root) => root.trim()).filter(Boolean)
     : [];
+  const isProjectScaffoldRequest = /\b(create|build|scaffold|generate|bootstrap|set up|setup|initialize)\b/.test(normalizedPrompt.toLowerCase())
+    && /\b(project|app|repo|repository|workspace)\b/.test(normalizedPrompt.toLowerCase());
   if (normalizedRoots.length > 0) {
     const singularApprovedReference = normalizedRoots.length === 1
-      && /\b(allowed|approved)\s+(file|files|folder|folders|directory|directories|path|paths|root|roots)\b/i.test(normalizedPrompt);
+      && /\b(allowed|approved|selected|chosen)\s+(file|files|folder|folders|directory|directories|path|paths|root|roots)\b/i.test(normalizedPrompt);
     sections.push(
       "[Approved Claude chat filesystem access]",
       "You may inspect only these approved folders on the user's PC:",
       ...normalizedRoots.map((root) => `- ${root}`),
       filesystemAccess?.allowWrite === true
-        ? "Write access is enabled inside those approved folders."
+        ? "Write access is enabled inside those approved folders. You may scaffold or update a complete project there."
         : "Write access is disabled. You may read, list, and search only.",
+      filesystemAccess?.overwritePolicy
+        ? `Overwrite policy: ${filesystemAccess.overwritePolicy}.`
+        : "Overwrite policy: allow-overwrite.",
+      filesystemAccess?.budgets
+        ? `Per-turn budgets: max files ${filesystemAccess.budgets.maxFilesPerTurn ?? "default"}, max bytes ${filesystemAccess.budgets.maxBytesPerTurn ?? "default"}, max tool calls ${filesystemAccess.budgets.maxToolCallsPerTurn ?? "default"}.`
+        : "Per-turn budgets use the app defaults.",
+      "You do not have bash, shell, or terminal access in this chat runtime. Never claim shell sandbox restrictions here. Use only the JSON filesystem tools below.",
+      "If earlier transcript messages said filesystem access was unavailable, treat this turn's approved access block as the current source of truth.",
+      "These filesystem tool names are an app-level contract for this chat turn. Do not describe them as missing native Claude tools.",
+      "Prefer replying with plain JSON text for the next filesystem action. Do not mention Bash, Read, or sandbox fallback tools here.",
       "When you need filesystem access, reply with only strict JSON in one of these exact shapes and nothing else:",
       '{"tool":"list_files","args":{"path":"ABSOLUTE_PATH","depth":2}}',
       '{"tool":"read_file","args":{"path":"ABSOLUTE_PATH"}}',
       '{"tool":"search_files","args":{"path":"ABSOLUTE_PATH","pattern":"text to find"}}',
+      '{"tool":"write_plan","args":{"files":[{"path":"ABSOLUTE_PATH","content":"full file content"}]}}',
       '{"tool":"write_file","args":{"path":"ABSOLUTE_PATH","content":"full file content"}}',
+      '{"tool":"write_files","args":{"files":[{"path":"ABSOLUTE_PATH","content":"full file content"}]}}',
+      '{"tool":"write_binary","args":{"path":"ABSOLUTE_PATH","contentBase64":"BASE64_DATA"}}',
+      '{"tool":"write_binaries","args":{"files":[{"path":"ABSOLUTE_PATH","contentBase64":"BASE64_DATA"}]}}',
+      '{"tool":"mkdir_path","args":{"path":"ABSOLUTE_PATH"}}',
+      '{"tool":"move_path","args":{"fromPath":"ABSOLUTE_PATH","toPath":"ABSOLUTE_PATH"}}',
+      '{"tool":"delete_path","args":{"path":"ABSOLUTE_PATH","recursive":true}}',
+      "Parent directories are created automatically for write_file and write_files.",
+      "Use write_plan before large scaffolds, broad refactors, or destructive operations.",
+      "Prefer write_files when creating or updating multiple files for the same project.",
       "Request only one tool per reply.",
       "After the app returns a tool result, continue the same task.",
       "Do not inspect any approved folder or project just because access exists.",
       "If the user has not clearly asked you to inspect, read, search, list, open, or modify files, ask one short clarification question first.",
       "Never assume the app's own workspace is the user's target project."
     );
+    if (isProjectScaffoldRequest) {
+      sections.push(
+        "[Scaffold expectations]",
+        "For a full project scaffold, do not stop after creating one file.",
+        "Plan the folder tree, create the required app files, and include a README or run instructions when appropriate.",
+        "Prefer write_plan first, then use write_files or write_binaries for batched project creation."
+      );
+    }
     if (singularApprovedReference) {
       sections.push(
         "[Approved folder alias]",
-        `In this turn, "the allowed folder" and "the approved folder" refer to: ${normalizedRoots[0]}`,
+        `In this turn, "the allowed folder", "the approved folder", and "the selected folder" refer to: ${normalizedRoots[0]}`,
         "Use that exact path in your filesystem tool call."
       );
     }
@@ -140,7 +188,7 @@ export function sendClaudePrompt(
   const normalizedPrompt = (prompt ?? "").trim();
   const normalizedAttachments = normalizeAttachments(options?.attachments);
   const enabledTools = (options?.enabledTools ?? []).map((tool) => tool.trim()).filter(Boolean);
-  const filesystemAccess = shouldExposeClaudeChatFilesystem(normalizedPrompt, normalizedAttachments)
+  const filesystemAccess = shouldExposeClaudeChatFilesystem(normalizedPrompt, normalizedAttachments, options?.conversation)
     ? options?.filesystemAccess
     : undefined;
   if (!normalizedPrompt && normalizedAttachments.length === 0) {

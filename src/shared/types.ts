@@ -22,9 +22,30 @@ export interface ChatContext {
   compareEnabled?: boolean;
 }
 
+export type ClaudeChatOverwritePolicy = "create-only" | "allow-overwrite" | "ask-before-overwrite";
+
+export interface ClaudeChatFilesystemRootConfig {
+  path: string;
+  label?: string;
+  allowWrite?: boolean;
+  overwritePolicy?: ClaudeChatOverwritePolicy;
+}
+
+export interface ClaudeChatFilesystemBudgets {
+  maxFilesPerTurn?: number;
+  maxBytesPerTurn?: number;
+  maxToolCallsPerTurn?: number;
+}
+
 export interface ClaudeChatFilesystemSettings {
   roots: string[];
   allowWrite: boolean;
+  overwritePolicy?: ClaudeChatOverwritePolicy;
+  rootConfigs?: ClaudeChatFilesystemRootConfig[];
+  temporaryRoots?: string[];
+  budgets?: ClaudeChatFilesystemBudgets;
+  auditEnabled?: boolean;
+  requireWritePlan?: boolean;
 }
 
 export interface Chat {

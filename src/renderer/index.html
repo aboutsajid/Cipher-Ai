@@ -412,15 +412,47 @@
         </div>
         <div class="panel-section settings-card">
           <label class="field-label">Claude Chat Filesystem</label>
-          <p class="field-help">Approve specific PC folders for Claude chat mode. Chat mode can read, list, and search only inside these roots. Write access is optional and stays limited to the same roots.</p>
-          <textarea id="claude-chat-fs-roots" class="field-input" rows="4" placeholder="One approved folder path per line"></textarea>
+          <p class="field-help">Approve specific PC folders for Claude chat mode. Chat mode can read, search, and list only inside these roots. When write access is enabled, Claude can scaffold or update an entire project only inside the same approved roots.</p>
+          <div id="claude-chat-fs-root-list" class="settings-model-health"></div>
           <div class="btn-row">
             <button id="claude-chat-fs-add-btn" class="btn-ghost" type="button">Add Folders</button>
+            <button id="claude-chat-fs-add-row-btn" class="btn-ghost-sm" type="button">Add Row</button>
+            <button id="claude-chat-fs-add-temp-btn" class="btn-ghost-sm" type="button">Add Temporary Folders</button>
             <button id="claude-chat-fs-clear-btn" class="btn-ghost-sm" type="button">Clear</button>
           </div>
           <label class="toggle-field" for="claude-chat-fs-write-toggle">
             <input id="claude-chat-fs-write-toggle" type="checkbox" />
             <span>Allow Claude chat writes inside approved folders</span>
+          </label>
+          <label class="field-label" for="claude-chat-fs-overwrite-policy">Overwrite Policy</label>
+          <select id="claude-chat-fs-overwrite-policy" class="field-input">
+            <option value="allow-overwrite">Allow overwrite</option>
+            <option value="create-only">Create only</option>
+            <option value="ask-before-overwrite">Ask before overwrite</option>
+          </select>
+          <label class="field-label" for="claude-chat-fs-temp-roots">Temporary Claude Folders (session only)</label>
+          <textarea id="claude-chat-fs-temp-roots" class="field-input" rows="2" placeholder="Optional temporary folder path per line"></textarea>
+          <div class="field-row">
+            <div style="flex:1">
+              <label class="field-label" for="claude-chat-fs-max-files">Max Files / Turn</label>
+              <input id="claude-chat-fs-max-files" class="field-input" type="number" min="1" placeholder="80" />
+            </div>
+            <div style="flex:1">
+              <label class="field-label" for="claude-chat-fs-max-bytes">Max Bytes / Turn</label>
+              <input id="claude-chat-fs-max-bytes" class="field-input" type="number" min="20000" placeholder="2000000" />
+            </div>
+            <div style="flex:1">
+              <label class="field-label" for="claude-chat-fs-max-tools">Max Tool Calls / Turn</label>
+              <input id="claude-chat-fs-max-tools" class="field-input" type="number" min="1" placeholder="24" />
+            </div>
+          </div>
+          <label class="toggle-field" for="claude-chat-fs-plan-toggle">
+            <input id="claude-chat-fs-plan-toggle" type="checkbox" />
+            <span>Prefer write-plan before large project scaffolds</span>
+          </label>
+          <label class="toggle-field" for="claude-chat-fs-audit-toggle">
+            <input id="claude-chat-fs-audit-toggle" type="checkbox" checked />
+            <span>Audit Claude filesystem actions</span>
           </label>
           <small id="claude-chat-fs-status" class="field-help">Claude chat filesystem access is off.</small>
         </div>

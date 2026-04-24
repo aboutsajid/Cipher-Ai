@@ -175,3 +175,100 @@ test("ClaudeSessionManager executes approved filesystem tool calls before emitti
     { channel: "claude:exit", payload: { code: 0, signal: null } }
   ]);
 });
+
+test("ClaudeSessionManager executes write_files tool calls for project scaffolding", async () => {
+  const probe = new FakeChildProcess(1);
+  const runtime = new FakeChildProcess(2020);
+  const sent: Array<{ channel: string; payload: unknown }> = [];
+  let spawnCalls = 0;
+  const manager = new ClaudeSessionManager(
+    (channel, payload) => {
+      sent.push({ channel, payload });
+    },
+    {
+      spawnCommand: (() => {
+        spawnCalls += 1;
+        return (spawnCalls === 1 ? probe : runtime) as never;
+      }) as never,
+      platform: "linux"
+    }
+  );
+
+  const root = await mkdtemp(join(tmpdir(), "cipher-claude-fs-"));
+
+  queueMicrotask(() => probe.emit("exit", 0));
+  const started = await manager.start();
+  assert.equal(started.ok, true);
+
+  const promptResult = manager.sendPrompt("Create a starter project in the approved folder.", [], [], {
+    filesystemAccess: { roots: [root], allowWrite: true }
+  });
+  assert.equal(promptResult.ok, true);
+
+  runtime.stdout.emit("data", Buffer.from(`{"type":"assistant","message":{"content":[{"type":"text","text":"{\\"tool\\":\\"write_files\\",\\"args\\":{\\"files\\":[{\\"path\\":\\"${join(root, "src", "index.ts").replace(/\\/g, "\\\\")}\\",\\"content\\":\\"console.log('hi');\\\\n\\"},{\\"path\\":\\"${join(root, "package.json").replace(/\\/g, "\\\\")}\\",\\"content\\":\\"{\\\\n  \\\\\\"name\\\\\\": \\\\\\"demo\\\\\\"\\\\n}\\\\n\\"}]}}"}]}}\n`));
+  runtime.stdout.emit("data", Buffer.from("{\"type\":\"result\",\"result\":\"ok\",\"is_error\":false}\n"));
+  assert.equal(await waitFor(() => runtime.stdin.writes.length >= 2), true);
+
+  assert.match(runtime.stdin.writes[1] ?? "", /\[Claude tool result\] write_files/);
+  assert.match(runtime.stdin.writes[1] ?? "", /index\.ts/);
+  assert.match(runtime.stdin.writes[1] ?? "", /package\.json/);
+
+  runtime.stdout.emit("data", Buffer.from("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Project scaffold created in the approved folder.\"}]}}\n"));
+  runtime.stdout.emit("data", Buffer.from("{\"type\":\"result\",\"result\":\"ok\",\"is_error\":false}\n"));
+  assert.equal(await waitFor(() => sent.length >= 2), true);
+
+  assert.equal(sent.some((entry) => entry.channel === "claude:output" && (entry.payload as { stream?: string }).stream === "system"), true);
+  assert.deepEqual(sent.slice(-2), [
+    { channel: "claude:output", payload: { text: "Project scaffold created in the approved folder.", stream: "stdout" } },
+    { channel: "claude:exit", payload: { code: 0, signal: null } }
+  ]);
+});
+
+test("ClaudeSessionManager recovers from missing native filesystem tool errors by executing the approved tool call", async () => {
+  const probe = new FakeChildProcess(1);
+  const runtime = new FakeChildProcess(2020);
+  const sent: Array<{ channel: string; payload: unknown }> = [];
+  let spawnCalls = 0;
+  const manager = new ClaudeSessionManager(
+    (channel, payload) => {
+      sent.push({ channel, payload });
+    },
+    {
+      spawnCommand: (() => {
+        spawnCalls += 1;
+        return (spawnCalls === 1 ? probe : runtime) as never;
+      }) as never,
+      platform: "linux"
+    }
+  );
+
+  const root = await mkdtemp(join(tmpdir(), "cipher-claude-fs-"));
+  const filePath = join(root, "notes.txt");
+  await writeFile(filePath, "hello from native tool recovery", "utf8");
+
+  queueMicrotask(() => probe.emit("exit", 0));
+  const started = await manager.start();
+  assert.equal(started.ok, true);
+
+  const promptResult = manager.sendPrompt("Inspect the approved folder and summarize the note.", [], [], {
+    filesystemAccess: { roots: [root], allowWrite: false }
+  });
+  assert.equal(promptResult.ok, true);
+
+  runtime.stdout.emit("data", Buffer.from(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"read_file","input":{"path":"${filePath.replace(/\\/g, "\\\\")}"}}]}}\n`));
+  runtime.stdout.emit("data", Buffer.from("{\"type\":\"result\",\"result\":\"No such tool available: read_file\",\"is_error\":true}\n"));
+  assert.equal(await waitFor(() => runtime.stdin.writes.length >= 2), true);
+
+  assert.match(runtime.stdin.writes[1] ?? "", /\[Claude tool result\] read_file/);
+  assert.match(runtime.stdin.writes[1] ?? "", /hello from native tool recovery/);
+  assert.equal(sent.length, 0);
+
+  runtime.stdout.emit("data", Buffer.from("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"The note says hello from native tool recovery.\"}]}}\n"));
+  runtime.stdout.emit("data", Buffer.from("{\"type\":\"result\",\"result\":\"ok\",\"is_error\":false}\n"));
+  assert.equal(await waitFor(() => sent.length >= 2), true);
+
+  assert.deepEqual(sent, [
+    { channel: "claude:output", payload: { text: "The note says hello from native tool recovery.", stream: "stdout" } },
+    { channel: "claude:exit", payload: { code: 0, signal: null } }
+  ]);
+});

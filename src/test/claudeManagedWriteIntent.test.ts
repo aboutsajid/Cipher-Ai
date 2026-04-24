@@ -53,6 +53,74 @@ function loadManagedWriteDetector(): (prompt: string, attachments?: AttachmentPa
   );
 }
 
+function loadFilesystemFlowPreference(): (
+  prompt: string,
+  filesystem?: {
+    roots?: string[];
+    allowWrite?: boolean;
+    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+    rootConfigs?: Array<{
+      path?: string;
+      label?: string;
+      allowWrite?: boolean;
+      overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+    }>;
+  }
+) => boolean {
+  const rendererSource = readProjectFile("dist/renderer/app.js");
+  const functionSource = extractFunctionSource(rendererSource, "shouldPreferClaudeFilesystemProjectFlow");
+  const factory = new Function(
+    "normalizeClaudeChatFilesystemRootDrafts",
+    `${functionSource}; return shouldPreferClaudeFilesystemProjectFlow;`
+  ) as (
+    normalizeClaudeChatFilesystemRootDrafts: (
+      items?: Array<{
+        path?: string;
+        label?: string;
+        allowWrite?: boolean;
+        overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+      }>,
+      defaultAllowWrite?: boolean,
+      defaultOverwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite"
+    ) => Array<{
+      path: string;
+      label: string;
+      allowWrite: boolean;
+      overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+    }>
+  ) => (
+    prompt: string,
+    filesystem?: {
+      roots?: string[];
+      allowWrite?: boolean;
+      overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+      rootConfigs?: Array<{
+        path?: string;
+        label?: string;
+        allowWrite?: boolean;
+        overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+      }>;
+    }
+  ) => boolean;
+
+  return factory((items, defaultAllowWrite, defaultOverwritePolicy) => (items ?? [])
+    .map((item) => {
+      const overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite" =
+        item?.overwritePolicy === "create-only" || item?.overwritePolicy === "ask-before-overwrite"
+          ? item.overwritePolicy
+          : defaultOverwritePolicy === "create-only" || defaultOverwritePolicy === "ask-before-overwrite"
+            ? defaultOverwritePolicy
+            : "allow-overwrite";
+      return {
+        path: String(item?.path ?? "").trim(),
+        label: String(item?.label ?? "").trim(),
+        allowWrite: item?.allowWrite !== false && defaultAllowWrite !== false,
+        overwritePolicy
+      };
+    })
+    .filter((item) => item.path));
+}
+
 test("Claude managed write intent triggers for explicit file edit requests", () => {
   const shouldTrigger = loadManagedWriteDetector();
 
@@ -94,4 +162,28 @@ If you want, I can clean up the generated artifacts and prepare a commit.
   `.trim();
 
   assert.equal(shouldTrigger(pastedStatusReport), false);
+});
+
+test("Claude chat prefers filesystem tool flow for approved-folder project scaffolds", () => {
+  const shouldPreferFilesystemFlow = loadFilesystemFlowPreference();
+
+  assert.equal(
+    shouldPreferFilesystemFlow("Create the full Python agent project in the approved folder D:\\Cipher Agent.", {
+      roots: ["D:\\Cipher Agent"],
+      allowWrite: true
+    }),
+    true
+  );
+});
+
+test("Claude chat keeps managed-write flow for normal workspace edit requests", () => {
+  const shouldPreferFilesystemFlow = loadFilesystemFlowPreference();
+
+  assert.equal(
+    shouldPreferFilesystemFlow("Please update src/renderer/app.ts to rename the button label.", {
+      roots: ["D:\\Cipher Agent"],
+      allowWrite: true
+    }),
+    false
+  );
 });

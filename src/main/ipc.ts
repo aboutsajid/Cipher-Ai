@@ -1,4 +1,5 @@
 import { BrowserWindow, WebContents } from "electron";
+import { join } from "node:path";
 import { registerChatAppIpcHandlers } from "./chatAppIpc";
 import { registerAgentWorkspaceRouterIpcHandlers } from "./agentWorkspaceRouterIpc";
 import { ClaudeSessionManager } from "./claudeSupport";
@@ -43,7 +44,8 @@ export function registerIpcHandlers(deps: Deps): void {
   const claudeSessionManager = new ClaudeSessionManager((channel, payload) => {
     broadcastToWindows(channel, payload);
   }, {
-    workingDirectory: claudeChatWorkingDirectory
+    workingDirectory: claudeChatWorkingDirectory,
+    auditLogPath: join(settingsStore.getDataDirectoryPath(), "claude-chat-filesystem-audit.jsonl")
   });
 
   ccrService.setLogHandler((line) => {

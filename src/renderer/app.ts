@@ -359,6 +359,21 @@ interface Settings {
   claudeChatFilesystem?: {
     roots: string[];
     allowWrite: boolean;
+    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+    rootConfigs?: Array<{
+      path: string;
+      label?: string;
+      allowWrite?: boolean;
+      overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+    }>;
+    temporaryRoots?: string[];
+    budgets?: {
+      maxFilesPerTurn?: number;
+      maxBytesPerTurn?: number;
+      maxToolCallsPerTurn?: number;
+    };
+    auditEnabled?: boolean;
+    requireWritePlan?: boolean;
   };
   mcpServers: McpServerConfig[];
   routing: { default: string; think: string; longContext: string; };
@@ -559,7 +574,15 @@ let rawModeEnabled = false;
 type UiExperienceMode = "default" | "simple";
 let currentUiExperience: UiExperienceMode = "default";
 let activeAttachments: AttachmentPayload[] = [];
+let temporaryClaudeChatFilesystemRoots: string[] = [];
 let compareModeEnabled = false;
+
+type ClaudeChatFilesystemRootDraft = {
+  path: string;
+  label?: string;
+  allowWrite: boolean;
+  overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+};
 let mcpStatus: McpStatus = { servers: [], tools: [] };
 let activeAgentTaskId: string | null = null;
 let activeAgentTaskStatus: AgentTask["status"] | null = null;
@@ -611,6 +634,9 @@ let workspaceRootPath = "";
 let chunkAutoScrollTimer: ReturnType<typeof setTimeout> | null = null;
 let claudeRenderTimer: ReturnType<typeof setTimeout> | null = null;
 let claudeRenderMessageId: string | null = null;
+let claudeElapsedTimer: ReturnType<typeof setInterval> | null = null;
+let claudeElapsedStartedAt = 0;
+let claudeElapsedStatusText = "";
 const claudeDraftByMessage = new Map<string, string>();
 let pendingClaudeSaveGuard: ClaudeSaveGuard | null = null;
 let pendingClaudeManagedPermissions: ClaudeManagedEditPermissions = { allowedPaths: [], allowedRoots: [] };
@@ -936,6 +962,137 @@ function setClaudeStatus(text: string, tone: "ok" | "err" | "busy" | "" = ""): v
   btn.classList.remove("status-ok", "status-err", "status-busy");
   if (tone) btn.classList.add(`status-${tone}`);
   btn.classList.toggle("active", currentMode === "claude");
+}
+
+function formatClaudeElapsed(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0
+    ? `${minutes}m ${String(seconds).padStart(2, "0")}s`
+    : `${seconds}s`;
+}
+
+function renderClaudeElapsedStatus(): void {
+  const status = document.getElementById("stream-status");
+  if (!(status instanceof HTMLElement)) return;
+  if (!claudeElapsedStartedAt) return;
+  const elapsed = formatClaudeElapsed(Date.now() - claudeElapsedStartedAt);
+  status.textContent = claudeElapsedStatusText ? `${claudeElapsedStatusText} (${elapsed})` : elapsed;
+}
+
+function startClaudeElapsedTimer(statusText: string): void {
+  claudeElapsedStatusText = statusText || "Claude is thinking...";
+  claudeElapsedStartedAt = Date.now();
+  if (claudeElapsedTimer) {
+    clearInterval(claudeElapsedTimer);
+  }
+  renderClaudeElapsedStatus();
+  claudeElapsedTimer = setInterval(() => {
+    renderClaudeElapsedStatus();
+  }, 1000);
+}
+
+function stopClaudeElapsedTimer(): void {
+  if (claudeElapsedTimer) {
+    clearInterval(claudeElapsedTimer);
+    claudeElapsedTimer = null;
+  }
+  claudeElapsedStartedAt = 0;
+  claudeElapsedStatusText = "";
+}
+
+function isClaudeRateLimitError(message: string): boolean {
+  const normalized = (message ?? "").toLowerCase();
+  return /api error:\s*429|rate_limit_error|rate limit|session usage limit/.test(normalized);
+}
+
+function getConfiguredClaudeWritableRoots(): string[] {
+  const filesystem = settings?.claudeChatFilesystem;
+  if (!filesystem) return [];
+  return normalizeClaudeChatFilesystemRootDrafts(
+    Array.isArray(filesystem.rootConfigs) && filesystem.rootConfigs.length > 0
+      ? filesystem.rootConfigs
+      : (filesystem.roots ?? []).map((path) => ({
+          path,
+          label: "",
+          allowWrite: filesystem.allowWrite === true,
+          overwritePolicy: filesystem.overwritePolicy ?? "allow-overwrite"
+        })),
+    filesystem.allowWrite === true,
+    filesystem.overwritePolicy ?? "allow-overwrite"
+  )
+    .filter((root) => root.allowWrite && root.path)
+    .map((root) => root.path);
+}
+
+function getParentPath(input: string): string {
+  const normalized = String(input ?? "").trim().replace(/[\\/]+$/, "");
+  if (!normalized) return "";
+  const match = normalized.match(/^(.*)[\\/][^\\/]+$/);
+  return (match?.[1] ?? normalized).trim();
+}
+
+function findCommonPath(paths: string[]): string {
+  const normalized = paths
+    .map((path) => String(path ?? "").trim().replace(/\//g, "\\").replace(/[\\]+$/, ""))
+    .filter(Boolean);
+  if (normalized.length === 0) return "";
+  if (normalized.length === 1) return normalized[0];
+
+  const segmented = normalized.map((path) => path.split("\\").filter((segment, index) => index === 0 || segment.length > 0));
+  const shared: string[] = [];
+  const maxLength = Math.min(...segmented.map((parts) => parts.length));
+  for (let index = 0; index < maxLength; index += 1) {
+    const candidate = segmented[0][index];
+    if (!segmented.every((parts) => parts[index]?.toLowerCase() === candidate?.toLowerCase())) break;
+    shared.push(candidate);
+  }
+  return shared.join("\\");
+}
+
+function inferClaudeResumeProjectPath(): string {
+  const touchedPaths: string[] = [];
+  for (let index = renderedMessages.length - 1; index >= 0 && touchedPaths.length < 20; index -= 1) {
+    const message = renderedMessages[index];
+    if (message.role !== "system") continue;
+    const lines = String(message.content ?? "").split("\n");
+    for (let lineIndex = lines.length - 1; lineIndex >= 0 && touchedPaths.length < 20; lineIndex -= 1) {
+      const line = lines[lineIndex].trim();
+      const match = line.match(/^\[Claude filesystem\]\s+(?:staging|writing|created|deleting|deleted)\s+(.+)$/i);
+      if (!match) continue;
+      const rawPath = (match[1] ?? "").trim().split(/\s+->\s+/)[0]?.trim() ?? "";
+      if (rawPath) touchedPaths.push(rawPath);
+    }
+  }
+
+  const parentPaths = touchedPaths.map((path) => getParentPath(path)).filter(Boolean);
+  const commonTouchedPath = findCommonPath(parentPaths);
+  if (commonTouchedPath) return commonTouchedPath;
+
+  const writableRoots = getConfiguredClaudeWritableRoots();
+  return writableRoots[0] ?? "";
+}
+
+function buildClaudeRateLimitResumePrompt(projectPath: string): string {
+  const target = (projectPath ?? "").trim();
+  if (target) {
+    return `Continue the existing project in ${target}. List what is already created, identify what is still missing, then complete only the remaining files using Claude filesystem tools.`;
+  }
+  return "Continue the existing approved-folder project. List what is already created, identify what is still missing, then complete only the remaining files using Claude filesystem tools.";
+}
+
+function maybeShowClaudeRateLimitResumeGuidance(message: string): void {
+  if (!isClaudeRateLimitError(message)) return;
+  const prompt = buildClaudeRateLimitResumePrompt(inferClaudeResumeProjectPath());
+  const lines = [
+    "[Claude rate limit]",
+    "Claude hit a provider usage limit after writing part of the project.",
+    "Resume prompt:",
+    prompt
+  ];
+  appendClaudeLine(lines.join("\n"), "system");
+  showToast("Claude hit a rate limit. Resume prompt added below.", 3600);
 }
 
 function nextClientMessageId(prefix: string): string {
@@ -1693,7 +1850,14 @@ async function sendClaudePrompt(): Promise<void> {
   const attachmentsToSend = [...activeAttachments];
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   const prompt = rawPrompt || "Please review the attached files.";
-  const managedWriteIntent = isClaudeManagedWriteRequest(prompt, attachmentsToSend);
+  const filesystemAccess = settings?.claudeChatFilesystem
+    ? {
+        ...settings.claudeChatFilesystem,
+        temporaryRoots: [...temporaryClaudeChatFilesystemRoots]
+      }
+    : undefined;
+  const preferFilesystemProjectFlow = shouldPreferClaudeFilesystemProjectFlow(prompt, filesystemAccess);
+  const managedWriteIntent = !preferFilesystemProjectFlow && isClaudeManagedWriteRequest(prompt, attachmentsToSend);
   const workspaceRoot = managedWriteIntent ? await ensureWorkspaceRootPath() : "";
   const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
   const managedWritePermissions: ClaudeManagedEditPermissions = managedWriteIntent && workspaceRoot
@@ -1743,7 +1907,7 @@ async function sendClaudePrompt(): Promise<void> {
       chatId,
       attachments: attachmentsToSend,
       enabledTools: getEnabledToolNames(),
-      filesystemAccess: settings?.claudeChatFilesystem
+      filesystemAccess
     });
     claudeSessionRunning = Boolean(res.running);
     if (!res.ok) {
@@ -2021,11 +2185,9 @@ function applyInteractionMode(mode: InteractionMode): void {
   if (isAgentMode) {
     syncComposerAgentPrompts("composer");
     setAgentStatus("Agent mode active. Send will start a supervised task.");
-    openPanel("agent");
-    const agentInput = document.getElementById("agent-prompt-input");
-    if (agentInput instanceof HTMLTextAreaElement) {
-      agentInput.focus();
-      agentInput.setSelectionRange(agentInput.value.length, agentInput.value.length);
+    if (input instanceof HTMLTextAreaElement) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
     }
   }
   if (isImageMode) {
@@ -3558,6 +3720,37 @@ function isClaudeManagedWriteRequest(prompt: string, attachments: AttachmentPayl
   return false;
 }
 
+function shouldPreferClaudeFilesystemProjectFlow(
+  prompt: string,
+  filesystem?: Settings["claudeChatFilesystem"]
+): boolean {
+  const normalized = (prompt ?? "").trim().toLowerCase();
+  if (!normalized || !filesystem) return false;
+
+  const configuredRoots = normalizeClaudeChatFilesystemRootDrafts(
+    Array.isArray(filesystem.rootConfigs) && filesystem.rootConfigs.length > 0
+      ? filesystem.rootConfigs
+      : (filesystem.roots ?? []).map((path) => ({
+          path,
+          label: "",
+          allowWrite: filesystem.allowWrite === true,
+          overwritePolicy: filesystem.overwritePolicy ?? "allow-overwrite"
+        })),
+    filesystem.allowWrite === true,
+    filesystem.overwritePolicy ?? "allow-overwrite"
+  ).filter((root) => root.allowWrite && root.path);
+
+  if (configuredRoots.length === 0) return false;
+
+  const hasApprovedFolderAlias = /\b(allowed|approved|selected|chosen)\s+(folder|folders|directory|directories|path|paths|root|roots)\b/.test(normalized);
+  const referencesApprovedRoot = configuredRoots.some((root) => normalized.includes(root.path.toLowerCase()));
+  const hasWriteVerb = /\b(create|build|scaffold|generate|bootstrap|initialize|set up|setup|write|make|add|implement|save)\b/.test(normalized);
+  const hasProjectTarget = /\b(project|app|agent|repo|repository|workspace|tool|service|api|library)\b/.test(normalized);
+  const hasFolderTarget = /\b(file|files|folder|folders|directory|directories|path|paths|root|roots)\b/.test(normalized);
+
+  return (hasApprovedFolderAlias || referencesApprovedRoot) && hasWriteVerb && (hasProjectTarget || hasFolderTarget);
+}
+
 function buildClaudeManagedWritePrompt(
   prompt: string,
   attachments: AttachmentPayload[],
@@ -3966,36 +4159,256 @@ function normalizeClaudeChatFilesystemRoots(value: string | string[]): string[] 
   )];
 }
 
-function getClaudeChatFilesystemSettingsDraft(): { roots: string[]; allowWrite: boolean } {
-  const rootsInput = document.getElementById("claude-chat-fs-roots");
+function normalizeClaudeChatFilesystemRootDrafts(
+  value: ClaudeChatFilesystemRootDraft[] | Array<{
+    path?: string;
+    label?: string;
+    allowWrite?: boolean;
+    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  }>,
+  fallbackAllowWrite = false,
+  fallbackOverwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite" = "allow-overwrite"
+): ClaudeChatFilesystemRootDraft[] {
+  const byPath = new Map<string, ClaudeChatFilesystemRootDraft>();
+  for (const item of value ?? []) {
+    const path = String(item?.path ?? "").trim();
+    if (!path) continue;
+    byPath.set(path, {
+      path,
+      label: String(item?.label ?? "").trim() || undefined,
+      allowWrite: item?.allowWrite === true || (item?.allowWrite !== false && fallbackAllowWrite),
+      overwritePolicy: item?.overwritePolicy === "create-only" || item?.overwritePolicy === "ask-before-overwrite"
+        ? item.overwritePolicy
+        : fallbackOverwritePolicy
+    });
+  }
+  return [...byPath.values()];
+}
+
+function getClaudeChatFilesystemRootDraftsFromUi(): ClaudeChatFilesystemRootDraft[] {
+  const list = document.getElementById("claude-chat-fs-root-list");
+  const globalWriteToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const globalWriteEnabled = globalWriteToggle instanceof HTMLInputElement && globalWriteToggle.checked;
+  const globalOverwritePolicy = document.getElementById("claude-chat-fs-overwrite-policy");
+  const fallbackOverwritePolicy = globalOverwritePolicy instanceof HTMLSelectElement
+    && (globalOverwritePolicy.value === "create-only" || globalOverwritePolicy.value === "ask-before-overwrite")
+    ? globalOverwritePolicy.value
+    : "allow-overwrite";
+  if (!(list instanceof HTMLElement)) return [];
+
+  const drafts: ClaudeChatFilesystemRootDraft[] = [];
+  for (const row of Array.from(list.querySelectorAll<HTMLElement>("[data-claude-fs-root-row='true']"))) {
+    const pathInput = row.querySelector<HTMLInputElement>("[data-role='path']");
+    const labelInput = row.querySelector<HTMLInputElement>("[data-role='label']");
+    const writeInput = row.querySelector<HTMLInputElement>("[data-role='allow-write']");
+    const overwriteInput = row.querySelector<HTMLSelectElement>("[data-role='overwrite-policy']");
+    const path = (pathInput?.value ?? "").trim();
+    if (!path) continue;
+    drafts.push({
+      path,
+      label: (labelInput?.value ?? "").trim() || undefined,
+      allowWrite: globalWriteEnabled && writeInput?.checked === true,
+      overwritePolicy: overwriteInput?.value === "create-only" || overwriteInput?.value === "ask-before-overwrite"
+        ? overwriteInput.value
+        : fallbackOverwritePolicy
+    });
+  }
+  return normalizeClaudeChatFilesystemRootDrafts(drafts, globalWriteEnabled, fallbackOverwritePolicy);
+}
+
+function renderClaudeChatFilesystemRootList(
+  drafts: ClaudeChatFilesystemRootDraft[],
+  globalWriteEnabled: boolean
+): void {
+  const list = document.getElementById("claude-chat-fs-root-list");
+  if (!(list instanceof HTMLElement)) return;
+
+  list.innerHTML = "";
+  if (drafts.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "field-help";
+    empty.textContent = "No approved Claude folders yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  drafts.forEach((draft, index) => {
+    const row = document.createElement("div");
+    row.dataset["claudeFsRootRow"] = "true";
+    row.className = "claude-fs-root-row";
+
+    const pathInput = document.createElement("input");
+    pathInput.className = "field-input";
+    pathInput.type = "text";
+    pathInput.value = draft.path;
+    pathInput.placeholder = "Folder path";
+    pathInput.dataset["role"] = "path";
+
+    const labelInput = document.createElement("input");
+    labelInput.className = "field-input";
+    labelInput.type = "text";
+    labelInput.value = draft.label ?? "";
+    labelInput.placeholder = "Optional label";
+    labelInput.dataset["role"] = "label";
+
+    const writeWrap = document.createElement("label");
+    writeWrap.className = "toggle-field";
+    const writeInput = document.createElement("input");
+    writeInput.type = "checkbox";
+    writeInput.checked = draft.allowWrite;
+    writeInput.disabled = !globalWriteEnabled;
+    writeInput.dataset["role"] = "allow-write";
+    const writeText = document.createElement("span");
+    writeText.textContent = "Write";
+    writeWrap.append(writeInput, writeText);
+
+    const overwriteInput = document.createElement("select");
+    overwriteInput.className = "field-input";
+    overwriteInput.dataset["role"] = "overwrite-policy";
+    overwriteInput.innerHTML = [
+      `<option value="allow-overwrite"${draft.overwritePolicy === "allow-overwrite" ? " selected" : ""}>Allow overwrite</option>`,
+      `<option value="create-only"${draft.overwritePolicy === "create-only" ? " selected" : ""}>Create only</option>`,
+      `<option value="ask-before-overwrite"${draft.overwritePolicy === "ask-before-overwrite" ? " selected" : ""}>Ask before overwrite</option>`
+    ].join("");
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn-ghost-sm";
+    removeBtn.textContent = "Remove";
+    removeBtn.dataset["role"] = "remove";
+    removeBtn.dataset["index"] = String(index);
+
+    row.append(pathInput, labelInput, writeWrap, overwriteInput, removeBtn);
+    list.appendChild(row);
+  });
+}
+
+function getClaudeChatFilesystemSettingsDraft(): {
+  roots: string[];
+  allowWrite: boolean;
+  overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  rootConfigs: ClaudeChatFilesystemRootDraft[];
+  temporaryRoots: string[];
+  budgets: { maxFilesPerTurn?: number; maxBytesPerTurn?: number; maxToolCallsPerTurn?: number };
+  auditEnabled: boolean;
+  requireWritePlan: boolean;
+} {
   const writeToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const overwritePolicy = document.getElementById("claude-chat-fs-overwrite-policy");
+  const tempRootsInput = document.getElementById("claude-chat-fs-temp-roots");
+  const maxFilesInput = document.getElementById("claude-chat-fs-max-files");
+  const maxBytesInput = document.getElementById("claude-chat-fs-max-bytes");
+  const maxToolsInput = document.getElementById("claude-chat-fs-max-tools");
+  const auditToggle = document.getElementById("claude-chat-fs-audit-toggle");
+  const planToggle = document.getElementById("claude-chat-fs-plan-toggle");
+  const parseOptionalInt = (element: HTMLElement | null): number | undefined => {
+    if (!(element instanceof HTMLInputElement)) return undefined;
+    const value = element.value.trim();
+    if (!value) return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+  const rootConfigs = getClaudeChatFilesystemRootDraftsFromUi();
   return {
-    roots: normalizeClaudeChatFilesystemRoots(rootsInput instanceof HTMLTextAreaElement ? rootsInput.value : ""),
-    allowWrite: writeToggle instanceof HTMLInputElement && writeToggle.checked
+    roots: rootConfigs.map((item) => item.path),
+    allowWrite: writeToggle instanceof HTMLInputElement && writeToggle.checked,
+    overwritePolicy: overwritePolicy instanceof HTMLSelectElement
+      && (overwritePolicy.value === "create-only" || overwritePolicy.value === "ask-before-overwrite")
+      ? overwritePolicy.value
+      : "allow-overwrite",
+    rootConfigs,
+    temporaryRoots: normalizeClaudeChatFilesystemRoots(tempRootsInput instanceof HTMLTextAreaElement ? tempRootsInput.value : temporaryClaudeChatFilesystemRoots),
+    budgets: {
+      maxFilesPerTurn: parseOptionalInt(maxFilesInput),
+      maxBytesPerTurn: parseOptionalInt(maxBytesInput),
+      maxToolCallsPerTurn: parseOptionalInt(maxToolsInput)
+    },
+    auditEnabled: !(auditToggle instanceof HTMLInputElement) || auditToggle.checked,
+    requireWritePlan: planToggle instanceof HTMLInputElement && planToggle.checked
   };
 }
 
-function renderClaudeChatFilesystemSettingsUi(filesystem: { roots: string[]; allowWrite: boolean } | null | undefined): void {
-  const rootsInput = document.getElementById("claude-chat-fs-roots");
+function renderClaudeChatFilesystemSettingsUi(filesystem: {
+  roots: string[];
+  allowWrite: boolean;
+  overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  rootConfigs?: Array<{
+    path?: string;
+    label?: string;
+    allowWrite?: boolean;
+    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  }>;
+  temporaryRoots?: string[];
+  budgets?: { maxFilesPerTurn?: number; maxBytesPerTurn?: number; maxToolCallsPerTurn?: number };
+  auditEnabled?: boolean;
+  requireWritePlan?: boolean;
+} | null | undefined): void {
   const writeToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const overwritePolicy = document.getElementById("claude-chat-fs-overwrite-policy");
+  const tempRootsInput = document.getElementById("claude-chat-fs-temp-roots");
+  const maxFilesInput = document.getElementById("claude-chat-fs-max-files");
+  const maxBytesInput = document.getElementById("claude-chat-fs-max-bytes");
+  const maxToolsInput = document.getElementById("claude-chat-fs-max-tools");
+  const auditToggle = document.getElementById("claude-chat-fs-audit-toggle");
+  const planToggle = document.getElementById("claude-chat-fs-plan-toggle");
   const status = document.getElementById("claude-chat-fs-status");
   const normalized = {
     roots: normalizeClaudeChatFilesystemRoots(filesystem?.roots ?? []),
-    allowWrite: filesystem?.allowWrite === true
+    allowWrite: filesystem?.allowWrite === true,
+    overwritePolicy: filesystem?.overwritePolicy ?? "allow-overwrite",
+    rootConfigs: normalizeClaudeChatFilesystemRootDrafts(
+      Array.isArray(filesystem?.rootConfigs) && filesystem!.rootConfigs!.length > 0
+        ? filesystem!.rootConfigs!
+        : normalizeClaudeChatFilesystemRoots(filesystem?.roots ?? []).map((path) => ({
+            path,
+            allowWrite: filesystem?.allowWrite === true,
+            overwritePolicy: filesystem?.overwritePolicy ?? "allow-overwrite"
+          })),
+      filesystem?.allowWrite === true,
+      filesystem?.overwritePolicy ?? "allow-overwrite"
+    ),
+    temporaryRoots: normalizeClaudeChatFilesystemRoots(filesystem?.temporaryRoots ?? temporaryClaudeChatFilesystemRoots),
+    budgets: {
+      maxFilesPerTurn: filesystem?.budgets?.maxFilesPerTurn,
+      maxBytesPerTurn: filesystem?.budgets?.maxBytesPerTurn,
+      maxToolCallsPerTurn: filesystem?.budgets?.maxToolCallsPerTurn
+    },
+    auditEnabled: filesystem?.auditEnabled !== false,
+    requireWritePlan: filesystem?.requireWritePlan === true
   };
 
-  if (rootsInput instanceof HTMLTextAreaElement) {
-    rootsInput.value = normalized.roots.join("\n");
-  }
   if (writeToggle instanceof HTMLInputElement) {
     writeToggle.checked = normalized.allowWrite;
   }
+  if (overwritePolicy instanceof HTMLSelectElement) {
+    overwritePolicy.value = normalized.overwritePolicy;
+  }
+  if (tempRootsInput instanceof HTMLTextAreaElement) {
+    tempRootsInput.value = normalized.temporaryRoots.join("\n");
+  }
+  if (maxFilesInput instanceof HTMLInputElement) {
+    maxFilesInput.value = normalized.budgets.maxFilesPerTurn ? String(normalized.budgets.maxFilesPerTurn) : "";
+  }
+  if (maxBytesInput instanceof HTMLInputElement) {
+    maxBytesInput.value = normalized.budgets.maxBytesPerTurn ? String(normalized.budgets.maxBytesPerTurn) : "";
+  }
+  if (maxToolsInput instanceof HTMLInputElement) {
+    maxToolsInput.value = normalized.budgets.maxToolCallsPerTurn ? String(normalized.budgets.maxToolCallsPerTurn) : "";
+  }
+  if (auditToggle instanceof HTMLInputElement) {
+    auditToggle.checked = normalized.auditEnabled;
+  }
+  if (planToggle instanceof HTMLInputElement) {
+    planToggle.checked = normalized.requireWritePlan;
+  }
+  renderClaudeChatFilesystemRootList(normalized.rootConfigs, normalized.allowWrite);
   if (status instanceof HTMLElement) {
-    status.textContent = normalized.roots.length === 0
+    const writeEnabledCount = normalized.rootConfigs.filter((item) => item.allowWrite).length;
+    status.textContent = normalized.rootConfigs.length === 0
       ? "Claude chat filesystem access is off."
       : normalized.allowWrite
-        ? `Claude chat can read and write inside ${normalized.roots.length} approved folder${normalized.roots.length === 1 ? "" : "s"}.`
-        : `Claude chat can read, list, and search inside ${normalized.roots.length} approved folder${normalized.roots.length === 1 ? "" : "s"}.`;
+        ? `Claude chat can read ${normalized.rootConfigs.length} approved folder${normalized.rootConfigs.length === 1 ? "" : "s"} and write in ${writeEnabledCount} folder${writeEnabledCount === 1 ? "" : "s"}.`
+        : `Claude chat can read, list, and search inside ${normalized.rootConfigs.length} approved folder${normalized.rootConfigs.length === 1 ? "" : "s"}.`;
   }
 }
 
@@ -4566,7 +4979,7 @@ function createEmptyStateElement(): HTMLDivElement {
   const empty = document.createElement("div");
   empty.className = `empty-state${currentInteractionMode === "agent" ? " agent-empty-state" : " chat-empty-state"}`;
   empty.innerHTML = currentInteractionMode === "agent"
-    ? '<div class="empty-hero"><div class="empty-kicker">Agent Mode</div><p><span class="empty-heading-icon" aria-hidden="true">&#9881;</span><span class="empty-heading-text">Agent workspace ready for supervised tasks.</span></p><span class="empty-hero-copy"><span class="empty-subtle-icon">&#8984;</span> Build, fix, continue, and verify work without leaving the main conversation.</span></div>'
+    ? '<div class="empty-hero"><div class="empty-kicker">Agent Mode</div><p><span class="empty-heading-icon" aria-hidden="true">&#9881;</span><span class="empty-heading-text">Run supervised coding tasks.</span></p><span class="empty-hero-copy">Start a focused build, bug fix, or follow-up run without leaving the main workspace.</span></div>'
     : '<div class="empty-hero"><div class="empty-kicker">Workspace Home</div><p><span class="empty-heading-icon" aria-hidden="true">&#10024;</span><span class="empty-heading-text">Start work from a smarter home screen.</span></p><span class="empty-hero-copy"><span class="empty-subtle-icon">&#8984;</span> Chat, think, write, and launch focused tasks from one workspace.</span></div>';
 
   const actions = document.createElement("div");
@@ -4580,8 +4993,8 @@ function createEmptyStateElement(): HTMLDivElement {
   grid.className = `empty-workspace-grid${currentInteractionMode === "agent" ? " agent-layout" : " chat-layout"}`;
 
   const quickSection = document.createElement("section");
-  quickSection.className = "empty-panel";
-  quickSection.innerHTML = `<div class="empty-panel-head"><span class="empty-panel-kicker">Quick Actions</span><strong>${currentInteractionMode === "agent" ? "Launch a focused task" : "Start with a strong prompt"}</strong></div>`;
+  quickSection.className = `empty-panel${currentInteractionMode === "agent" ? " empty-panel-inline" : ""}`;
+  quickSection.innerHTML = `<div class="empty-panel-head"><span class="empty-panel-kicker">Quick Actions</span><strong>${currentInteractionMode === "agent" ? "Launch a task" : "Start with a strong prompt"}</strong></div>`;
   const quickList = document.createElement("div");
   quickList.className = "empty-action-grid";
   for (const action of quickActions) {
@@ -4596,9 +5009,9 @@ function createEmptyStateElement(): HTMLDivElement {
   grid.appendChild(quickSection);
 
   const recentSection = document.createElement("section");
-  recentSection.className = `empty-panel${currentInteractionMode === "agent" ? " empty-panel-wide" : ""}`;
+  recentSection.className = "empty-panel";
   recentSection.innerHTML = currentInteractionMode === "agent"
-    ? `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Tasks</span><strong>${cachedAgentTasks.length > 0 ? "Continue agent work from here" : "No recent tasks yet"}</strong></div>`
+    ? `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Tasks</span><strong>${cachedAgentTasks.length > 0 ? "Resume recent runs" : "No recent tasks yet"}</strong></div>`
     : `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Chats</span><strong>${recentChats.length > 0 ? "Jump back into your work" : "No recent chats yet"}</strong></div>`;
   const recentList = document.createElement("div");
   recentList.className = currentInteractionMode === "agent" ? "empty-agent-task-list" : "empty-chat-list";
@@ -5922,9 +6335,16 @@ function setStreamingUi(active: boolean, statusText = "") {
   if (active) {
     $("send-btn").setAttribute("disabled", "true");
     $("stop-btn").style.display = "inline-block";
-    $("stream-status").textContent = statusText || "Generating...";
+    const nextStatusText = statusText || claudeElapsedStatusText || "Working...";
+    if (!claudeElapsedStartedAt) {
+      startClaudeElapsedTimer(nextStatusText);
+    } else {
+      claudeElapsedStatusText = nextStatusText;
+      renderClaudeElapsedStatus();
+    }
     return;
   }
+  stopClaudeElapsedTimer();
   $("send-btn").removeAttribute("disabled");
   $("stop-btn").style.display = "none";
   $("stream-status").textContent = "";
@@ -6700,7 +7120,7 @@ function setupIpcListeners() {
     setClaudeStatus("Running...", "busy");
   });
 
-    window.api.claude.onError((message) => {
+  window.api.claude.onError((message) => {
       claudeSessionRunning = false;
       claudeSessionChatId = null;
       pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
@@ -6708,6 +7128,7 @@ function setupIpcListeners() {
       pendingClaudeManagedMode = "none";
     appendClaudeLine(message, "stderr");
     finalizeClaudeAssistantMessage(true);
+    maybeShowClaudeRateLimitResumeGuidance(message);
     setClaudeStatus(message, "err");
     setStreamingUi(false);
     showToast(message, 3500);
@@ -6761,6 +7182,7 @@ function setupIpcListeners() {
 // â”€â”€ Settings Panel â”€â”€
 async function loadSettings() {
   const loaded = await window.api.settings.get();
+  temporaryClaudeChatFilesystemRoots = normalizeClaudeChatFilesystemRoots(loaded.claudeChatFilesystem?.temporaryRoots ?? []);
   applyLoadedSettingsToUi(loaded);
   const localVoiceSettings = document.getElementById("local-voice-settings");
   if (localVoiceSettings instanceof HTMLElement) {
@@ -6780,7 +7202,12 @@ async function saveSettings() {
   const baseUrl = ollamaEnabled ? baseUrlInput : (baseUrlInput || getDefaultBaseUrlForProvider(cloudProvider));
   const ollamaBaseUrl = ($("ollama-base-url-input") as HTMLInputElement).value.trim() || "http://localhost:11434/v1";
   const comfyuiBaseUrl = ((document.getElementById("comfyui-base-url-input") as HTMLInputElement | null)?.value ?? "").trim() || COMFYUI_DEFAULT_BASE_URL;
-  const claudeChatFilesystem = getClaudeChatFilesystemSettingsDraft();
+  const claudeChatFilesystemDraft = getClaudeChatFilesystemSettingsDraft();
+  const claudeChatFilesystem = {
+    ...claudeChatFilesystemDraft,
+    temporaryRoots: [],
+    rootConfigs: claudeChatFilesystemDraft.rootConfigs
+  };
   const modelsInput = [...new Set(($("models-textarea") as HTMLTextAreaElement).value
     .split(/[\n,]+/)
     .map((m) => m.trim())
@@ -7805,6 +8232,28 @@ function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): st
   const verificationBadges = buildVerificationMiniBadges(task.verification?.checks);
   const exhaustedRouteBadges = buildExhaustedRouteBadges(task.summary);
   const packagingRetryButton = buildPackagingRetryButton(task, variant);
+  const summary = task.summary ? summarizeAgentTaskSummary(task.summary, task.status) : "";
+
+  if (variant === "main") {
+    const compactMeta = [
+      task.output?.primaryAction ? `Primary action: ${formatAgentPrimaryAction(task.output.primaryAction)}` : "",
+      task.output?.runCommand ? `Run: ${task.output.runCommand}` : "",
+      task.output?.workingDirectory ? `Dir: ${task.output.workingDirectory}` : ""
+    ].filter(Boolean).slice(0, 2);
+
+    return `
+      <div class="task-result-overview task-result-overview-compact">
+        <div class="task-result-overview-head">
+          <div class="task-result-overview-title">${escHtml(task.status === "failed" ? "Result needs attention" : resultTitle)}</div>
+          ${task.artifactType ? `<span class="agent-history-badge">${escHtml(artifactLabel)}</span>` : ""}
+        </div>
+        ${summary ? `<div class="task-result-overview-summary">${escHtml(summary)}</div>` : ""}
+        ${task.verification?.summary ? `<div class="task-result-overview-verify task-result-overview-verify-compact"><strong>Verification</strong><span>${escHtml(task.verification.summary)}</span></div>` : ""}
+        ${compactMeta.length > 0 ? `<div class="task-result-overview-meta">${compactMeta.map((item) => `<span class="agent-history-badge">${escHtml(item)}</span>`).join("")}</div>` : ""}
+        ${verificationBadges ? `<div class="task-result-overview-meta">${verificationBadges}</div>` : ""}
+      </div>
+    `;
+  }
 
   return `
     <div class="task-result-overview">
@@ -7812,7 +8261,7 @@ function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): st
         <div class="task-result-overview-title">${escHtml(task.status === "failed" ? "Result needs attention" : resultTitle)}</div>
         ${task.artifactType ? `<span class="agent-history-badge">${escHtml(artifactLabel)}</span>` : ""}
       </div>
-      ${task.summary ? `<div class="task-result-overview-summary">${escHtml(summarizeAgentTaskSummary(task.summary, task.status))}</div>` : ""}
+      ${summary ? `<div class="task-result-overview-summary">${escHtml(summary)}</div>` : ""}
       ${buildExecutionSpecSection(task.executionSpec)}
       ${buildTaskReviewSection(task)}
       ${usage ? `<div class="task-result-overview-usage"><strong>${escHtml(usage.title)}</strong><span>${escHtml(usage.detail)}</span></div>` : ""}
@@ -7889,7 +8338,7 @@ function buildMainChatCards(chats: ChatSummary[]): string {
 }
 
 function buildMainAgentTaskCards(tasks: AgentTask[]): string {
-  const recentTasks = tasks.slice(0, 4);
+  const recentTasks = tasks.slice(0, 3);
   if (recentTasks.length === 0) {
     return '<div class="empty-panel-note">Run your first supervised task and it will appear here.</div>';
   }
@@ -7908,16 +8357,8 @@ function buildMainAgentTaskCards(tasks: AgentTask[]): string {
         <div class="empty-agent-task-badges">
           <span class="agent-history-badge ${tone}">${escHtml(task.status)}</span>
           ${task.artifactType ? `<span class="agent-history-badge">${escHtml(formatAgentArtifactType(task.artifactType))}</span>` : ""}
-          ${task.verification?.summary ? `<span class="agent-history-badge">${escHtml(task.verification.summary)}</span>` : ""}
           ${targetMissing ? `<span class="agent-history-badge err">${escHtml("Target missing")}</span>` : ""}
         </div>
-        ${buildTaskSnapshotBadges(task)}
-        ${buildTaskSnapshotActions(task, "main")}
-        ${buildTaskRestoreState(task, "main")}
-        ${buildTaskMissingTargetState(task)}
-        ${buildTaskSnapshotHint(task)}
-        ${buildTaskSnapshotDiff(task)}
-        ${buildTaskRestartActions(task, "main")}
         ${buildTaskPrimaryActions(task, "main")}
       </div>
     `;
@@ -10551,28 +10992,112 @@ async function init() {
 
   // Settings
   $("save-settings-btn").onclick = saveSettings;
-  const claudeChatFsRootsInput = document.getElementById("claude-chat-fs-roots");
-  claudeChatFsRootsInput?.addEventListener("input", () => {
+  const claudeChatFsRootList = document.getElementById("claude-chat-fs-root-list");
+  claudeChatFsRootList?.addEventListener("input", () => {
     renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  claudeChatFsRootList?.addEventListener("change", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  claudeChatFsRootList?.addEventListener("click", (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.dataset["role"] !== "remove") return;
+    const index = Number.parseInt(target.dataset["index"] ?? "", 10);
+    if (!Number.isFinite(index)) return;
+    const nextRoots = getClaudeChatFilesystemRootDraftsFromUi().filter((_, itemIndex) => itemIndex !== index);
+    renderClaudeChatFilesystemSettingsUi({
+      ...getClaudeChatFilesystemSettingsDraft(),
+      roots: nextRoots.map((item) => item.path),
+      rootConfigs: nextRoots
+    });
   });
   const claudeChatFsWriteToggle = document.getElementById("claude-chat-fs-write-toggle");
   claudeChatFsWriteToggle?.addEventListener("change", () => {
     renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
   });
+  document.getElementById("claude-chat-fs-overwrite-policy")?.addEventListener("change", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  document.getElementById("claude-chat-fs-temp-roots")?.addEventListener("input", () => {
+    const draft = getClaudeChatFilesystemSettingsDraft();
+    temporaryClaudeChatFilesystemRoots = [...draft.temporaryRoots];
+    renderClaudeChatFilesystemSettingsUi(draft);
+  });
+  document.getElementById("claude-chat-fs-max-files")?.addEventListener("input", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  document.getElementById("claude-chat-fs-max-bytes")?.addEventListener("input", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  document.getElementById("claude-chat-fs-max-tools")?.addEventListener("input", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  document.getElementById("claude-chat-fs-plan-toggle")?.addEventListener("change", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
+  document.getElementById("claude-chat-fs-audit-toggle")?.addEventListener("change", () => {
+    renderClaudeChatFilesystemSettingsUi(getClaudeChatFilesystemSettingsDraft());
+  });
   $("claude-chat-fs-add-btn").addEventListener("click", async () => {
     const picked = await window.api.attachments.pickWritableRoots();
-    const nextRoots = normalizeClaudeChatFilesystemRoots([
-      ...getClaudeChatFilesystemSettingsDraft().roots,
-      ...picked.map((item) => item.writableRoot ?? "").filter(Boolean)
-    ]);
+    const draft = getClaudeChatFilesystemSettingsDraft();
+    const nextRoots = normalizeClaudeChatFilesystemRootDrafts([
+      ...draft.rootConfigs,
+      ...picked.map((item) => ({
+        path: item.writableRoot ?? "",
+        allowWrite: draft.allowWrite,
+        overwritePolicy: draft.overwritePolicy
+      }))
+    ], draft.allowWrite, draft.overwritePolicy);
     renderClaudeChatFilesystemSettingsUi({
-      roots: nextRoots,
-      allowWrite: getClaudeChatFilesystemSettingsDraft().allowWrite
+      ...draft,
+      roots: nextRoots.map((item) => item.path),
+      rootConfigs: nextRoots
     });
     showToast(nextRoots.length > 0 ? "Claude chat folders updated. Save Settings dabao." : "No folders selected.", 2400);
   });
+  $("claude-chat-fs-add-row-btn").addEventListener("click", () => {
+    const draft = getClaudeChatFilesystemSettingsDraft();
+    const nextRoots = [
+      ...draft.rootConfigs,
+      {
+        path: "",
+        label: "",
+        allowWrite: draft.allowWrite,
+        overwritePolicy: draft.overwritePolicy
+      }
+    ];
+    renderClaudeChatFilesystemSettingsUi({
+      ...draft,
+      roots: nextRoots.map((item) => item.path).filter(Boolean),
+      rootConfigs: nextRoots
+    });
+  });
+  $("claude-chat-fs-add-temp-btn").addEventListener("click", async () => {
+    const picked = await window.api.attachments.pickWritableRoots();
+    temporaryClaudeChatFilesystemRoots = normalizeClaudeChatFilesystemRoots([
+      ...temporaryClaudeChatFilesystemRoots,
+      ...picked.map((item) => item.writableRoot ?? "").filter(Boolean)
+    ]);
+    renderClaudeChatFilesystemSettingsUi({
+      ...getClaudeChatFilesystemSettingsDraft(),
+      temporaryRoots: temporaryClaudeChatFilesystemRoots
+    });
+    showToast(temporaryClaudeChatFilesystemRoots.length > 0 ? "Temporary Claude folders updated for this session." : "No temporary folders selected.", 2400);
+  });
   $("claude-chat-fs-clear-btn").addEventListener("click", () => {
-    renderClaudeChatFilesystemSettingsUi({ roots: [], allowWrite: false });
+    temporaryClaudeChatFilesystemRoots = [];
+    renderClaudeChatFilesystemSettingsUi({
+      roots: [],
+      allowWrite: false,
+      overwritePolicy: "allow-overwrite",
+      rootConfigs: [],
+      temporaryRoots: [],
+      budgets: {},
+      auditEnabled: true,
+      requireWritePlan: false
+    });
     showToast("Claude chat folders cleared. Save Settings dabao.", 2200);
   });
   $("model-select").addEventListener("change", () => {

@@ -1,4 +1,6 @@
 import { ChildProcess, spawn } from "node:child_process";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { buildClaudeMessageContent } from "./attachmentSupport";
 import { executeClaudeChatFilesystemTool, type ClaudeChatFilesystemToolCall } from "./claudeChatFilesystem";
 import type { AttachmentPayload, ClaudeChatFilesystemSettings } from "../shared/types";
@@ -8,6 +10,7 @@ interface ClaudeRuntime {
   stdoutBuffer: string;
   awaitingResult: boolean;
   assistantTextBuffer: string;
+  pendingFilesystemToolCall: ClaudeChatFilesystemToolCall | null;
   pendingPromptOptions: ClaudePromptOptions;
   toolCallCount: number;
 }
@@ -25,6 +28,7 @@ interface ClaudeSessionManagerDeps {
   model?: string;
   platform?: NodeJS.Platform;
   workingDirectory?: string;
+  auditLogPath?: string;
 }
 
 export interface ClaudeSessionStatus {
@@ -40,7 +44,7 @@ export interface ClaudeSessionResult extends ClaudeSessionStatus {
 
 const DEFAULT_CLAUDE_MODEL = "minimax-m2.5:cloud";
 const CLAUDE_STREAM_SUFFIX = ["--", "-p", "--bare", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
-const MAX_CLAUDE_TOOL_CALLS = 8;
+const MAX_CLAUDE_TOOL_CALLS = 24;
 
 export async function probeOllamaInstalled(
   spawnCommand: typeof spawn = spawn,
@@ -83,6 +87,7 @@ export class ClaudeSessionManager {
   private readonly model: string;
   private readonly platform: NodeJS.Platform;
   private readonly workingDirectory: string | undefined;
+  private readonly auditLogPath: string | undefined;
 
   constructor(
     private readonly sendToRenderer: ClaudeRendererSender,
@@ -92,6 +97,7 @@ export class ClaudeSessionManager {
     this.model = deps.model ?? DEFAULT_CLAUDE_MODEL;
     this.platform = deps.platform ?? process.platform;
     this.workingDirectory = deps.workingDirectory?.trim() || undefined;
+    this.auditLogPath = deps.auditLogPath?.trim() || undefined;
   }
 
   status(): ClaudeSessionStatus {
@@ -221,11 +227,33 @@ export class ClaudeSessionManager {
     if (!parsed || typeof parsed !== "object") return null;
     const record = parsed as { tool?: unknown; args?: unknown };
     const tool = typeof record.tool === "string" ? record.tool.trim() : "";
-    if (!["list_files", "read_file", "search_files", "write_file"].includes(tool)) return null;
+    if (!["list_files", "read_file", "search_files", "write_plan", "write_file", "write_files", "write_binary", "write_binaries", "mkdir_path", "move_path", "delete_path"].includes(tool)) return null;
     return {
       tool: tool as ClaudeChatFilesystemToolCall["tool"],
       args: record.args && typeof record.args === "object" ? record.args as Record<string, unknown> : {}
     };
+  }
+
+  private parseFilesystemToolUse(part: Record<string, unknown>): ClaudeChatFilesystemToolCall | null {
+    const type = typeof part.type === "string" ? part.type.trim() : "";
+    if (type !== "tool_use") return null;
+
+    const tool = typeof part.name === "string" ? part.name.trim() : "";
+    if (!["list_files", "read_file", "search_files", "write_plan", "write_file", "write_files", "write_binary", "write_binaries", "mkdir_path", "move_path", "delete_path"].includes(tool)) {
+      return null;
+    }
+
+    const input = part.input;
+    return {
+      tool: tool as ClaudeChatFilesystemToolCall["tool"],
+      args: input && typeof input === "object" ? input as Record<string, unknown> : {}
+    };
+  }
+
+  private isMissingFilesystemToolError(input: string): boolean {
+    const lower = (input ?? "").toLowerCase();
+    return ["list_files", "read_file", "search_files", "write_plan", "write_file", "write_files", "write_binary", "write_binaries", "mkdir_path", "move_path", "delete_path"]
+      .some((tool) => lower.includes(tool) && (lower.includes("no such tool available") || lower.includes("tool") && lower.includes("not available")));
   }
 
   private sendUserPacket(runtime: ClaudeRuntime, content: unknown): void {
@@ -243,14 +271,23 @@ export class ClaudeSessionManager {
       this.emitError("Claude chat filesystem access is not configured.");
       return false;
     }
-    if (runtime.toolCallCount >= MAX_CLAUDE_TOOL_CALLS) {
+    const maxToolCalls = Math.max(1, filesystemAccess.budgets?.maxToolCallsPerTurn ?? MAX_CLAUDE_TOOL_CALLS);
+    if (runtime.toolCallCount >= maxToolCalls) {
       this.emitError("Claude chat filesystem tool limit reached for this turn.");
       return false;
     }
 
     runtime.toolCallCount += 1;
     try {
-      const result = await executeClaudeChatFilesystemTool(toolCall, filesystemAccess);
+      const result = await executeClaudeChatFilesystemTool(toolCall, filesystemAccess, {
+        onProgress: (message) => {
+          this.emitOutput(`[Claude filesystem] ${message}`, "system");
+        },
+        onAudit: async (entry) => {
+          if (!filesystemAccess.auditEnabled || !this.auditLogPath) return;
+          await this.appendAuditEntry(entry);
+        }
+      });
       this.sendUserPacket(
         runtime,
         [
@@ -274,6 +311,24 @@ export class ClaudeSessionManager {
         ].join("\n\n")
       );
       return true;
+    }
+  }
+
+  private async appendAuditEntry(entry: {
+    tool: string;
+    args?: Record<string, unknown>;
+    result?: unknown;
+    error?: string;
+  }): Promise<void> {
+    if (!this.auditLogPath) return;
+    try {
+      await mkdir(dirname(this.auditLogPath), { recursive: true });
+      await appendFile(this.auditLogPath, `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ...entry
+      })}\n`, "utf8");
+    } catch {
+      // Audit failures should never block the chat flow.
     }
   }
 
@@ -306,13 +361,20 @@ export class ClaudeSessionManager {
       const content = (message as Record<string, unknown>).content;
       if (!Array.isArray(content)) return;
       const collected: string[] = [];
+      let pendingToolCall: ClaudeChatFilesystemToolCall | null = null;
       for (const part of content) {
         if (!part || typeof part !== "object") continue;
         const typed = part as Record<string, unknown>;
+        const toolUse = this.parseFilesystemToolUse(typed);
+        if (toolUse) {
+          pendingToolCall = toolUse;
+          continue;
+        }
         if (typed.type !== "text") continue;
         const text = typeof typed.text === "string" ? typed.text.trim() : "";
         if (text) collected.push(text);
       }
+      if (pendingToolCall) runtime.pendingFilesystemToolCall = pendingToolCall;
       if (collected.length > 0) {
         runtime.assistantTextBuffer = [runtime.assistantTextBuffer, collected.join("\n")].filter(Boolean).join("\n");
       }
@@ -322,9 +384,15 @@ export class ClaudeSessionManager {
     if (packetType === "result") {
       const resultText = typeof packet.result === "string" ? packet.result.trim() : "";
       const assistantText = runtime.assistantTextBuffer.trim();
+      const pendingToolCall = runtime.pendingFilesystemToolCall;
       runtime.assistantTextBuffer = "";
+      runtime.pendingFilesystemToolCall = null;
 
       if (packet.is_error === true) {
+        if (pendingToolCall && this.isMissingFilesystemToolError([assistantText, resultText].filter(Boolean).join("\n"))) {
+          const continued = await this.handleFilesystemToolCall(runtime, pendingToolCall);
+          if (continued) return;
+        }
         runtime.awaitingResult = false;
         runtime.toolCallCount = 0;
         if (assistantText) this.emitOutput(assistantText, "stderr");
@@ -333,7 +401,7 @@ export class ClaudeSessionManager {
         return;
       }
 
-      const toolCall = this.parseFilesystemToolCall(assistantText);
+      const toolCall = pendingToolCall ?? this.parseFilesystemToolCall(assistantText);
       if (toolCall) {
         const continued = await this.handleFilesystemToolCall(runtime, toolCall);
         if (continued) return;
@@ -369,6 +437,7 @@ export class ClaudeSessionManager {
       stdoutBuffer: "",
       awaitingResult: false,
       assistantTextBuffer: "",
+      pendingFilesystemToolCall: null,
       pendingPromptOptions: {},
       toolCallCount: 0
     };
@@ -404,6 +473,7 @@ export class ClaudeSessionManager {
       if (runtime.stdoutBuffer.trim()) await this.parseStreamLine(runtime, runtime.stdoutBuffer);
       runtime.stdoutBuffer = "";
       runtime.assistantTextBuffer = "";
+      runtime.pendingFilesystemToolCall = null;
       runtime.toolCallCount = 0;
       if (this.runtime?.process === proc) this.runtime = null;
       const stoppedByUser = signal === "SIGTERM";

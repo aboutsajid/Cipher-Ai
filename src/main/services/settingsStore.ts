@@ -9,7 +9,12 @@ import {
   inferCloudProvider,
   isLegacyDefaultCloudModelStrategy
 } from "../../shared/modelCatalog";
-import type { McpServerConfig, PromptTemplate, Settings } from "../../shared/types";
+import type {
+  ClaudeChatFilesystemSettings,
+  McpServerConfig,
+  PromptTemplate,
+  Settings
+} from "../../shared/types";
 
 const MODEL_ID_MIGRATIONS: Record<string, string> = {
   "google/gemini-2.5-flash-lite-": "google/gemini-2.5-flash-lite-preview-09-2025",
@@ -22,9 +27,19 @@ const MODEL_ID_MIGRATIONS: Record<string, string> = {
 };
 
 const ENCRYPTED_SECRET_PREFIX = "cipher-protected:";
-const DEFAULT_CLAUDE_CHAT_FILESYSTEM = {
+const DEFAULT_CLAUDE_CHAT_FILESYSTEM: ClaudeChatFilesystemSettings = {
   roots: [],
-  allowWrite: false
+  allowWrite: false,
+  overwritePolicy: "allow-overwrite",
+  rootConfigs: [],
+  temporaryRoots: [],
+  budgets: {
+    maxFilesPerTurn: 80,
+    maxBytesPerTurn: 2_000_000,
+    maxToolCallsPerTurn: 24
+  },
+  auditEnabled: true,
+  requireWritePlan: false
 };
 const SMOKE_SENTINEL_BASE_URLS = new Set([
   "http://127.0.0.1:9",
@@ -166,7 +181,18 @@ export class SettingsStore {
       ollamaModels: [...this.settings.ollamaModels],
       claudeChatFilesystem: {
         roots: [...(this.settings.claudeChatFilesystem?.roots ?? [])],
-        allowWrite: this.settings.claudeChatFilesystem?.allowWrite === true
+        allowWrite: this.settings.claudeChatFilesystem?.allowWrite === true,
+        overwritePolicy: this.settings.claudeChatFilesystem?.overwritePolicy ?? DEFAULT_CLAUDE_CHAT_FILESYSTEM.overwritePolicy,
+        rootConfigs: Array.isArray(this.settings.claudeChatFilesystem?.rootConfigs)
+          ? this.settings.claudeChatFilesystem!.rootConfigs!.map((root) => ({ ...root }))
+          : [],
+        temporaryRoots: [...(this.settings.claudeChatFilesystem?.temporaryRoots ?? [])],
+        budgets: {
+          ...DEFAULT_CLAUDE_CHAT_FILESYSTEM.budgets,
+          ...(this.settings.claudeChatFilesystem?.budgets ?? {})
+        },
+        auditEnabled: this.settings.claudeChatFilesystem?.auditEnabled !== false,
+        requireWritePlan: this.settings.claudeChatFilesystem?.requireWritePlan === true
       },
       mcpServers: this.settings.mcpServers.map((server) => ({ ...server, args: [...server.args] }))
     };
@@ -174,6 +200,10 @@ export class SettingsStore {
 
   getApiKey(): string {
     return this.settings.apiKey;
+  }
+
+  getDataDirectoryPath(): string {
+    return join(this.userDataPath, "cipher-workspace");
   }
 
   async save(partial: Partial<Settings>): Promise<void> {
