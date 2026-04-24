@@ -1693,9 +1693,10 @@ async function sendClaudePrompt(): Promise<void> {
   const attachmentsToSend = [...activeAttachments];
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   const prompt = rawPrompt || "Please review the attached files.";
-  const workspaceRoot = isClaudeManagedWriteRequest(prompt, attachmentsToSend) ? await ensureWorkspaceRootPath() : "";
+  const managedWriteIntent = isClaudeManagedWriteRequest(prompt, attachmentsToSend);
+  const workspaceRoot = managedWriteIntent ? await ensureWorkspaceRootPath() : "";
   const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
-  const managedWritePermissions: ClaudeManagedEditPermissions = isClaudeManagedWriteRequest(prompt, attachmentsToSend) && workspaceRoot
+  const managedWritePermissions: ClaudeManagedEditPermissions = managedWriteIntent && workspaceRoot
     ? {
         allowedPaths: getEditableSourcePaths(attachmentsToSend),
         allowedRoots: [workspaceRoot]
@@ -3534,13 +3535,23 @@ function isClaudeManagedWriteRequest(prompt: string, attachments: AttachmentPayl
   const writableAttachmentRoots = getWritableRootPaths(attachments);
   const hasWriteContext = editableAttachmentPaths.length > 0 || writableAttachmentRoots.length > 0;
   const createVerb = /\b(create|scaffold|generate|add|set up|setup)\b/.test(normalized);
-  const writeVerb = /\b(build|make|write|implement)\b/.test(normalized);
+  const writeVerb = /\b(build|make|write|implement|fix|rename|remove|delete)\b/.test(normalized);
   const updateVerb = /\b(edit|modify|update|rewrite|refactor|change|save|patch|apply)\b/.test(normalized);
   const fileTarget = /\b(workspace|repo|repository|package|file|files|folder|folders|directory|directories|component|components|module|modules|script|scripts|source|src|readme|package\.json)\b/.test(normalized);
   const productTarget = /\b(project|app|application|service|api|library|tool|website|site)\b/.test(normalized);
   const workspaceScopeHint = /\b(in|inside|within|under)\s+(?:this\s+)?(workspace|repo|repository|folder|directory|project)\b/.test(normalized);
+  const requestLead = /^(please\s+)?(?:can|could|would|will)\s+you\b/.test(normalized)
+    || /\b(?:please|pls)\b/.test(normalized)
+    || /\b(?:need|want)\s+you\s+to\b/.test(normalized)
+    || /\bhelp me\b/.test(normalized);
+  const imperativeLead = /^(please\s+)?(?:create|scaffold|generate|add|set up|setup|build|make|write|implement|fix|rename|remove|delete|edit|modify|update|rewrite|refactor|change|save|patch|apply)\b/.test(normalized);
+  const explicitWriteIntent = requestLead || imperativeLead;
+  const statusReportPhrase = /\b(key outputs|saved files|backup files|unchanged files|unsaved files|files changed|result:|smoke test|the remaining work is done|ready to help|if you want, i can)\b/.test(normalized);
+  const firstPersonReport = /\b(i|we)\s+(?:added|updated|patched|trained|verified|changed|edited|created|generated|installed|refreshed|completed|finished)\b/.test(normalized);
 
-  if (pathHint) return true;
+  if (!explicitWriteIntent && (statusReportPhrase || firstPersonReport)) return false;
+  if (!explicitWriteIntent) return false;
+  if (pathHint && (createVerb || writeVerb || updateVerb)) return true;
   if (updateVerb && (fileTarget || hasWriteContext || workspaceScopeHint)) return true;
   if ((createVerb || writeVerb) && fileTarget && (hasWriteContext || workspaceScopeHint)) return true;
   if ((createVerb || writeVerb) && productTarget && (hasWriteContext || workspaceScopeHint)) return true;
@@ -4746,7 +4757,7 @@ function renderMessageBody(contentEl: HTMLElement, content: string, done: boolea
 }
 
 function shouldRenderMessageAsPlainText(msg: Message | undefined): boolean {
-  return msg?.role === "assistant" && msg.model === CLAUDE_MODEL_LABEL;
+  return msg?.role === "system";
 }
 
 function updateMessageDensityState(): void {

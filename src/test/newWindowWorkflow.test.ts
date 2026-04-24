@@ -47,11 +47,12 @@ test("renderer can open an unsaved draft chat from the window query string", () 
   assert.match(rendererSource, /openDraftChat\(\);/);
 });
 
-test("renderer keeps Claude chat output in exact plain-text mode and binds Claude sessions to a chat id", () => {
+test("renderer binds Claude sessions to a chat id without forcing Claude assistant output into plain-text mode", () => {
   const rendererSource = readProjectFile("src/renderer/app.ts");
 
   assert.match(rendererSource, /function shouldRenderMessageAsPlainText\(msg: Message \| undefined\): boolean/);
-  assert.match(rendererSource, /msg\.model === CLAUDE_MODEL_LABEL/);
+  assert.match(rendererSource, /return msg\?\.role === "system";/);
+  assert.doesNotMatch(rendererSource, /msg\.model === CLAUDE_MODEL_LABEL/);
   assert.match(rendererSource, /contentEl\.dataset\["renderMode"\] = shouldRenderMessageAsPlainText\(message\) \? "plain" : "markdown"/);
   assert.match(rendererSource, /const ready = await ensureClaudeChatSessionReady\(chatId\);/);
   assert.match(rendererSource, /window\.api\.claude\.send\(claudePrompt, \{\s*chatId,/);
@@ -62,9 +63,11 @@ test("renderer only enables Claude managed write mode when prompts include expli
 
   assert.match(rendererSource, /function isClaudeManagedWriteRequest\(prompt: string, attachments: AttachmentPayload\[\] = \[\]\): boolean/);
   assert.match(rendererSource, /const hasWriteContext = editableAttachmentPaths\.length > 0 \|\| writableAttachmentRoots\.length > 0;/);
+  assert.match(rendererSource, /const explicitWriteIntent = requestLead \|\| imperativeLead;/);
   assert.match(rendererSource, /const fileTarget = \/\\b\(workspace\|repo\|repository\|package\|file\|files\|folder\|folders\|directory\|directories\|component\|components\|module\|modules\|script\|scripts\|source\|src\|readme\|package\\\.json\)\\b\//);
   assert.match(rendererSource, /const productTarget = \/\\b\(project\|app\|application\|service\|api\|library\|tool\|website\|site\)\\b\//);
   assert.match(rendererSource, /const workspaceScopeHint = \/\\b\(in\|inside\|within\|under\)\\s\+\(\?:this\\s\+\)\?\(workspace\|repo\|repository\|folder\|directory\|project\)\\b\//);
+  assert.doesNotMatch(rendererSource, /if \(pathHint\) return true;/);
   assert.match(rendererSource, /isClaudeManagedWriteRequest\(prompt, attachmentsToSend\)/);
 });
 
