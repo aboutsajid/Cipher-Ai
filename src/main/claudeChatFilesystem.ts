@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   ClaudeChatFilesystemBudgets,
@@ -86,21 +86,31 @@ export function normalizeClaudeChatFilesystemSettings(
   raw: ClaudeChatFilesystemSettings | null | undefined
 ): ClaudeChatFilesystemSettings {
   const roots = Array.isArray(raw?.roots)
-    ? [...new Set(raw!.roots.map((root) => resolve(String(root ?? "").trim())).filter(Boolean))]
+    ? [...new Set(raw!.roots
+      .map((root) => String(root ?? "").trim())
+      .filter(Boolean)
+      .map((root) => resolve(root)))]
     : [];
   const rootConfigs = Array.isArray(raw?.rootConfigs)
     ? raw!.rootConfigs
       .filter((root): root is ClaudeChatFilesystemRootConfig => Boolean(root && typeof root === "object"))
       .map((root) => ({
-        path: resolve(String(root.path ?? "").trim()),
+        path: String(root.path ?? "").trim(),
         label: typeof root.label === "string" ? root.label.trim() : undefined,
         allowWrite: root.allowWrite === true,
         overwritePolicy: root.overwritePolicy
       }))
       .filter((root) => Boolean(root.path))
+      .map((root) => ({
+        ...root,
+        path: resolve(root.path)
+      }))
     : [];
   const temporaryRoots = Array.isArray(raw?.temporaryRoots)
-    ? [...new Set(raw!.temporaryRoots.map((root) => resolve(String(root ?? "").trim())).filter(Boolean))]
+    ? [...new Set(raw!.temporaryRoots
+      .map((root) => String(root ?? "").trim())
+      .filter(Boolean)
+      .map((root) => resolve(root)))]
     : [];
   return {
     roots,
@@ -159,7 +169,7 @@ function normalizeClaudeSettings(settings: ClaudeChatFilesystemSettings | Normal
     });
   }
 
-  const rootEntries = [...rootMap.values()].sort((a, b) => a.path.localeCompare(b.path));
+  const rootEntries = [...rootMap.values()].sort((a, b) => b.path.length - a.path.length || a.path.localeCompare(b.path));
   return {
     roots: rootEntries.map((root) => root.path),
     allowWrite: normalized.allowWrite,
@@ -192,6 +202,50 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 function isPathWithinRoot(root: string, candidate: string): boolean {
   const relativePath = relative(root, candidate);
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.includes("..\\") && !relativePath.includes("../"));
+}
+
+function isSamePath(left: string, right: string): boolean {
+  return relative(left, right) === "";
+}
+
+async function findNearestExistingPath(targetPath: string): Promise<string> {
+  let current = targetPath;
+  while (true) {
+    try {
+      await lstat(current);
+      return current;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return current;
+      current = parent;
+    }
+  }
+}
+
+async function assertResolvedPathStaysInsideRoot(
+  target: ResolvedClaudePath,
+  options: { allowMissing?: boolean } = {}
+): Promise<void> {
+  let realRoot = "";
+  try {
+    realRoot = await realpath(target.rootEntry.path);
+  } catch {
+    throw new Error(`Approved Claude chat folder does not exist: ${target.rootEntry.path}`);
+  }
+
+  const pathToCheck = options.allowMissing
+    ? await findNearestExistingPath(target.absolutePath)
+    : target.absolutePath;
+  let realCandidate = "";
+  try {
+    realCandidate = await realpath(pathToCheck);
+  } catch {
+    throw new Error(`Path does not exist: ${target.absolutePath}`);
+  }
+
+  if (!isPathWithinRoot(realRoot, realCandidate)) {
+    throw new Error("Path resolves outside the approved Claude chat folders.");
+  }
 }
 
 function resolveAllowedPath(
@@ -362,6 +416,7 @@ async function listFiles(
   settings: ClaudeChatFilesystemSettings
 ): Promise<ClaudeChatFilesystemToolResult> {
   const target = resolveAllowedPath(String(args?.path ?? ""), settings);
+  await assertResolvedPathStaysInsideRoot(target);
   const targetStats = await stat(target.absolutePath);
   const depth = clampInteger(args?.depth, 2, 0, MAX_LIST_DEPTH);
 
@@ -398,6 +453,7 @@ async function readTextFile(
   settings: ClaudeChatFilesystemSettings
 ): Promise<ClaudeChatFilesystemToolResult> {
   const target = resolveAllowedPath(String(args?.path ?? ""), settings);
+  await assertResolvedPathStaysInsideRoot(target);
   const targetStats = await stat(target.absolutePath);
   if (!targetStats.isFile()) {
     throw new Error("read_file requires a file path.");
@@ -459,6 +515,7 @@ async function searchFiles(
   }
 
   const target = resolveAllowedPath(String(args?.path ?? ""), settings);
+  await assertResolvedPathStaysInsideRoot(target);
   const files: string[] = [];
   await collectSearchableFiles(target.absolutePath, { count: MAX_SEARCH_FILES }, files);
   const matches: Array<{ path: string; line: number; preview: string }> = [];
@@ -524,11 +581,13 @@ async function buildWritePlan(
   const targets = targetPath
     ? [resolveAllowedPath(targetPath, normalizedSettings, { allowMissing: true })]
     : files.map((file) => resolveAllowedPath(file.path, normalizedSettings, { allowMissing: true }));
+  await Promise.all(targets.map((target) => assertResolvedPathStaysInsideRoot(target, { allowMissing: true })));
   const uniqueRoots = [...new Set(targets.map((target) => target.root))];
   const overwriteCandidates: string[] = [];
   const newFiles: string[] = [];
   for (const file of files) {
     const resolvedTarget = resolveAllowedPath(file.path, normalizedSettings, { allowMissing: true });
+    await assertResolvedPathStaysInsideRoot(resolvedTarget, { allowMissing: true });
     if (await pathExists(resolvedTarget.absolutePath)) {
       overwriteCandidates.push(resolvedTarget.absolutePath);
     } else {
@@ -568,6 +627,7 @@ async function writeTextFile(
 ): Promise<ClaudeChatFilesystemToolResult> {
   const normalizedSettings = ensureRootsConfigured(settings);
   const target = resolveAllowedPath(String(args?.path ?? ""), normalizedSettings, { allowMissing: true });
+  await assertResolvedPathStaysInsideRoot(target, { allowMissing: true });
   ensureWriteEnabled([target], normalizedSettings);
   const content = typeof args?.content === "string" ? args.content : String(args?.content ?? "");
   if (Buffer.byteLength(content, "utf8") > normalizedSettings.budgets.maxBytesPerTurn) {
@@ -647,6 +707,7 @@ async function writeTextFiles(
       content: typeof typed.content === "string" ? typed.content : String(typed.content ?? "")
     };
   });
+  await Promise.all(targets.map((entry) => assertResolvedPathStaysInsideRoot(entry.target, { allowMissing: true })));
   ensureWriteEnabled(targets.map((entry) => entry.target), normalizedSettings);
 
   const saved: Array<{ path: string; size: number; replaced: boolean }> = [];
@@ -685,6 +746,7 @@ async function writeBinaryFile(
 ): Promise<ClaudeChatFilesystemToolResult> {
   const normalizedSettings = ensureRootsConfigured(settings);
   const target = resolveAllowedPath(String(args?.path ?? ""), normalizedSettings, { allowMissing: true });
+  await assertResolvedPathStaysInsideRoot(target, { allowMissing: true });
   ensureWriteEnabled([target], normalizedSettings);
   const content = decodeBase64Payload(args?.contentBase64);
   if (content.byteLength > normalizedSettings.budgets.maxBytesPerTurn) {
@@ -721,6 +783,7 @@ async function writeBinaryFiles(
       content: decodeBase64Payload(typed.contentBase64)
     };
   });
+  await Promise.all(targets.map((entry) => assertResolvedPathStaysInsideRoot(entry.target, { allowMissing: true })));
   ensureWriteEnabled(targets.map((entry) => entry.target), normalizedSettings);
   const saved: Array<{ path: string; size: number; replaced: boolean }> = [];
   let totalBytes = 0;
@@ -749,6 +812,7 @@ async function mkdirPath(
 ): Promise<ClaudeChatFilesystemToolResult> {
   const normalizedSettings = ensureRootsConfigured(settings);
   const target = resolveAllowedPath(String(args?.path ?? ""), normalizedSettings, { allowMissing: true });
+  await assertResolvedPathStaysInsideRoot(target, { allowMissing: true });
   ensureWriteEnabled([target], normalizedSettings);
   emitProgress(hooks, `creating directory ${target.absolutePath}`);
   await mkdir(target.absolutePath, { recursive: true });
@@ -763,6 +827,8 @@ async function movePath(
   const normalizedSettings = ensureRootsConfigured(settings);
   const fromTarget = resolveAllowedPath(String(args?.fromPath ?? ""), normalizedSettings);
   const toTarget = resolveAllowedPath(String(args?.toPath ?? ""), normalizedSettings, { allowMissing: true });
+  await assertResolvedPathStaysInsideRoot(fromTarget);
+  await assertResolvedPathStaysInsideRoot(toTarget, { allowMissing: true });
   ensureWriteEnabled([fromTarget, toTarget], normalizedSettings);
   if (!await pathExists(fromTarget.absolutePath)) {
     throw new Error(`Source path does not exist: ${fromTarget.absolutePath}`);
@@ -781,7 +847,11 @@ async function deletePath(
 ): Promise<ClaudeChatFilesystemToolResult> {
   const normalizedSettings = ensureRootsConfigured(settings);
   const target = resolveAllowedPath(String(args?.path ?? ""), normalizedSettings);
+  await assertResolvedPathStaysInsideRoot(target);
   ensureWriteEnabled([target], normalizedSettings);
+  if (isSamePath(target.absolutePath, target.rootEntry.path)) {
+    throw new Error("Deleting an approved Claude chat folder root is blocked.");
+  }
   emitProgress(hooks, `deleting ${target.absolutePath}`);
   await rm(target.absolutePath, { recursive: args?.recursive === true, force: false });
   return { ok: true, tool: "delete_path", data: { path: target.absolutePath, recursive: args?.recursive === true } };

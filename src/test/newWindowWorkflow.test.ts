@@ -81,6 +81,15 @@ test("renderer preserves Claude system notices and applies sparse-chat density s
   assert.match(rendererSource, /container\.classList\.toggle\("messages-sparse", sparseConversation\)/);
 });
 
+test("renderer top stop button stops active Claude sessions", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+
+  assert.match(rendererSource, /async function stopClaudeSessionFromUi\(toastMessage = "Claude stop requested\."\): Promise<boolean>/);
+  assert.match(rendererSource, /suppressClaudeExitNotice = true;\s*setClaudeStatus\("Stopping Claude Code\.\.\.", "busy"\);/);
+  assert.match(rendererSource, /const res = await window\.api\.claude\.stop\(\);/);
+  assert.match(rendererSource, /\$\("stop-btn"\)\.onclick = async \(\) => \{[\s\S]*currentMode === "claude" \|\| currentMode === "edit" \|\| activeClaudeAssistantMessageId[\s\S]*await stopClaudeSessionFromUi\(\);[\s\S]*return;/);
+});
+
 test("main window restores saved bounds and no longer force-maximizes on every launch", () => {
   const mainSource = readProjectFile("src/main/main.ts");
 

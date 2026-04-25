@@ -94,6 +94,86 @@ test("ClaudeSessionManager starts, sends prompts, and emits parsed output", asyn
   ]);
 });
 
+test("ClaudeSessionManager routes stream result errors through the error channel", async () => {
+  const probe = new FakeChildProcess(1);
+  const runtime = new FakeChildProcess(2020);
+  const sent: Array<{ channel: string; payload: unknown }> = [];
+  let spawnCalls = 0;
+  const manager = new ClaudeSessionManager(
+    (channel, payload) => {
+      sent.push({ channel, payload });
+    },
+    {
+      spawnCommand: (() => {
+        spawnCalls += 1;
+        return (spawnCalls === 1 ? probe : runtime) as never;
+      }) as never,
+      platform: "linux"
+    }
+  );
+
+  queueMicrotask(() => probe.emit("exit", 0));
+  const started = await manager.start();
+  assert.equal(started.ok, true);
+
+  const promptResult = manager.sendPrompt("Continue the project.");
+  assert.equal(promptResult.ok, true);
+
+  const rateLimitError = "Error: API Error: 429 rate_limit_error";
+  runtime.stdout.emit("data", Buffer.from(`{"type":"assistant","message":{"content":[{"type":"text","text":"${rateLimitError}"}]}}\n`));
+  runtime.stdout.emit("data", Buffer.from(`{"type":"result","result":"${rateLimitError}","is_error":true}\n`));
+  assert.equal(await waitFor(() => sent.length >= 2), true);
+
+  assert.deepEqual(sent, [
+    { channel: "claude:error", payload: rateLimitError },
+    { channel: "claude:exit", payload: { code: 0, signal: null } }
+  ]);
+});
+
+test("ClaudeSessionManager stop cancels a pending prompt without reporting a normal process exit", async () => {
+  const probe = new FakeChildProcess(1);
+  const runtime = new FakeChildProcess(2020);
+  const killer = new FakeChildProcess(3030);
+  const sent: Array<{ channel: string; payload: unknown }> = [];
+  const commands: string[] = [];
+  let launchCalls = 0;
+  const manager = new ClaudeSessionManager(
+    (channel, payload) => {
+      sent.push({ channel, payload });
+    },
+    {
+      spawnCommand: ((command: string) => {
+        commands.push(command);
+        if (command === "taskkill") {
+          queueMicrotask(() => killer.emit("exit", 0));
+          return killer as never;
+        }
+        launchCalls += 1;
+        return (launchCalls === 1 ? probe : runtime) as never;
+      }) as never,
+      platform: "win32"
+    }
+  );
+
+  queueMicrotask(() => probe.emit("exit", 0));
+  const started = await manager.start();
+  assert.equal(started.ok, true);
+
+  const promptResult = manager.sendPrompt("Keep working until I stop you.");
+  assert.equal(promptResult.ok, true);
+  assert.equal(manager.status().running, true);
+
+  const stopped = await manager.stop();
+  assert.equal(stopped.ok, true);
+  assert.equal(stopped.running, false);
+  assert.deepEqual(commands, ["ollama", "ollama", "taskkill"]);
+
+  runtime.emit("exit", 1, null);
+  assert.deepEqual(sent, [
+    { channel: "claude:exit", payload: { code: 1, signal: null } }
+  ]);
+});
+
 test("ClaudeSessionManager clears the enabled state after a failed launch", async () => {
   const probe = new FakeChildProcess(1);
   const sent: Array<{ channel: string; payload: unknown }> = [];

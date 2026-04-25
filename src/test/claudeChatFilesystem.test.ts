@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { executeClaudeChatFilesystemTool } from "../main/claudeChatFilesystem";
+import { executeClaudeChatFilesystemTool, normalizeClaudeChatFilesystemSettings } from "../main/claudeChatFilesystem";
 
 test("executeClaudeChatFilesystemTool reads, searches, lists, and writes only inside approved roots", async () => {
   const root = await mkdtemp(join(tmpdir(), "cipher-claude-fs-"));
@@ -180,4 +180,82 @@ test("executeClaudeChatFilesystemTool enforces create-only overwrite policy", as
     allowWrite: true,
     overwritePolicy: "create-only"
   }), /create-only policy/i);
+});
+
+test("normalizeClaudeChatFilesystemSettings ignores blank roots instead of resolving the workspace", () => {
+  const root = resolve("approved-folder");
+  const normalized = normalizeClaudeChatFilesystemSettings({
+    roots: [" ", root],
+    allowWrite: true,
+    rootConfigs: [
+      { path: "", allowWrite: true },
+      { path: root, allowWrite: true }
+    ],
+    temporaryRoots: ["", "   "]
+  });
+
+  assert.deepEqual(normalized.roots, [root]);
+  assert.deepEqual(normalized.rootConfigs?.map((entry) => entry.path), [root]);
+  assert.deepEqual(normalized.temporaryRoots, []);
+});
+
+test("executeClaudeChatFilesystemTool applies the most specific root permissions first", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cipher-claude-fs-"));
+  const lockedChild = join(root, "locked");
+  await mkdir(lockedChild, { recursive: true });
+
+  await assert.rejects(() => executeClaudeChatFilesystemTool({
+    tool: "write_file",
+    args: { path: join(lockedChild, "note.txt"), content: "blocked" }
+  }, {
+    roots: [root, lockedChild],
+    allowWrite: true,
+    rootConfigs: [
+      { path: root, allowWrite: true },
+      { path: lockedChild, allowWrite: false }
+    ]
+  }), /write access is disabled/i);
+});
+
+test("executeClaudeChatFilesystemTool blocks symlink and junction escapes from approved roots", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "cipher-claude-fs-"));
+  const outside = await mkdtemp(join(tmpdir(), "cipher-claude-outside-"));
+  const linkPath = join(root, "linked");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  try {
+    await symlink(outside, linkPath, linkType);
+  } catch {
+    t.skip("symlink creation is not available in this environment");
+    return;
+  }
+
+  await writeFile(join(outside, "secret.txt"), "secret", "utf8");
+
+  await assert.rejects(() => executeClaudeChatFilesystemTool({
+    tool: "read_file",
+    args: { path: join(linkPath, "secret.txt") }
+  }, {
+    roots: [root],
+    allowWrite: false
+  }), /resolves outside the approved claude chat folders/i);
+
+  await assert.rejects(() => executeClaudeChatFilesystemTool({
+    tool: "write_file",
+    args: { path: join(linkPath, "new.txt"), content: "blocked" }
+  }, {
+    roots: [root],
+    allowWrite: true
+  }), /resolves outside the approved claude chat folders/i);
+});
+
+test("executeClaudeChatFilesystemTool blocks deleting an approved root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cipher-claude-fs-"));
+
+  await assert.rejects(() => executeClaudeChatFilesystemTool({
+    tool: "delete_path",
+    args: { path: root, recursive: true }
+  }, {
+    roots: [root],
+    allowWrite: true
+  }), /deleting an approved claude chat folder root is blocked/i);
 });

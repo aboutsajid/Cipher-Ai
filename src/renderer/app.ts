@@ -583,6 +583,11 @@ type ClaudeChatFilesystemRootDraft = {
   allowWrite: boolean;
   overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite";
 };
+type ClaudeFilesystemEvent = {
+  action: string;
+  path: string;
+  createdAt: string;
+};
 let mcpStatus: McpStatus = { servers: [], tools: [] };
 let activeAgentTaskId: string | null = null;
 let activeAgentTaskStatus: AgentTask["status"] | null = null;
@@ -1007,23 +1012,63 @@ function isClaudeRateLimitError(message: string): boolean {
   return /api error:\s*429|rate_limit_error|rate limit|session usage limit/.test(normalized);
 }
 
-function getConfiguredClaudeWritableRoots(): string[] {
-  const filesystem = settings?.claudeChatFilesystem;
+function normalizePathForComparison(input: string): string {
+  return String(input ?? "").trim().replace(/\//g, "\\").replace(/[\\]+$/, "");
+}
+
+function isSameOrInsidePath(candidate: string, root: string): boolean {
+  const normalizedCandidate = normalizePathForComparison(candidate).toLowerCase();
+  const normalizedRoot = normalizePathForComparison(root).toLowerCase();
+  if (!normalizedCandidate || !normalizedRoot) return false;
+  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}\\`);
+}
+
+function getActiveClaudeChatFilesystemSettings(): Settings["claudeChatFilesystem"] | undefined {
+  if (!settings?.claudeChatFilesystem) return undefined;
+  return {
+    ...settings.claudeChatFilesystem,
+    temporaryRoots: [...temporaryClaudeChatFilesystemRoots]
+  };
+}
+
+function getClaudeWritableRootDraftsFromFilesystem(
+  filesystem: Settings["claudeChatFilesystem"] | undefined
+): ClaudeChatFilesystemRootDraft[] {
   if (!filesystem) return [];
-  return normalizeClaudeChatFilesystemRootDrafts(
+  const fallbackAllowWrite = filesystem.allowWrite === true;
+  const fallbackOverwritePolicy = filesystem.overwritePolicy ?? "allow-overwrite";
+  const temporaryRootConfigs = normalizeClaudeChatFilesystemRoots(filesystem.temporaryRoots ?? []).map((path) => ({
+    path,
+    label: "",
+    allowWrite: fallbackAllowWrite,
+    overwritePolicy: fallbackOverwritePolicy
+  }));
+  const configuredRootDrafts = normalizeClaudeChatFilesystemRootDrafts(
     Array.isArray(filesystem.rootConfigs) && filesystem.rootConfigs.length > 0
       ? filesystem.rootConfigs
       : (filesystem.roots ?? []).map((path) => ({
           path,
           label: "",
-          allowWrite: filesystem.allowWrite === true,
-          overwritePolicy: filesystem.overwritePolicy ?? "allow-overwrite"
+          allowWrite: fallbackAllowWrite,
+          overwritePolicy: fallbackOverwritePolicy
         })),
-    filesystem.allowWrite === true,
-    filesystem.overwritePolicy ?? "allow-overwrite"
+    fallbackAllowWrite,
+    fallbackOverwritePolicy
+  );
+  return normalizeClaudeChatFilesystemRootDrafts(
+    [...temporaryRootConfigs, ...configuredRootDrafts],
+    fallbackAllowWrite,
+    fallbackOverwritePolicy
   )
-    .filter((root) => root.allowWrite && root.path)
-    .map((root) => root.path);
+    .filter((root) => root.allowWrite && root.path);
+}
+
+function getConfiguredClaudeWritableRootDrafts(): ClaudeChatFilesystemRootDraft[] {
+  return getClaudeWritableRootDraftsFromFilesystem(getActiveClaudeChatFilesystemSettings());
+}
+
+function getConfiguredClaudeWritableRoots(): string[] {
+  return getConfiguredClaudeWritableRootDrafts().map((root) => root.path);
 }
 
 function getParentPath(input: string): string {
@@ -1051,24 +1096,150 @@ function findCommonPath(paths: string[]): string {
   return shared.join("\\");
 }
 
-function inferClaudeResumeProjectPath(): string {
-  const touchedPaths: string[] = [];
-  for (let index = renderedMessages.length - 1; index >= 0 && touchedPaths.length < 20; index -= 1) {
-    const message = renderedMessages[index];
+function parseClaudeFilesystemEventLine(line: string, createdAt: string): ClaudeFilesystemEvent | null {
+  const match = line.trim().match(/^\[Claude filesystem\]\s+(staging|writing|created|creating directory|moving|deleting|deleted)\s+(.+)$/i);
+  if (!match) return null;
+  const rawPath = (match[2] ?? "").trim().split(/\s+->\s+/)[0]?.trim() ?? "";
+  if (!rawPath) return null;
+  return {
+    action: (match[1] ?? "").toLowerCase(),
+    path: normalizePathForComparison(rawPath),
+    createdAt
+  };
+}
+
+function getClaudeFilesystemEvents(messages: Message[] = renderedMessages): ClaudeFilesystemEvent[] {
+  const events: ClaudeFilesystemEvent[] = [];
+  for (const message of messages) {
     if (message.role !== "system") continue;
     const lines = String(message.content ?? "").split("\n");
-    for (let lineIndex = lines.length - 1; lineIndex >= 0 && touchedPaths.length < 20; lineIndex -= 1) {
-      const line = lines[lineIndex].trim();
-      const match = line.match(/^\[Claude filesystem\]\s+(?:staging|writing|created|deleting|deleted)\s+(.+)$/i);
-      if (!match) continue;
-      const rawPath = (match[1] ?? "").trim().split(/\s+->\s+/)[0]?.trim() ?? "";
-      if (rawPath) touchedPaths.push(rawPath);
+    for (const line of lines) {
+      const event = parseClaudeFilesystemEventLine(line, message.createdAt);
+      if (event) events.push(event);
     }
   }
+  return events;
+}
 
-  const parentPaths = touchedPaths.map((path) => getParentPath(path)).filter(Boolean);
-  const commonTouchedPath = findCommonPath(parentPaths);
-  if (commonTouchedPath) return commonTouchedPath;
+function isLikelyClaudeProjectRootRelativePath(relativePath: string): boolean {
+  const segments = normalizePathForComparison(relativePath).split("\\").filter(Boolean);
+  if (segments.length === 0) return true;
+  if (segments.length === 1) return true;
+
+  const firstSegment = segments[0].toLowerCase();
+  if (firstSegment.startsWith(".")) return true;
+  if (/\.[a-z0-9][a-z0-9_-]{0,12}$/i.test(firstSegment)) return true;
+
+  const structuralSegments = new Set([
+    "api",
+    "app",
+    "apps",
+    "assets",
+    "backend",
+    "build",
+    "client",
+    "components",
+    "config",
+    "configs",
+    "dist",
+    "docs",
+    "electron",
+    "features",
+    "frontend",
+    "lib",
+    "libs",
+    "modules",
+    "node_modules",
+    "packages",
+    "pages",
+    "public",
+    "routes",
+    "scripts",
+    "server",
+    "spec",
+    "specs",
+    "src",
+    "static",
+    "styles",
+    "test",
+    "tests",
+    "views"
+  ]);
+  return structuralSegments.has(firstSegment);
+}
+
+function getClaudeProjectCandidateForPath(path: string, approvedRoots: string[]): string {
+  const normalizedPath = normalizePathForComparison(path);
+  const matchingRoot = approvedRoots
+    .map(normalizePathForComparison)
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .find((root) => isSameOrInsidePath(normalizedPath, root));
+
+  if (matchingRoot) {
+    const relative = normalizedPath.slice(matchingRoot.length).replace(/^[\\]+/, "");
+    const firstSegment = relative.split("\\").filter(Boolean)[0] ?? "";
+    if (!firstSegment || isLikelyClaudeProjectRootRelativePath(relative)) return matchingRoot;
+    return firstSegment ? `${matchingRoot}\\${firstSegment}` : matchingRoot;
+  }
+
+  return getParentPath(normalizedPath);
+}
+
+function inferClaudeProjectTargetPath(
+  events: ClaudeFilesystemEvent[] = getClaudeFilesystemEvents(),
+  approvedRoots: string[] = getConfiguredClaudeWritableRoots()
+): string {
+  if (events.length === 0) return "";
+  const candidates = new Map<string, { count: number; latestIndex: number }>();
+
+  events.forEach((event, index) => {
+    const candidate = getClaudeProjectCandidateForPath(event.path, approvedRoots);
+    if (!candidate) return;
+    if (approvedRoots.length > 0 && !approvedRoots.some((root) => isSameOrInsidePath(candidate, root))) return;
+    const prior = candidates.get(candidate) ?? { count: 0, latestIndex: -1 };
+    candidates.set(candidate, { count: prior.count + 1, latestIndex: Math.max(prior.latestIndex, index) });
+  });
+
+  return [...candidates.entries()]
+    .sort((left, right) => {
+      const countDelta = right[1].count - left[1].count;
+      if (countDelta !== 0) return countDelta;
+      return right[1].latestIndex - left[1].latestIndex;
+    })[0]?.[0] ?? "";
+}
+
+function getClaudeLockedProjectTarget(): string {
+  return inferClaudeProjectTargetPath();
+}
+
+function buildLockedClaudeFilesystemAccess<T extends NonNullable<Settings["claudeChatFilesystem"]>>(filesystemAccess: T | undefined): T | undefined {
+  if (!filesystemAccess) return filesystemAccess;
+  const target = getClaudeLockedProjectTarget();
+  if (!target) return filesystemAccess;
+
+  const rootDrafts = getClaudeWritableRootDraftsFromFilesystem(filesystemAccess);
+  const root = rootDrafts.find((candidate) => isSameOrInsidePath(target, candidate.path));
+  if (!root) return filesystemAccess;
+
+  return {
+    ...filesystemAccess,
+    roots: [target],
+    rootConfigs: [{
+      path: target,
+      label: "Locked target",
+      allowWrite: true,
+      overwritePolicy: root.overwritePolicy ?? filesystemAccess.overwritePolicy ?? "allow-overwrite"
+    }],
+    temporaryRoots: [],
+    allowWrite: true,
+    overwritePolicy: root.overwritePolicy ?? filesystemAccess.overwritePolicy ?? "allow-overwrite"
+  };
+}
+
+function inferClaudeResumeProjectPath(): string {
+  const lockedTarget = getClaudeLockedProjectTarget();
+  if (lockedTarget) return lockedTarget;
 
   const writableRoots = getConfiguredClaudeWritableRoots();
   return writableRoots[0] ?? "";
@@ -1077,9 +1248,9 @@ function inferClaudeResumeProjectPath(): string {
 function buildClaudeRateLimitResumePrompt(projectPath: string): string {
   const target = (projectPath ?? "").trim();
   if (target) {
-    return `Continue the existing project in ${target}. List what is already created, identify what is still missing, then complete only the remaining files using Claude filesystem tools.`;
+    return `Continue the existing project in ${target}. First list the existing files in that target, identify what is still missing, then complete only the remaining files using Claude filesystem tools. Do not create a sibling project folder.`;
   }
-  return "Continue the existing approved-folder project. List what is already created, identify what is still missing, then complete only the remaining files using Claude filesystem tools.";
+  return "Continue the existing approved-folder project. First list the existing files, identify what is still missing, then complete only the remaining files using Claude filesystem tools. Do not create a sibling project folder.";
 }
 
 function maybeShowClaudeRateLimitResumeGuidance(message: string): void {
@@ -1093,6 +1264,82 @@ function maybeShowClaudeRateLimitResumeGuidance(message: string): void {
   ];
   appendClaudeLine(lines.join("\n"), "system");
   showToast("Claude hit a rate limit. Resume prompt added below.", 3600);
+}
+
+function hasClaudeRateLimitNotice(messages: Message[] = renderedMessages): boolean {
+  return messages.some((message) => isClaudeRateLimitError(message.content));
+}
+
+function getPathDisplayName(path: string): string {
+  const normalized = normalizePathForComparison(path);
+  return normalized.split("\\").filter(Boolean).pop() ?? normalized;
+}
+
+function formatClaudeTimelinePath(path: string, target: string): string {
+  const normalizedPath = normalizePathForComparison(path);
+  const normalizedTarget = normalizePathForComparison(target);
+  if (normalizedTarget && isSameOrInsidePath(normalizedPath, normalizedTarget)) {
+    const relative = normalizedPath.slice(normalizedTarget.length).replace(/^[\\]+/, "");
+    return relative || getPathDisplayName(normalizedTarget);
+  }
+  return normalizedPath;
+}
+
+function refreshClaudeSafetyPanel(): void {
+  const panel = document.getElementById("claude-chat-safety-panel");
+  const chip = document.getElementById("claude-target-chip");
+  const resumeBtn = document.getElementById("claude-resume-btn");
+  const timeline = document.getElementById("claude-fs-timeline");
+  if (!(panel instanceof HTMLElement)
+    || !(chip instanceof HTMLElement)
+    || !(resumeBtn instanceof HTMLButtonElement)
+    || !(timeline instanceof HTMLElement)) return;
+
+  const events = getClaudeFilesystemEvents();
+  const target = getClaudeLockedProjectTarget();
+  const visible = currentMode === "claude" || currentMode === "edit" || events.length > 0 || Boolean(target);
+  panel.style.display = visible ? "flex" : "none";
+
+  chip.textContent = target ? `Target: ${target}` : "Target: not locked";
+  chip.title = target
+    ? `Claude writes are locked to ${target} for this chat`
+    : "Claude will use the configured approved folders";
+
+  const showResume = events.length > 0 || hasClaudeRateLimitNotice();
+  resumeBtn.style.display = showResume ? "inline-flex" : "none";
+  resumeBtn.disabled = isStreaming;
+  resumeBtn.title = isStreaming ? "Claude is still running" : "Prepare a continuation prompt from the last filesystem activity";
+
+  const recentEvents = events.slice(-4).reverse();
+  timeline.innerHTML = recentEvents.map((event) => {
+    const action = event.action === "writing"
+      ? "wrote"
+      : event.action === "creating directory"
+        ? "created dir"
+        : event.action === "moving"
+          ? "moved"
+          : event.action;
+    const displayPath = formatClaudeTimelinePath(event.path, target);
+    return [
+      '<span class="claude-fs-event">',
+      `<span class="claude-fs-event-action">${escHtml(action)}</span>`,
+      `<span class="claude-fs-event-path" title="${escHtml(event.path)}">${escHtml(displayPath)}</span>`,
+      "</span>"
+    ].join("");
+  }).join("");
+}
+
+function fillClaudeResumePrompt(): void {
+  if (isStreaming) {
+    showToast("Wait for the current Claude run to finish.", 2200);
+    return;
+  }
+  applyMode("claude");
+  const input = $("composer-input") as HTMLTextAreaElement;
+  input.value = buildClaudeRateLimitResumePrompt(inferClaudeResumeProjectPath());
+  input.dispatchEvent(new Event("input"));
+  input.focus();
+  showToast("Resume prompt ready.", 1600);
 }
 
 function nextClientMessageId(prefix: string): string {
@@ -1294,6 +1541,7 @@ function appendClaudeLine(text: string, kind: "stdout" | "stderr" | "system" | "
       void loadChatList();
     }
     activeClaudeAssistantMessageId = null;
+    refreshClaudeSafetyPanel();
     maybeAutoScroll();
     return;
   }
@@ -1313,6 +1561,7 @@ function appendClaudeLine(text: string, kind: "stdout" | "stderr" | "system" | "
       void window.api.chat.appendMessage(currentChatId, message);
       void loadChatList();
     }
+    refreshClaudeSafetyPanel();
     maybeAutoScroll();
     return;
   }
@@ -1323,6 +1572,7 @@ function appendClaudeLine(text: string, kind: "stdout" | "stderr" | "system" | "
   const nextContent = [previous, mapped.join("\n")].filter(Boolean).join("\n");
   claudeDraftByMessage.set(msgId, nextContent);
   scheduleClaudeMessageRender(msgId);
+  refreshClaudeSafetyPanel();
   scheduleChunkAutoScroll();
 }
 
@@ -1345,6 +1595,7 @@ function finalizeClaudeAssistantMessage(done: boolean): void {
     void loadChatList();
   }
   activeClaudeAssistantMessageId = null;
+  refreshClaudeSafetyPanel();
 }
 
 function parseClaudeManagedEditResponse(content: string): { summary: string; edits: ClaudeManagedEdit[] } | null {
@@ -1850,12 +2101,13 @@ async function sendClaudePrompt(): Promise<void> {
   const attachmentsToSend = [...activeAttachments];
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   const prompt = rawPrompt || "Please review the attached files.";
-  const filesystemAccess = settings?.claudeChatFilesystem
+  const baseFilesystemAccess = settings?.claudeChatFilesystem
     ? {
         ...settings.claudeChatFilesystem,
         temporaryRoots: [...temporaryClaudeChatFilesystemRoots]
       }
     : undefined;
+  const filesystemAccess = buildLockedClaudeFilesystemAccess(baseFilesystemAccess);
   const preferFilesystemProjectFlow = shouldPreferClaudeFilesystemProjectFlow(prompt, filesystemAccess);
   const managedWriteIntent = !preferFilesystemProjectFlow && isClaudeManagedWriteRequest(prompt, attachmentsToSend);
   const workspaceRoot = managedWriteIntent ? await ensureWorkspaceRootPath() : "";
@@ -1959,6 +2211,7 @@ function applyMode(mode: UiMode): void {
   });
   setClaudeModeActiveVisual(mode === "claude" || mode === "edit");
   updateDirectSaveUi();
+  refreshClaudeSafetyPanel();
   refreshCompareUi();
 
   if (mode === "claude" || mode === "edit") {
@@ -2063,6 +2316,27 @@ async function ensureClaudeChatSessionReady(chatId: string): Promise<boolean> {
     return false;
   } finally {
     claudeSessionResetting = false;
+  }
+}
+
+async function stopClaudeSessionFromUi(toastMessage = "Claude stop requested."): Promise<boolean> {
+  suppressClaudeExitNotice = true;
+  setClaudeStatus("Stopping Claude Code...", "busy");
+  try {
+    const res = await window.api.claude.stop();
+    claudeSessionRunning = Boolean(res.running);
+    claudeSessionChatId = null;
+    finalizeClaudeAssistantMessage(true);
+    setStreamingUi(false);
+    setClaudeStatus(res.ok ? "Stopped" : res.message, res.ok ? "" : "err");
+    showToast(res.ok ? toastMessage : res.message, res.ok ? 1800 : 3000);
+    return res.ok;
+  } catch (err) {
+    suppressClaudeExitNotice = false;
+    const msg = err instanceof Error ? err.message : "Failed to stop Claude Code.";
+    setClaudeStatus(msg, "err");
+    showToast(msg, 3200);
+    return false;
   }
 }
 
@@ -4927,6 +5201,7 @@ async function loadChat(id: string) {
 
   activeAttachments = [];
   renderComposerAttachments();
+  refreshClaudeSafetyPanel();
   scrollToBottom(true);
   await loadChatList();
 }
@@ -6342,12 +6617,14 @@ function setStreamingUi(active: boolean, statusText = "") {
       claudeElapsedStatusText = nextStatusText;
       renderClaudeElapsedStatus();
     }
+    refreshClaudeSafetyPanel();
     return;
   }
   stopClaudeElapsedTimer();
   $("send-btn").removeAttribute("disabled");
   $("stop-btn").style.display = "none";
   $("stream-status").textContent = "";
+  refreshClaudeSafetyPanel();
 }
 
 async function createNewChat(showEmptyState = true, context = activeChatContext ?? getActiveUiChatContext()): Promise<string> {
@@ -6374,6 +6651,7 @@ async function createNewChat(showEmptyState = true, context = activeChatContext 
   }
   activeAttachments = [];
   renderComposerAttachments();
+  refreshClaudeSafetyPanel();
   updateScrollBottomButton();
   await loadChatList();
   return chat.id;
@@ -7184,6 +7462,7 @@ async function loadSettings() {
   const loaded = await window.api.settings.get();
   temporaryClaudeChatFilesystemRoots = normalizeClaudeChatFilesystemRoots(loaded.claudeChatFilesystem?.temporaryRoots ?? []);
   applyLoadedSettingsToUi(loaded);
+  refreshClaudeSafetyPanel();
   const localVoiceSettings = document.getElementById("local-voice-settings");
   if (localVoiceSettings instanceof HTMLElement) {
     localVoiceSettings.dataset["availability"] = LOCAL_VOICE_SUPPORTED ? "available" : "unavailable";
@@ -10227,6 +10506,8 @@ async function refreshClaudeSessionStatus(): Promise<void> {
 
 function setupClaudePanel() {
   void refreshClaudeSessionStatus();
+  document.getElementById("claude-resume-btn")?.addEventListener("click", fillClaudeResumePrompt);
+  refreshClaudeSafetyPanel();
 }
 
 function setupModeSwitcher() {
@@ -10729,6 +11010,10 @@ async function init() {
       }
       return;
     }
+    if (currentMode === "claude" || currentMode === "edit" || activeClaudeAssistantMessageId) {
+      await stopClaudeSessionFromUi();
+      return;
+    }
     const targetChatId = activeStreamChatId ?? currentChatId;
     if (targetChatId) await window.api.chat.stop(targetChatId);
   };
@@ -10792,20 +11077,7 @@ async function init() {
   if (quickClaudeBtn instanceof HTMLButtonElement) {
     quickClaudeBtn.onclick = async () => {
       if (currentMode === "claude" || currentMode === "edit") {
-        setClaudeStatus("Stopping Claude Code...", "busy");
-        try {
-          const res = await window.api.claude.stop();
-          claudeSessionRunning = Boolean(res.running);
-          claudeSessionChatId = null;
-          finalizeClaudeAssistantMessage(true);
-          setStreamingUi(false);
-          setClaudeStatus(res.ok ? "Stopped" : res.message, res.ok ? "" : "err");
-          if (!res.ok) showToast(res.message, 3000);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Failed to stop Claude Code.";
-          setClaudeStatus(msg, "err");
-          showToast(msg, 3200);
-        }
+        await stopClaudeSessionFromUi("Claude Code stopped.");
         applyMode("write");
         void syncChatContextAfterUiChange();
         return;
