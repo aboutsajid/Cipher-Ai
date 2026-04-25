@@ -3860,7 +3860,14 @@ async function prepareOllamaProviderSelection(): Promise<void> {
   const baseUrl = ollamaBaseUrlInput instanceof HTMLInputElement
     ? ollamaBaseUrlInput.value.trim() || base.ollamaBaseUrl || "http://localhost:11434/v1"
     : base.ollamaBaseUrl || "http://localhost:11434/v1";
-  const models = await window.api.ollama.listModels(baseUrl);
+  let refreshError: string | null = null;
+  let models: string[] = [];
+  try {
+    models = await window.api.ollama.listModels(baseUrl);
+  } catch (err) {
+    refreshError = err instanceof Error ? err.message : "unknown error";
+    models = (base.ollamaModels ?? []).map((model) => model.trim()).filter(Boolean);
+  }
   const preferredModel = pickPreferredLocalCoderModel(models);
   const defaultModel = preferredModel ? `ollama/${preferredModel}` : "";
 
@@ -3878,6 +3885,15 @@ async function prepareOllamaProviderSelection(): Promise<void> {
     localVoiceModel: base.localVoiceModel || "base"
   });
   applyLoadedSettingsToUi(nextSettings);
+
+  if (refreshError) {
+    const detail = models.length > 0
+      ? `Using ${models.length} saved Ollama model(s). Refresh failed: ${refreshError}`
+      : `Ollama models could not be refreshed: ${refreshError}`;
+    setStatus(detail, models.length > 0 ? "" : "err");
+    showToast(models.length > 0 ? "Ollama refresh failed. Using saved local models." : "Ollama models refresh failed.", 3600);
+    return;
+  }
 
   if (models.length === 0) {
     setStatus(`Ollama is installed, but no local models were found. Run \`ollama pull ${LOCAL_CODER_PRIMARY}\` and retry.`, "err");
@@ -5177,7 +5193,14 @@ async function loadChat(id: string) {
   currentChatId = id;
   const chat = await window.api.chat.get(id);
   if (!chat) return;
-  applyChatContextToUi(getStoredChatContext(chat));
+  const storedContext = getStoredChatContext(chat);
+  try {
+    applyChatContextToUi(storedContext);
+  } catch (err) {
+    console.error("Failed to apply chat context:", err);
+    const normalizedContext = normalizeChatContext(storedContext);
+    if (normalizedContext) activeChatContext = normalizedContext;
+  }
 
   updateChatHeaderTitle(chat.title);
   $("rename-btn").style.display = "none";

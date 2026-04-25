@@ -81,6 +81,23 @@ test("renderer preserves Claude system notices and applies sparse-chat density s
   assert.match(rendererSource, /container\.classList\.toggle\("messages-sparse", sparseConversation\)/);
 });
 
+test("renderer keeps chat loading resilient when restoring provider context fails", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+
+  assert.match(rendererSource, /const storedContext = getStoredChatContext\(chat\);/);
+  assert.match(rendererSource, /try \{\s*applyChatContextToUi\(storedContext\);\s*\} catch \(err\) \{/);
+  assert.match(rendererSource, /console\.error\("Failed to apply chat context:", err\);/);
+  assert.match(rendererSource, /updateChatHeaderTitle\(chat\.title\);/);
+});
+
+test("renderer falls back to saved Ollama models when refresh fails during provider switching", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+
+  assert.match(rendererSource, /try \{\s*models = await window\.api\.ollama\.listModels\(baseUrl\);\s*\} catch \(err\) \{/);
+  assert.match(rendererSource, /models = \(base\.ollamaModels \?\? \[\]\)\.map\(\(model\) => model\.trim\(\)\)\.filter\(Boolean\);/);
+  assert.match(rendererSource, /showToast\(models\.length > 0 \? "Ollama refresh failed\. Using saved local models\." : "Ollama models refresh failed\.", 3600\);/);
+});
+
 test("renderer top stop button stops active Claude sessions", () => {
   const rendererSource = readProjectFile("src/renderer/app.ts");
 
