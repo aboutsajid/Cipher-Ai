@@ -511,6 +511,114 @@ test("ImageGenerationService rejects truncated local ComfyUI checkpoints before 
   assert.equal(promptSubmitted, false);
 });
 
+test("ImageGenerationService preflights ComfyUI checkpoint availability before workflow submission", async () => {
+  let promptSubmitted = false;
+  const service = new ImageGenerationService(createSettings({
+    apiKey: "",
+    imageProvider: "comfyui",
+    comfyuiBaseUrl: "http://127.0.0.1:8000"
+  }) as never, undefined, createRuntime(async (input) => {
+    const url = String(input);
+    if (url === "http://127.0.0.1:8000/system_stats") {
+      return Response.json({ system: { comfyui_version: "0.3.67" } });
+    }
+    if (url === "http://127.0.0.1:8000/object_info/CheckpointLoaderSimple") {
+      return Response.json({
+        CheckpointLoaderSimple: {
+          input: {
+            required: {
+              ckpt_name: [
+                ["sd_xl_refiner_1.0.safetensors", "juggernaut-xl-v9.safetensors"]
+              ]
+            }
+          }
+        }
+      });
+    }
+    if (url === "http://127.0.0.1:8000/prompt") {
+      promptSubmitted = true;
+      return Response.json({ prompt_id: "job-should-not-run" });
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  }));
+
+  await assert.rejects(
+    () => service.generate({
+      prompt: "A checkpoint preflight should fail fast",
+      provider: "comfyui",
+      model: "sd_xl_base_1.0.safetensors",
+      aspectRatio: "1:1"
+    }),
+    /is not available in CheckpointLoaderSimple/i
+  );
+  assert.equal(promptSubmitted, false);
+});
+
+test("ImageGenerationService keeps ComfyUI generation running when checkpoint metadata endpoints are unavailable", async () => {
+  let promptSubmitted = false;
+  const service = new ImageGenerationService(createSettings({
+    apiKey: "",
+    imageProvider: "comfyui",
+    comfyuiBaseUrl: "http://127.0.0.1:8000"
+  }) as never, undefined, createRuntime(async (input) => {
+    const url = String(input);
+    if (url === "http://127.0.0.1:8000/system_stats") {
+      return Response.json({ system: { comfyui_version: "0.3.67" } });
+    }
+    if (url === "http://127.0.0.1:8000/object_info/CheckpointLoaderSimple") {
+      throw new Error("endpoint unavailable");
+    }
+    if (url === "http://127.0.0.1:8000/object_info") {
+      return new Response("not found", { status: 404 });
+    }
+    if (url === "http://127.0.0.1:8000/prompt") {
+      promptSubmitted = true;
+      return Response.json({ prompt_id: "job-metadata-offline" });
+    }
+    if (url === "http://127.0.0.1:8000/history/job-metadata-offline") {
+      return Response.json({
+        "job-metadata-offline": {
+          outputs: {
+            "10": {
+              images: [
+                {
+                  filename: "cipher_comfyui_00010_.png",
+                  subfolder: "",
+                  type: "output"
+                }
+              ]
+            }
+          },
+          status: {
+            completed: true,
+            status_str: "success",
+            messages: []
+          }
+        }
+      });
+    }
+    if (url.includes("/view?")) {
+      return new Response(Buffer.from("ok"), {
+        headers: {
+          "Content-Type": "image/png"
+        }
+      });
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  }));
+
+  const result = await service.generate({
+    prompt: "Continue generation when object_info is unavailable",
+    provider: "comfyui",
+    model: "sd_xl_base_1.0.safetensors",
+    aspectRatio: "1:1"
+  });
+
+  assert.equal(promptSubmitted, true);
+  assert.equal(result.images.length, 1);
+  assert.equal(result.images[0]?.dataUrl, "data:image/png;base64,b2s=");
+});
+
 test("ImageGenerationService auto-starts local ComfyUI when the configured server is offline", async () => {
   let launched = false;
   const spawnCalls: Array<{ command: string; args: string[] }> = [];

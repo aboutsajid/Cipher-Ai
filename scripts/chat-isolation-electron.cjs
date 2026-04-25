@@ -3,6 +3,7 @@ const { appendFile, mkdtemp, mkdir, rm, writeFile } = require("node:fs/promises"
 const { createServer } = require("node:http");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const SEED_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/axzfo8AAAAASUVORK5CYII=";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,6 +84,49 @@ async function closeServer(server) {
   });
 }
 
+async function seedImageHistory(userDataPath) {
+  const root = join(userDataPath, "cipher-workspace", "generated-images");
+  const assetsDir = join(root, "assets");
+  await mkdir(assetsDir, { recursive: true });
+
+  const firstAsset = "img-seed-zebra.png";
+  const secondAsset = "img-seed-alpha.png";
+  const bytes = Buffer.from(SEED_IMAGE_BASE64, "base64");
+  await writeFile(join(assetsDir, firstAsset), bytes);
+  await writeFile(join(assetsDir, secondAsset), bytes);
+
+  const history = [
+    {
+      id: "img-seed-zebra",
+      generationId: "imggen-seed-zebra",
+      prompt: "zebra neon skyline",
+      model: "sd_xl_base_1.0.safetensors",
+      aspectRatio: "1:1",
+      text: "seed zebra",
+      mimeType: "image/png",
+      assetFileName: firstAsset,
+      createdAt: "2026-04-03T10:00:00.000Z",
+      updatedAt: "2026-04-03T10:00:00.000Z",
+      saveCount: 0
+    },
+    {
+      id: "img-seed-alpha",
+      generationId: "imggen-seed-alpha",
+      prompt: "alpha beach sunrise",
+      model: "sd_xl_base_1.0.safetensors",
+      aspectRatio: "1:1",
+      text: "seed alpha",
+      mimeType: "image/png",
+      assetFileName: secondAsset,
+      createdAt: "2026-04-01T10:00:00.000Z",
+      updatedAt: "2026-04-01T10:00:00.000Z",
+      saveCount: 0
+    }
+  ];
+
+  await writeFile(join(root, "history.json"), JSON.stringify({ history }, null, 2), "utf8");
+}
+
 (async () => {
   const root = join(__dirname, "..");
   const tempRoot = await mkdtemp(join(tmpdir(), "cipher-chat-isolation-"));
@@ -97,6 +141,8 @@ async function closeServer(server) {
 
   try {
     await appendSmokeTrace(root, "starting", tempRoot);
+    await seedImageHistory(userDataPath);
+    await appendSmokeTrace(root, "seed-image-history");
     await writeSmokeArtifact(root, "chat-isolation-result.json", JSON.stringify({ step: "starting" }, null, 2));
     await app.whenReady();
     await appendSmokeTrace(root, "app-ready");
@@ -265,6 +311,99 @@ async function closeServer(server) {
           await window.api.chat.rename(chat.id, title);
           return chat.id;
         };
+        const imageCardPrompts = () => Array.from(
+          document.querySelectorAll("#image-studio-history-list .image-history-entry .image-history-prompt")
+        )
+          .map((item) => (item.textContent ?? "").trim())
+          .filter(Boolean);
+        const runImageModeChecks = async () => {
+          click("#generate-image-btn");
+          await waitFor(
+            () => getComputedStyle(requireElement("#image-studio")).display !== "none",
+            8000,
+            "Image mode did not open."
+          );
+          await waitFor(
+            () => imageCardPrompts().length >= 2,
+            8000,
+            "Seeded image history did not render in Image mode."
+          );
+
+          assert(Boolean(document.getElementById("image-studio-search-input")), "Image mode search input is missing.");
+          assert(Boolean(document.getElementById("image-studio-sort-select")), "Image mode sort select is missing.");
+
+          dispatchInput("#image-studio-search-input", "alpha");
+          await waitFor(() => {
+            const prompts = imageCardPrompts();
+            return prompts.length === 1 && /alpha/i.test(prompts[0] ?? "");
+          }, 5000, "Image search did not narrow the gallery.");
+
+          dispatchInput("#image-studio-search-input", "");
+          await waitFor(
+            () => imageCardPrompts().length >= 2,
+            5000,
+            "Clearing image search did not restore the gallery."
+          );
+
+          dispatchSelect("#image-studio-sort-select", "oldest");
+          await waitFor(
+            () => /^alpha/i.test(imageCardPrompts()[0] ?? ""),
+            5000,
+            "Oldest sort did not move the oldest seed to the first position."
+          );
+
+          dispatchSelect("#image-studio-sort-select", "newest");
+          await waitFor(
+            () => /^zebra/i.test(imageCardPrompts()[0] ?? ""),
+            5000,
+            "Newest sort did not move the newest seed to the first position."
+          );
+
+          const reuseButton = document.querySelector("#image-studio-history-list .image-history-reuse-btn");
+          if (!(reuseButton instanceof HTMLElement)) {
+            throw new Error("Image gallery card is missing the Reuse Prompt button.");
+          }
+          reuseButton.click();
+          const promptInput = requireElement("#image-studio-prompt-input");
+          const expectedPrompt = imageCardPrompts()[0] ?? "";
+          assert(promptInput.value.trim() === expectedPrompt, "Reuse Prompt did not populate the image prompt input.");
+
+          const originalConfirm = window.confirm;
+          let confirmCalls = 0;
+          try {
+            window.confirm = () => {
+              confirmCalls += 1;
+              return false;
+            };
+            const beforeCancelCount = imageCardPrompts().length;
+            const deleteButton = document.querySelector("#image-studio-history-list .image-history-delete-btn");
+            if (!(deleteButton instanceof HTMLElement)) {
+              throw new Error("Image gallery card is missing the Delete button.");
+            }
+            deleteButton.click();
+            await wait(150);
+            assert(confirmCalls === 1, "Image delete did not ask for confirmation.");
+            assert(imageCardPrompts().length === beforeCancelCount, "Canceling delete should keep gallery size unchanged.");
+
+            window.confirm = () => {
+              confirmCalls += 1;
+              return true;
+            };
+            deleteButton.click();
+            await waitFor(
+              () => imageCardPrompts().length === beforeCancelCount - 1,
+              8000,
+              "Confirmed image delete did not remove the selected card."
+            );
+            assert(confirmCalls >= 2, "Image delete confirm path was not exercised.");
+          } finally {
+            window.confirm = originalConfirm;
+          }
+
+          return {
+            remainingCards: imageCardPrompts().length
+          };
+        };
 
         await window.api.settings.save({
           apiKey: "test-key",
@@ -386,6 +525,7 @@ async function closeServer(server) {
         await waitForIdle();
         const openrouterChat = await getNewestChat();
         assertChatContext(openrouterChat, "openrouter", OPENROUTER_MODEL, "New persisted chat after leaving Claude");
+        const imageMode = await runImageModeChecks();
 
         return {
           ok: true,
@@ -394,7 +534,8 @@ async function closeServer(server) {
           nvidiaChatId: nvidiaChat.id,
           ollamaChatId: ollamaChat.id,
           openrouterChatId: openrouterChat.id,
-          finalChatCount: (await listChats()).length
+          finalChatCount: (await listChats()).length,
+          imageMode
         };
       })();
     `, true);

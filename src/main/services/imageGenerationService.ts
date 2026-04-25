@@ -167,6 +167,60 @@ interface ComfyUiHistoryItem {
   };
 }
 
+function toComfyUiOptionStringList(value: unknown): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => toComfyUiOptionStringList(item));
+  }
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    const nested = record["options"] ?? record["choices"] ?? record["values"];
+    if (nested !== undefined) return toComfyUiOptionStringList(nested);
+  }
+  return [];
+}
+
+function extractComfyUiCheckpointOptionsFromNode(node: unknown): string[] {
+  if (!node || typeof node !== "object") return [];
+  const record = node as Record<string, unknown>;
+  const input = (record["input"] ?? record["inputs"]) as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return [];
+  const required = input["required"] as Record<string, unknown> | undefined;
+  const optional = input["optional"] as Record<string, unknown> | undefined;
+
+  const candidates: unknown[] = [];
+  if (required?.["ckpt_name"] !== undefined) candidates.push(required["ckpt_name"]);
+  if (optional?.["ckpt_name"] !== undefined) candidates.push(optional["ckpt_name"]);
+
+  const extracted = candidates.flatMap((candidate) => {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap((entry) => toComfyUiOptionStringList(entry));
+    }
+    return toComfyUiOptionStringList(candidate);
+  });
+
+  return [...new Set(
+    extracted.filter((name) => /\.(safetensors|ckpt)$/i.test(name))
+  )];
+}
+
+function extractComfyUiCheckpointChoices(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const direct = extractComfyUiCheckpointOptionsFromNode(root);
+  if (direct.length > 0) return direct;
+
+  const checkpointNode = root["CheckpointLoaderSimple"];
+  const fromCheckpointNode = extractComfyUiCheckpointOptionsFromNode(checkpointNode);
+  if (fromCheckpointNode.length > 0) return fromCheckpointNode;
+
+  const aggregated = Object.values(root).flatMap((value) => extractComfyUiCheckpointOptionsFromNode(value));
+  return [...new Set(aggregated)];
+}
+
 function asTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -770,7 +824,7 @@ export class ImageGenerationService {
     try {
       inspected = await this.runtime.readSafetensorsHeader(checkpointPath);
     } catch {
-      return;
+      throw new Error(`Local ComfyUI checkpoint "${checkpointName}" could not be read as safetensors. Re-download the checkpoint.`);
     }
 
     const { fileSize, headerLength, header } = inspected;
@@ -800,6 +854,48 @@ export class ImageGenerationService {
         `Local ComfyUI checkpoint "${checkpointName}" appears incomplete/corrupt (tensor data needs ${maxDataEnd} bytes, file has ${fileSize} bytes). Re-download the checkpoint.`
       );
     }
+  }
+
+  private async fetchComfyUiCheckpointChoices(baseUrl: string): Promise<string[] | null> {
+    const endpoints = [
+      `${baseUrl}/object_info/CheckpointLoaderSimple`,
+      `${baseUrl}/object_info`
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await this.runtime.fetch(endpoint, {
+          method: "GET",
+          signal: AbortSignal.timeout(8_000)
+        });
+        if (!response.ok) continue;
+        const payload = await response.json();
+        const choices = extractComfyUiCheckpointChoices(payload);
+        if (choices.length > 0) return choices;
+      } catch {
+        // Best-effort preflight: keep generation flow running when metadata endpoints are unavailable.
+      }
+    }
+
+    return null;
+  }
+
+  private async validateComfyUiCheckpointSelection(baseUrl: string, model: string): Promise<void> {
+    const checkpointName = (model ?? "").trim();
+    if (!checkpointName || !/\.(safetensors|ckpt)$/i.test(checkpointName)) return;
+
+    const choices = await this.fetchComfyUiCheckpointChoices(baseUrl);
+    if (!choices || choices.length === 0) return;
+
+    const exactMatch = choices.includes(checkpointName);
+    const caseInsensitiveMatch = choices.some((candidate) => candidate.toLowerCase() === checkpointName.toLowerCase());
+    if (exactMatch || caseInsensitiveMatch) return;
+
+    const preview = choices.slice(0, 8).join(", ");
+    const suffix = choices.length > 8 ? ", ..." : "";
+    throw new Error(
+      `Local ComfyUI checkpoint "${checkpointName}" is not available in CheckpointLoaderSimple. Available checkpoints: ${preview}${suffix}`
+    );
   }
 
   private parseComfyUiPort(baseUrl: string): number {
@@ -980,6 +1076,7 @@ export class ImageGenerationService {
     configuredBaseUrl?: string
   ): Promise<{ text: string; images: GeneratedImageAsset[] }> {
     const baseUrl = await this.resolveComfyUiBaseUrl(configuredBaseUrl);
+    await this.validateComfyUiCheckpointSelection(baseUrl, model);
     const workflow = buildComfyUiWorkflow(prompt, model, aspectRatio);
     const submitResponse = await this.runtime.fetch(`${baseUrl}/prompt`, {
       method: "POST",

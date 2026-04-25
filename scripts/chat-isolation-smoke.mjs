@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const electron = (await import("electron")).default;
-const timeoutMs = Number.parseInt(process.env["CIPHER_CHAT_ISOLATION_TIMEOUT_MS"] ?? "30000", 10);
+const timeoutMs = Number.parseInt(process.env["CIPHER_CHAT_ISOLATION_TIMEOUT_MS"] ?? "45000", 10);
 const resultPath = join(root, "tmp", "chat-isolation-result.json");
 const errorPath = join(root, "tmp", "chat-isolation-error.txt");
 const tracePath = join(root, "tmp", "chat-isolation-trace.log");
@@ -40,7 +40,7 @@ const exitCode = await new Promise((resolve, reject) => {
   const timeout = setTimeout(() => {
     timedOut = true;
     child.kill();
-  }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000);
+  }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000);
 
   child.stdout.on("data", (chunk) => {
     stdout += writeChunk(process.stdout, chunk);

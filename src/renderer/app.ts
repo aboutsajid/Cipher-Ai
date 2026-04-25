@@ -712,6 +712,9 @@ const AGENT_MODE_TEMPLATES: ModeTemplate[] = [
 let imageGenerationSubmitting = false;
 let imageHistoryLoading = false;
 let imageHistoryItems: GeneratedImageHistoryItem[] = [];
+type ImageStudioSortMode = "newest" | "oldest" | "prompt-az" | "prompt-za";
+let imageStudioSearchQuery = "";
+let imageStudioSortMode: ImageStudioSortMode = "newest";
 
 interface DirectSaveStatus {
   state: "ready" | "warn" | "off" | "blocked";
@@ -6871,6 +6874,71 @@ function getImageHistorySortTime(item: GeneratedImageHistoryItem): number {
   return 0;
 }
 
+function parseImageStudioSortMode(value: string): ImageStudioSortMode {
+  if (value === "oldest" || value === "prompt-az" || value === "prompt-za") return value;
+  return "newest";
+}
+
+function getLatestImageHistoryItemId(items: GeneratedImageHistoryItem[]): string | null {
+  let latestId: string | null = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  for (const item of items) {
+    const sortTime = getImageHistorySortTime(item);
+    if (sortTime > latestTime) {
+      latestTime = sortTime;
+      latestId = item.id;
+    }
+  }
+  return latestId;
+}
+
+function getImageStudioSearchText(item: GeneratedImageHistoryItem): string {
+  return [
+    item.prompt,
+    item.text,
+    item.model,
+    item.aspectRatio
+  ]
+    .map((value) => (value ?? "").toLowerCase())
+    .join(" ");
+}
+
+function getImageStudioVisibleItems(allItems: GeneratedImageHistoryItem[]): GeneratedImageHistoryItem[] {
+  const query = imageStudioSearchQuery.trim().toLowerCase();
+  let items = query
+    ? allItems.filter((item) => getImageStudioSearchText(item).includes(query))
+    : [...allItems];
+
+  const newestSort = (left: GeneratedImageHistoryItem, right: GeneratedImageHistoryItem): number =>
+    getImageHistorySortTime(right) - getImageHistorySortTime(left);
+  const oldestSort = (left: GeneratedImageHistoryItem, right: GeneratedImageHistoryItem): number =>
+    getImageHistorySortTime(left) - getImageHistorySortTime(right);
+  const promptSort = (left: GeneratedImageHistoryItem, right: GeneratedImageHistoryItem, direction: 1 | -1): number => {
+    const leftPrompt = (left.prompt ?? "").trim();
+    const rightPrompt = (right.prompt ?? "").trim();
+    const promptOrder = leftPrompt.localeCompare(rightPrompt, undefined, { sensitivity: "base" });
+    if (promptOrder !== 0) return promptOrder * direction;
+    return newestSort(left, right);
+  };
+
+  switch (imageStudioSortMode) {
+    case "oldest":
+      items = items.sort(oldestSort);
+      break;
+    case "prompt-az":
+      items = items.sort((left, right) => promptSort(left, right, 1));
+      break;
+    case "prompt-za":
+      items = items.sort((left, right) => promptSort(left, right, -1));
+      break;
+    case "newest":
+    default:
+      items = items.sort(newestSort);
+      break;
+  }
+  return items;
+}
+
 function createImageHistoryChip(label: string, tone: "default" | "accent" = "default"): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.className = `image-history-chip${tone === "accent" ? " accent" : ""}`;
@@ -6884,6 +6952,8 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
   const emptyState = document.getElementById(emptyId);
   if (!(list instanceof HTMLElement) || !(emptyState instanceof HTMLElement)) return;
   const isStudioVariant = listId === "image-studio-history-list";
+  const newestSort = (left: GeneratedImageHistoryItem, right: GeneratedImageHistoryItem): number =>
+    getImageHistorySortTime(right) - getImageHistorySortTime(left);
 
   list.innerHTML = "";
   if (imageHistoryLoading) {
@@ -6898,9 +6968,18 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
     return;
   }
 
+  const latestHistoryItemId = getLatestImageHistoryItemId(imageHistoryItems);
+  const items = isStudioVariant
+    ? getImageStudioVisibleItems(imageHistoryItems)
+    : [...imageHistoryItems].sort(newestSort);
+  if (items.length === 0) {
+    emptyState.style.display = "block";
+    emptyState.textContent = "No images match the current search.";
+    return;
+  }
+
   emptyState.style.display = "none";
-  const items = [...imageHistoryItems].sort((left, right) => getImageHistorySortTime(right) - getImageHistorySortTime(left));
-  for (const [index, item] of items.entries()) {
+  for (const item of items) {
     const card = document.createElement("article");
     card.className = `image-history-entry${isStudioVariant ? " is-gallery" : ""}`;
 
@@ -6931,7 +7010,7 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
     eyebrow.className = "image-history-overline";
     eyebrow.textContent = item.saveCount > 0
       ? "Saved asset"
-      : index === 0
+      : item.id === latestHistoryItemId
         ? "Latest render"
         : "Generated asset";
     info.appendChild(eyebrow);
@@ -6984,6 +7063,31 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
     };
     actions.appendChild(previewBtn);
 
+    if (isStudioVariant) {
+      const reuseBtn = document.createElement("button");
+      reuseBtn.type = "button";
+      reuseBtn.className = "btn-ghost-sm image-history-reuse-btn";
+      reuseBtn.textContent = "Reuse Prompt";
+      reuseBtn.onclick = () => {
+        const promptInput = document.getElementById("image-studio-prompt-input");
+        if (!(promptInput instanceof HTMLTextAreaElement)) {
+          showToast("Image Studio prompt input is unavailable.", 2800);
+          return;
+        }
+        const promptText = item.prompt.trim();
+        if (!promptText) {
+          showToast("This image has no reusable prompt.", 2400);
+          return;
+        }
+        promptInput.value = promptText;
+        promptInput.focus();
+        const cursor = promptInput.value.length;
+        promptInput.setSelectionRange(cursor, cursor);
+        setImageStudioStatus(`Prompt loaded from gallery (${compactModelName(item.model)} / ${item.aspectRatio}).`);
+      };
+      actions.appendChild(reuseBtn);
+    }
+
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
     saveBtn.className = "message-image-save-btn";
@@ -7008,6 +7112,14 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
     deleteBtn.className = "btn-ghost-sm image-history-delete-btn";
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
+      const promptPreview = item.prompt.trim();
+      const clippedPrompt = promptPreview.length > 90 ? `${promptPreview.slice(0, 87)}...` : promptPreview;
+      const confirmed = window.confirm(
+        clippedPrompt
+          ? `Delete this image from history?\n\nPrompt: "${clippedPrompt}"`
+          : "Delete this image from history?"
+      );
+      if (!confirmed) return;
       try {
         const result = await window.api.images.deleteHistory(item.id);
         showToast(result.message, result.ok ? 2200 : 2800);
@@ -11150,6 +11262,8 @@ async function init() {
   const imageStudioGenerateBtn = document.getElementById("image-studio-generate-btn");
   const imageStudioRefreshBtn = document.getElementById("image-studio-refresh-btn");
   const imageStudioClearBtn = document.getElementById("image-studio-clear-btn");
+  const imageStudioSearchInput = document.getElementById("image-studio-search-input");
+  const imageStudioSortSelect = document.getElementById("image-studio-sort-select");
   const initialImageProvider = getActiveImageGenerationProvider();
   populateImageGenerationAspectRatioOptions();
   refreshImageGenerationModelOptions(initialImageProvider);
@@ -11193,6 +11307,22 @@ async function init() {
         keyboardEvent.preventDefault();
         void submitImageStudioGeneration();
       }
+    });
+  }
+  if (imageStudioSearchInput instanceof HTMLInputElement) {
+    imageStudioSearchInput.value = imageStudioSearchQuery;
+    imageStudioSearchInput.addEventListener("input", () => {
+      imageStudioSearchQuery = imageStudioSearchInput.value;
+      renderImageHistoryListInto("image-studio-history-list", "image-studio-empty");
+    });
+  }
+  if (imageStudioSortSelect instanceof HTMLSelectElement) {
+    imageStudioSortMode = parseImageStudioSortMode(imageStudioSortSelect.value);
+    imageStudioSortSelect.value = imageStudioSortMode;
+    imageStudioSortSelect.addEventListener("change", () => {
+      imageStudioSortMode = parseImageStudioSortMode(imageStudioSortSelect.value);
+      imageStudioSortSelect.value = imageStudioSortMode;
+      renderImageHistoryListInto("image-studio-history-list", "image-studio-empty");
     });
   }
   $("image-history-refresh-btn").onclick = () => {
