@@ -19,6 +19,16 @@ import type {
   ManagedWriteVerificationReport
 } from "../shared/types";
 
+function subscribeIpc<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
+  const listener = (_event: unknown, ...args: unknown[]) => {
+    cb(...(args as T));
+  };
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 const api = {
   app: {
     workspacePath: () => ipcRenderer.invoke("app:workspacePath"),
@@ -55,21 +65,11 @@ const api = {
       }
     ) => ipcRenderer.invoke("chat:send", chatId, content, model, options),
     stop: (chatId: string) => ipcRenderer.invoke("chat:stop", chatId),
-    onMessage: (cb: (chatId: string, msg: unknown) => void) => {
-      ipcRenderer.on("chat:message", (_e, chatId, msg) => cb(chatId, msg));
-    },
-    onChunk: (cb: (chatId: string, msgId: string, chunk: string) => void) => {
-      ipcRenderer.on("chat:chunk", (_e, chatId, msgId, chunk) => cb(chatId, msgId, chunk));
-    },
-    onDone: (cb: (chatId: string, msgId: string) => void) => {
-      ipcRenderer.on("chat:done", (_e, chatId, msgId) => cb(chatId, msgId));
-    },
-    onError: (cb: (chatId: string, msgId: string, err: string) => void) => {
-      ipcRenderer.on("chat:error", (_e, chatId, msgId, err) => cb(chatId, msgId, err));
-    },
-    onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => {
-      ipcRenderer.on("chat:storeChanged", (_e, payload) => cb(payload));
-    }
+    onMessage: (cb: (chatId: string, msg: unknown) => void) => subscribeIpc<[string, unknown]>("chat:message", cb),
+    onChunk: (cb: (chatId: string, msgId: string, chunk: string) => void) => subscribeIpc<[string, string, string]>("chat:chunk", cb),
+    onDone: (cb: (chatId: string, msgId: string) => void) => subscribeIpc<[string, string]>("chat:done", cb),
+    onError: (cb: (chatId: string, msgId: string, err: string) => void) => subscribeIpc<[string, string, string]>("chat:error", cb),
+    onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => subscribeIpc<[payload?: { chatId?: string; reason?: string }]>("chat:storeChanged", cb)
   },
   images: {
     generate: (request: ImageGenerationRequest): Promise<ImageGenerationResult> => ipcRenderer.invoke("images:generate", request),
@@ -99,9 +99,7 @@ const api = {
     start: (name: string) => ipcRenderer.invoke("mcp:start", name),
     stop: (name: string) => ipcRenderer.invoke("mcp:stop", name),
     status: () => ipcRenderer.invoke("mcp:status"),
-    onChanged: (cb: () => void) => {
-      ipcRenderer.on("mcp:changed", () => cb());
-    }
+    onChanged: (cb: () => void) => subscribeIpc<[]>("mcp:changed", cb)
   },
   claude: {
       status: () => ipcRenderer.invoke("claude:status"),
@@ -133,15 +131,11 @@ const api = {
         verification: ManagedWriteVerificationReport
       ): Promise<ManagedWriteRepairResult> => ipcRenderer.invoke("claude:repairManagedEdits", edits, verification),
       stop: () => ipcRenderer.invoke("claude:stop"),
-    onOutput: (cb: (payload: { text: string; stream: "stdout" | "stderr" | "system" }) => void) => {
-      ipcRenderer.on("claude:output", (_e, payload) => cb(payload));
-    },
-    onError: (cb: (message: string) => void) => {
-      ipcRenderer.on("claude:error", (_e, message) => cb(message));
-    },
-    onExit: (cb: (payload: { code: number | null; signal: string | null }) => void) => {
-      ipcRenderer.on("claude:exit", (_e, payload) => cb(payload));
-    }
+    onOutput: (cb: (payload: { text: string; stream: "stdout" | "stderr" | "system" }) => void) =>
+      subscribeIpc<[payload: { text: string; stream: "stdout" | "stderr" | "system" }]>("claude:output", cb),
+    onError: (cb: (message: string) => void) => subscribeIpc<[string]>("claude:error", cb),
+    onExit: (cb: (payload: { code: number | null; signal: string | null }) => void) =>
+      subscribeIpc<[payload: { code: number | null; signal: string | null }]>("claude:exit", cb)
   },
   agent: {
     listTasks: () => ipcRenderer.invoke("agent:listTasks"),
@@ -154,9 +148,8 @@ const api = {
     listSnapshots: () => ipcRenderer.invoke("agent:listSnapshots"),
     getRestoreState: (): Promise<AgentSnapshotRestoreResult | null> => ipcRenderer.invoke("agent:getRestoreState"),
     restoreSnapshot: (snapshotId: string): Promise<AgentSnapshotRestoreResult> => ipcRenderer.invoke("agent:restoreSnapshot", snapshotId),
-    onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) => {
-      ipcRenderer.on("agent:changed", (_e, payload) => cb(payload));
-    }
+    onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) =>
+      subscribeIpc<[payload?: AgentTaskChangedPayload]>("agent:changed", cb)
   },
   terminal: {
     run: (request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) =>
@@ -173,9 +166,7 @@ const api = {
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
     save: (partial: unknown) => ipcRenderer.invoke("settings:save", partial),
-    onChanged: (cb: () => void) => {
-      ipcRenderer.on("settings:changed", () => cb());
-    }
+    onChanged: (cb: () => void) => subscribeIpc<[]>("settings:changed", cb)
   },
   stats: {
     get: () => ipcRenderer.invoke("stats:get")
@@ -189,12 +180,8 @@ const api = {
     start: () => ipcRenderer.invoke("router:start"),
     stop: () => ipcRenderer.invoke("router:stop"),
     test: () => ipcRenderer.invoke("router:test"),
-    onLog: (cb: (line: string) => void) => {
-      ipcRenderer.on("router:log", (_e, line) => cb(line));
-    },
-    onStateChanged: (cb: () => void) => {
-      ipcRenderer.on("router:stateChanged", () => cb());
-    }
+    onLog: (cb: (line: string) => void) => subscribeIpc<[string]>("router:log", cb),
+    onStateChanged: (cb: () => void) => subscribeIpc<[]>("router:stateChanged", cb)
   }
 };
 
