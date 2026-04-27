@@ -40,7 +40,9 @@ export function registerIpcHandlers(deps: Deps): void {
     getPrimaryWindow,
     broadcastToWindows
   } = deps;
-  const mcpRuntimeManager = new McpRuntimeManager(settingsStore);
+  const mcpRuntimeManager = new McpRuntimeManager(settingsStore, {
+    onChanged: () => broadcastToWindows("mcp:changed")
+  });
   const claudeSessionManager = new ClaudeSessionManager((channel, payload) => {
     broadcastToWindows(channel, payload);
   }, {

@@ -28,12 +28,15 @@ export interface McpActionResult extends McpStatus {
 interface McpRuntimeManagerDeps {
   spawnProcess?: (command: string, args: string[]) => ChildProcess;
   stopProcess?: (proc: ChildProcess) => Promise<void>;
+  onChanged?: () => void;
 }
 
 export class McpRuntimeManager {
   private readonly runtimes = new Map<string, McpRuntime>();
   private readonly spawnProcess: (command: string, args: string[]) => ChildProcess;
   private readonly stopProcess: (proc: ChildProcess) => Promise<void>;
+  private readonly onChanged?: () => void;
+  private notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly settingsStore: Pick<SettingsStore, "listMcpServers">,
@@ -41,6 +44,16 @@ export class McpRuntimeManager {
   ) {
     this.spawnProcess = deps.spawnProcess ?? ((command, args) => spawnMcpProcess(command, args));
     this.stopProcess = deps.stopProcess ?? ((proc) => stopMcpProcess(proc));
+    this.onChanged = deps.onChanged;
+  }
+
+  private queueChangedNotification(): void {
+    if (!this.onChanged) return;
+    if (this.notifyTimer) return;
+    this.notifyTimer = setTimeout(() => {
+      this.notifyTimer = null;
+      this.onChanged?.();
+    }, 180);
   }
 
   buildStatus(): McpStatus {
@@ -108,6 +121,7 @@ export class McpRuntimeManager {
     proc.once("exit", (code) => {
       this.appendLog(runtime, `[MCP] Exited${typeof code === "number" ? ` with code ${code}` : ""}`);
       this.runtimes.delete(key);
+      this.queueChangedNotification();
     });
 
     return { ok: true, message: `${config.name} started.`, ...this.buildStatus() };
@@ -135,12 +149,14 @@ export class McpRuntimeManager {
       await this.stopProcess(runtime.process);
     } finally {
       this.runtimes.delete(key);
+      this.queueChangedNotification();
     }
   }
 
   private appendLog(runtime: McpRuntime, line: string): void {
     runtime.logs.push(line);
     if (runtime.logs.length > 200) runtime.logs.shift();
+    this.queueChangedNotification();
   }
 
   private collectTools(): string[] {
