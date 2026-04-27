@@ -437,6 +437,15 @@ export interface AgentTask {
   telemetry?: AgentTaskTelemetry;
 }
 
+export type AgentTaskChangedReason = "task" | "log" | "restore";
+
+export interface AgentTaskChangedPayload {
+  taskId?: string;
+  status?: AgentTaskStatus;
+  updatedAt?: string;
+  reason: AgentTaskChangedReason;
+}
+
 export interface WorkspaceSnapshot {
   id: string;
   createdAt: string;

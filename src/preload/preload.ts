@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AgentTaskChangedPayload,
   AgentTaskRequest,
   AgentTaskRestartMode,
   AgentRouteDiagnostics,
@@ -152,7 +153,10 @@ const api = {
     stopTask: (taskId: string) => ipcRenderer.invoke("agent:stopTask", taskId),
     listSnapshots: () => ipcRenderer.invoke("agent:listSnapshots"),
     getRestoreState: (): Promise<AgentSnapshotRestoreResult | null> => ipcRenderer.invoke("agent:getRestoreState"),
-    restoreSnapshot: (snapshotId: string): Promise<AgentSnapshotRestoreResult> => ipcRenderer.invoke("agent:restoreSnapshot", snapshotId)
+    restoreSnapshot: (snapshotId: string): Promise<AgentSnapshotRestoreResult> => ipcRenderer.invoke("agent:restoreSnapshot", snapshotId),
+    onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) => {
+      ipcRenderer.on("agent:changed", (_e, payload) => cb(payload));
+    }
   },
   terminal: {
     run: (request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) =>

@@ -263,6 +263,12 @@ interface AgentTask {
   executionSpec?: AgentExecutionSpec;
   telemetry?: AgentTaskTelemetry;
 }
+interface AgentTaskChangedPayload {
+  taskId?: string;
+  status?: AgentTask["status"];
+  updatedAt?: string;
+  reason: "task" | "log" | "restore";
+}
 type AgentArtifactType = "web-app" | "api-service" | "script-tool" | "library" | "desktop-app" | "workspace-change" | "unknown";
 type AgentOutputPrimaryAction =
   | "preview-web"
@@ -510,6 +516,7 @@ interface Window {
       listSnapshots: () => Promise<WorkspaceSnapshot[]>;
       getRestoreState: () => Promise<AgentSnapshotRestoreResult | null>;
       restoreSnapshot: (snapshotId: string) => Promise<AgentSnapshotRestoreResult>;
+      onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) => void;
     };
     terminal: {
       run: (request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) => Promise<TerminalCommandResult>;
@@ -604,6 +611,8 @@ let mcpStatus: McpStatus = { servers: [], tools: [] };
 let activeAgentTaskId: string | null = null;
 let activeAgentTaskStatus: AgentTask["status"] | null = null;
 let agentPollTimer: ReturnType<typeof setInterval> | null = null;
+let agentEventRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingAgentEventRefreshForceLogs = false;
 let cachedAgentTasks: AgentTask[] = [];
 let cachedAgentSnapshots: WorkspaceSnapshot[] = [];
 let cachedAgentRouteDiagnostics: AgentRouteDiagnostics | null = null;
@@ -667,6 +676,8 @@ let managedSaveApplying = false;
 let pendingAgentTargetPromptResolve: ((choice: AgentTargetPromptChoice | null) => void) | null = null;
 const chatSaveGuardByMessageId = new Map<string, ClaudeSaveGuard>();
 const CLAUDE_RENDER_BATCH_MS = 80;
+const AGENT_EVENT_REFRESH_DEBOUNCE_MS = 300;
+const AGENT_POLL_FALLBACK_MS = 6000;
 const CLAUDE_MODEL_LABEL = "claude/minimax-m2.5:cloud";
 const OPENROUTER_DEFAULT_MODEL = "qwen/qwen3.6-plus";
 const OPENROUTER_THINK_MODEL = "deepseek/deepseek-v3.2";
@@ -7668,6 +7679,18 @@ function setupIpcListeners() {
     showToast("Error: " + err, 4000);
   });
 
+  window.api.agent.onChanged((payload) => {
+    const changedTaskId = (payload?.taskId ?? "").trim();
+    const activeTaskId = (activeAgentTaskId ?? "").trim();
+    const isLogEvent = payload?.reason === "log";
+    const shouldForceLogs = isLogEvent && (!changedTaskId || changedTaskId === activeTaskId);
+    if (isLogEvent && activeTaskId && changedTaskId && changedTaskId !== activeTaskId) {
+      scheduleAgentTaskRefreshFromEvent(false);
+      return;
+    }
+    scheduleAgentTaskRefreshFromEvent(shouldForceLogs);
+  });
+
   window.api.settings.onChanged(() => {
     void syncSettingsAcrossWindows();
   });
@@ -9387,7 +9410,18 @@ function ensureAgentPolling(): void {
   if (agentPollTimer) return;
   agentPollTimer = setInterval(() => {
     void refreshAgentTask(true);
-  }, 2000);
+  }, AGENT_POLL_FALLBACK_MS);
+}
+
+function scheduleAgentTaskRefreshFromEvent(forceLogs = false): void {
+  pendingAgentEventRefreshForceLogs = pendingAgentEventRefreshForceLogs || forceLogs;
+  if (agentEventRefreshTimer) return;
+  agentEventRefreshTimer = setTimeout(() => {
+    const nextForceLogs = pendingAgentEventRefreshForceLogs;
+    pendingAgentEventRefreshForceLogs = false;
+    agentEventRefreshTimer = null;
+    void refreshAgentTask(nextForceLogs);
+  }, AGENT_EVENT_REFRESH_DEBOUNCE_MS);
 }
 
 function getAgentApprovalWarning(prompt: string): string | null {

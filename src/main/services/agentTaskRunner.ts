@@ -11,6 +11,8 @@ import type {
   AttachmentPayload,
   AgentExecutionSpec,
   AgentArtifactType,
+  AgentTaskChangedPayload,
+  AgentTaskChangedReason,
   AgentModelRouteScoreFactor,
   AgentRouteDiagnostics,
   AgentTaskRestartMode,
@@ -288,6 +290,10 @@ interface StoredSnapshotEntry {
 
 type AgentRoutingStage = "planner" | "generator" | "repair";
 
+interface AgentTaskRunnerHooks {
+  onTaskChanged?: (payload: AgentTaskChangedPayload) => void;
+}
+
 export class AgentTaskRunner {
   private readonly workspaceRoot: string;
   private readonly settingsStore: SettingsStore;
@@ -302,14 +308,16 @@ export class AgentTaskRunner {
   private readonly taskModelFailureCounts = new Map<string, Map<string, number>>();
   private readonly taskModelBlacklist = new Map<string, Set<string>>();
   private readonly taskStageRoutes = new Map<string, Map<string, TaskStageRouteState>>();
+  private readonly onTaskChanged?: (payload: AgentTaskChangedPayload) => void;
   private lastRestoreState: AgentSnapshotRestoreResult | null = null;
   private activeTaskId: string | null = null;
   private lastTaskStatePersistAt = 0;
 
-  constructor(workspaceRoot: string, settingsStore: SettingsStore, ccrService: CcrService) {
+  constructor(workspaceRoot: string, settingsStore: SettingsStore, ccrService: CcrService, hooks: AgentTaskRunnerHooks = {}) {
     this.workspaceRoot = resolve(workspaceRoot);
     this.settingsStore = settingsStore;
     this.ccrService = ccrService;
+    this.onTaskChanged = hooks.onTaskChanged;
     this.snapshotRoot = join(this.workspaceRoot, ".cipher-snapshots");
     this.taskStatePath = join(this.snapshotRoot, "agent-task-state.json");
     this.loadPersistedTaskState();
@@ -323,6 +331,18 @@ export class AgentTaskRunner {
     return [...this.tasks.values()]
       .map((task) => this.cloneTask(task))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  private emitTaskChanged(reason: AgentTaskChangedReason, taskId?: string): void {
+    if (!this.onTaskChanged) return;
+    const normalizedTaskId = (taskId ?? "").trim();
+    const task = normalizedTaskId ? this.tasks.get(normalizedTaskId) : null;
+    this.onTaskChanged({
+      reason,
+      taskId: normalizedTaskId || undefined,
+      status: task?.status,
+      updatedAt: task?.updatedAt
+    });
   }
 
   private buildRestoreSuccessMessage(snapshot: WorkspaceSnapshot): string {
@@ -515,13 +535,13 @@ export class AgentTaskRunner {
     return cloned;
   }
 
-  private queueTaskStatePersist(): void {
+  private queueTaskStatePersist(taskId?: string): void {
     const nowMs = Date.now();
     if (nowMs - this.lastTaskStatePersistAt < TASK_STATE_PERSIST_DEBOUNCE_MS) return;
-    this.persistTaskStateNow(nowMs);
+    this.persistTaskStateNow(nowMs, taskId, "log");
   }
 
-  private persistTaskStateNow(persistedAt = Date.now()): void {
+  private persistTaskStateNow(persistedAt = Date.now(), taskId?: string, reason: AgentTaskChangedReason = "task"): void {
     try {
       if (!existsSync(this.snapshotRoot)) {
         mkdirSync(this.snapshotRoot, { recursive: true });
@@ -539,13 +559,14 @@ export class AgentTaskRunner {
       };
       writeFileSync(this.taskStatePath, JSON.stringify(payload, null, 2), "utf8");
       this.lastTaskStatePersistAt = persistedAt;
+      this.emitTaskChanged(reason, taskId);
     } catch {
       // Ignore persistence failures; runtime state remains authoritative.
     }
   }
 
-  private persistTaskState(): void {
-    this.persistTaskStateNow();
+  private persistTaskState(taskId?: string, reason: AgentTaskChangedReason = "task"): void {
+    this.persistTaskStateNow(Date.now(), taskId, reason);
   }
 
   private async hasSnapshot(snapshotId: string): Promise<boolean> {
@@ -567,7 +588,7 @@ export class AgentTaskRunner {
     const hasValidTask = !taskId || this.tasks.has(taskId);
     if (!hasValidSnapshot || !hasValidTask) {
       this.lastRestoreState = null;
-      this.persistTaskState();
+      this.persistTaskState(taskId || undefined);
       return null;
     }
 
@@ -772,16 +793,17 @@ export class AgentTaskRunner {
       targetPathHint: snapshot.targetPathHint
     };
     this.lastRestoreState = result;
-    this.persistTaskState();
+    this.persistTaskState(snapshot.taskId, "restore");
     return result;
   }
 
-  async startTask(prompt: string, attachments: AttachmentPayload[] = []): Promise<AgentTask> {
+  async startTask(prompt: string, attachments: AttachmentPayload[] = [], targetPath?: string): Promise<AgentTask> {
     this.ensureNoRunningTask();
 
     const taskId = `agent_${randomUUID()}`;
     const now = new Date().toISOString();
     const normalizedAttachments = normalizeAttachments(attachments);
+    const normalizedTargetPath = this.normalizeTaskTargetPath(targetPath);
     const initialArtifactType = this.classifyArtifactType((prompt ?? "").trim());
     const task: AgentTask = {
       id: taskId,
@@ -792,6 +814,7 @@ export class AgentTaskRunner {
       updatedAt: now,
       summary: "",
       steps: [],
+      targetPath: normalizedTargetPath,
       artifactType: initialArtifactType,
       output: this.buildTaskOutput(initialArtifactType, undefined, (prompt ?? "").trim()),
       executionSpec: undefined,
@@ -803,7 +826,7 @@ export class AgentTaskRunner {
 
     const snapshot = await this.createSnapshot(`Before agent task: ${task.prompt.slice(0, 80)}`, taskId, {
       kind: "before-task",
-      targetPathHint: this.extractGeneratedAppDirectoryFromPrompt(task.prompt) ?? undefined
+      targetPathHint: normalizedTargetPath ?? this.extractGeneratedAppDirectoryFromPrompt(task.prompt) ?? undefined
     });
     task.rollbackSnapshotId = snapshot.id;
 
@@ -818,7 +841,7 @@ export class AgentTaskRunner {
     if (normalizedAttachments.length > 0) {
       this.appendLog(taskId, `Task attachments: ${normalizedAttachments.map((attachment) => attachment.name).join(", ")}`);
     }
-    this.persistTaskState();
+    this.persistTaskState(taskId);
 
     void this.runTask(taskId);
     return this.cloneTask(task);
@@ -848,7 +871,7 @@ export class AgentTaskRunner {
     }
 
     const nextPrompt = this.buildRestartPrompt(task, mode);
-    const restarted = await this.startTask(nextPrompt, task.attachments ?? []);
+    const restarted = await this.startTask(nextPrompt, task.attachments ?? [], task.targetPath);
     this.appendLog(restarted.id, `Restarted from ${task.id} using ${this.describeRestartMode(mode)}.`);
     return restarted;
   }
@@ -862,7 +885,7 @@ export class AgentTaskRunner {
       task.status = "stopped";
       task.summary = "Stop requested.";
       task.updatedAt = new Date().toISOString();
-      this.persistTaskState();
+      this.persistTaskState(task.id);
     }
 
     if (proc) {
@@ -984,14 +1007,21 @@ export class AgentTaskRunner {
       });
 
       let workingDirectory = ".";
-      const generatedAppContext = this.extractGeneratedAppDirectoryFromPrompt(task.prompt);
+      const explicitTargetContext = (task.targetPath ?? "").trim();
+      const generatedAppContext = explicitTargetContext ? null : this.extractGeneratedAppDirectoryFromPrompt(task.prompt);
+      if (explicitTargetContext) {
+        workingDirectory = explicitTargetContext;
+        task.targetPath = explicitTargetContext;
+        this.appendLog(task.id, `Using user-selected target path: ${workingDirectory}`);
+        await this.ensureExplicitTaskWorkspace(task, workingDirectory);
+      }
       if (generatedAppContext) {
         workingDirectory = generatedAppContext;
         task.targetPath = generatedAppContext;
         this.appendLog(task.id, `Using generated app context from prompt: ${workingDirectory}`);
         await this.ensureExplicitGeneratedAppWorkspace(task, workingDirectory);
       }
-      const bootstrapPlan = generatedAppContext ? null : this.detectBootstrapPlan(task.prompt, inspection);
+      const bootstrapPlan = explicitTargetContext || generatedAppContext ? null : this.detectBootstrapPlan(task.prompt, inspection);
       if (bootstrapPlan) {
         const bootstrap = await this.runStep(task, "Bootstrap project workspace", async () => {
           const result = await this.executeBootstrapPlan(task.id, bootstrapPlan);
@@ -1381,7 +1411,7 @@ export class AgentTaskRunner {
         this.appendLog(task.id, `Completion snapshot failed: ${message}`);
       }
       this.appendLog(task.id, "Agent task completed.");
-      this.persistTaskState();
+      this.persistTaskState(task.id);
     } catch (err) {
       task.status = task.status === "stopped" ? "stopped" : "failed";
       task.summary = err instanceof Error ? err.message : "Agent task failed.";
@@ -1390,7 +1420,7 @@ export class AgentTaskRunner {
         this.markTaskFailureStage(task, this.getMostRelevantFailureStage(task), task.summary);
       }
       this.appendLog(task.id, `Agent task failed: ${task.summary}`);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
     } finally {
       if (this.activeTaskId === task.id) {
         this.activeTaskId = null;
@@ -1399,7 +1429,7 @@ export class AgentTaskRunner {
       this.taskModelFailureCounts.delete(task.id);
       this.taskModelBlacklist.delete(task.id);
       this.taskStageRoutes.delete(task.id);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
     }
   }
 
@@ -1407,7 +1437,7 @@ export class AgentTaskRunner {
     task.verification = this.buildVerificationReport(checks, task.artifactType);
     this.updateTaskVerificationTelemetry(task, task.verification);
     task.updatedAt = new Date().toISOString();
-    this.persistTaskState();
+    this.persistTaskState(task.id);
   }
 
   private ensureVerificationRequired(task: AgentTask): void {
@@ -1777,6 +1807,39 @@ export class AgentTaskRunner {
     this.appendLog(task.id, `Bootstrapping explicit generated app target: ${targetDirectory}`);
     const result = await this.executeBootstrapPlan(task.id, bootstrapPlan);
     this.appendLog(task.id, result.summary);
+  }
+
+  private async ensureExplicitTaskWorkspace(task: AgentTask, targetDirectory: string): Promise<void> {
+    const targetPath = this.resolveWorkspacePath(targetDirectory);
+    const normalizedPrompt = (task.prompt ?? "").trim().toLowerCase();
+
+    try {
+      const info = await stat(targetPath);
+      if (!info.isDirectory()) {
+        throw new Error(`Target folder is not a directory: ${targetDirectory}`);
+      }
+      return;
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (code && code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    if (this.isVerificationOnlyPrompt(task.prompt) && !this.looksLikeNewProjectPrompt(normalizedPrompt)) {
+      throw new Error(`Target folder does not exist yet: ${targetDirectory}`);
+    }
+
+    if (this.looksLikeNewProjectPrompt(normalizedPrompt)) {
+      this.appendLog(task.id, `Bootstrapping explicit target path: ${targetDirectory}`);
+      const bootstrapPlan = this.buildBootstrapPlanForTarget(task.prompt, targetDirectory);
+      const result = await this.executeBootstrapPlan(task.id, bootstrapPlan);
+      this.appendLog(task.id, result.summary);
+      return;
+    }
+
+    await mkdir(targetPath, { recursive: true });
+    this.appendLog(task.id, `Created target folder: ${targetDirectory}`);
   }
 
   private buildVerificationReport(checks: AgentVerificationCheck[], artifactType?: AgentArtifactType): AgentVerificationReport {
@@ -4427,7 +4490,7 @@ export class AgentTaskRunner {
     task.steps.push(step);
     task.updatedAt = new Date().toISOString();
     this.appendLog(task.id, `${title}...`);
-    this.persistTaskState();
+    this.persistTaskState(task.id);
 
     try {
       const result = await work();
@@ -4437,7 +4500,7 @@ export class AgentTaskRunner {
       step.summary = result.summary;
       task.updatedAt = step.finishedAt;
       this.appendLog(task.id, result.summary);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
       return result;
     } catch (err) {
       step.status = "failed";
@@ -4446,7 +4509,7 @@ export class AgentTaskRunner {
       task.updatedAt = step.finishedAt;
       this.markTaskFailureStage(task, title, step.summary);
       this.appendLog(task.id, `${title} failed: ${step.summary}`);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
       throw err;
     }
   }
@@ -4461,7 +4524,7 @@ export class AgentTaskRunner {
     const startedAt = new Date().toISOString();
     task.updatedAt = startedAt;
     this.appendLog(task.id, `${title}...`);
-    this.persistTaskState();
+    this.persistTaskState(task.id);
 
     try {
       const result = await work();
@@ -4478,7 +4541,7 @@ export class AgentTaskRunner {
       task.steps.push(step);
       task.updatedAt = finishedAt;
       this.appendLog(task.id, result.summary);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
       return result;
     } catch (err) {
       const finishedAt = new Date().toISOString();
@@ -4494,7 +4557,7 @@ export class AgentTaskRunner {
       task.updatedAt = finishedAt;
       this.markTaskFailureStage(task, title, step.summary);
       this.appendLog(task.id, `${title} failed: ${step.summary}`);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
       throw err;
     }
   }
@@ -13719,7 +13782,7 @@ body {
     if (task) {
       const telemetry = this.ensureTaskTelemetry(task);
       telemetry.failureMemoryHints = failureMemory.map((entry) => `${entry.category}/${entry.signature}: ${entry.guidance}`);
-      this.persistTaskState();
+      this.persistTaskState(task.id);
     }
     const recoveryStageLabel = `${stageLabel} recovery`;
     const exhaustedRepairRoutes = new Set<string>();
@@ -14493,7 +14556,7 @@ body {
       next.failures += 1;
     }
     this.modelRouteStats.set(key, next);
-    this.persistTaskState();
+    this.persistTaskState(this.activeTaskId ?? undefined);
   }
 
   private recordTaskModelFailure(
@@ -14626,7 +14689,7 @@ body {
       });
       this.trimFailureMemory();
     }
-    this.persistTaskState();
+    this.persistTaskState(taskId);
   }
 
   private trimFailureMemory(): void {
@@ -14864,7 +14927,7 @@ body {
     if (logs.length > MAX_LOG_LINES) logs.splice(0, logs.length - MAX_LOG_LINES);
     this.taskLogs.set(taskId, logs);
     if (taskId !== "manual") {
-      this.queueTaskStatePersist();
+      this.queueTaskStatePersist(taskId);
     }
   }
 
@@ -17002,6 +17065,12 @@ if (statusEl && buttonEl) {
     return fullPath;
   }
 
+  private normalizeTaskTargetPath(targetPath?: string): string | undefined {
+    const normalizedTarget = (targetPath ?? "").trim();
+    if (!normalizedTarget) return undefined;
+    return this.toWorkspaceRelative(this.resolveWorkspacePath(normalizedTarget));
+  }
+
   private toWorkspaceRelative(fullPath: string): string {
     const relPath = relative(this.workspaceRoot, fullPath) || ".";
     return relPath.split("\\").join("/");
@@ -17188,7 +17257,7 @@ if (statusEl && buttonEl) {
     }
 
     task.updatedAt = new Date().toISOString();
-    this.persistTaskState();
+    this.persistTaskState(task.id);
   }
 
   private cloneTask(task: AgentTask): AgentTask {

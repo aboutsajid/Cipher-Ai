@@ -9,7 +9,7 @@ import { AgentTaskRunner } from "./services/agentTaskRunner";
 import { ImageGenerationService } from "./services/imageGenerationService";
 import { GeneratedImagesStore } from "./services/generatedImagesStore";
 import { getDebugLogPath, initDebugLogger, writeDebugLog } from "./services/debugLogger";
-import type { IpcChannel } from "../shared/types";
+import type { AgentTaskChangedPayload, IpcChannel } from "../shared/types";
 
 const workspaceWindows = new Set<BrowserWindow>();
 let settingsStore: SettingsStore | null = null;
@@ -635,7 +635,11 @@ async function bootstrap(): Promise<boolean> {
   generatedImagesStore = new GeneratedImagesStore(resolvedUserDataPath);
   ccrService = new CcrService(settingsStore);
   imageGenerationService = new ImageGenerationService(settingsStore, generatedImagesStore);
-  agentTaskRunner = new AgentTaskRunner(workspaceRoot, settingsStore, ccrService);
+  agentTaskRunner = new AgentTaskRunner(workspaceRoot, settingsStore, ccrService, {
+    onTaskChanged: (payload: AgentTaskChangedPayload) => {
+      broadcastToWindows("agent:changed", payload);
+    }
+  });
 
   await settingsStore.init();
   await chatsStore.init();
