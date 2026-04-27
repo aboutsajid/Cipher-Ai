@@ -4,7 +4,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import * as http from "node:http";
 import * as https from "node:https";
 import { spawn } from "node:child_process";
-import { extname, join, relative, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentTaskRunner } from "./services/agentTaskRunner";
 
 const previewServers = new Map<string, { server: http.Server; rootDir: string; url: string }>();
@@ -55,6 +55,17 @@ function allowLocalPreviewShellNavigation(url: string): boolean {
 
 function allowExternalNavigation(url: string): boolean {
   return /^https?:\/\//i.test(url);
+}
+
+export function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
+  const normalizedRoot = resolve(rootPath);
+  const normalizedCandidate = resolve(candidatePath);
+  const relativePath = relative(normalizedRoot, normalizedCandidate);
+  const escapesRoot = relativePath === ".."
+    || relativePath.startsWith("..\\")
+    || relativePath.startsWith("../")
+    || isAbsolute(relativePath);
+  return !escapesRoot;
 }
 
 function quotePowershellArg(value: string): string {
@@ -160,9 +171,9 @@ async function ensureManagedPreviewServer(targetPath: string, rootDir: string): 
       const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
       const pathname = decodeURIComponent(requestUrl.pathname || "/");
       const relativePath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-      const requestedPath = resolve(rootDir, relativePath);
       const normalizedRoot = resolve(rootDir);
-      if (!requestedPath.startsWith(normalizedRoot)) {
+      const requestedPath = resolve(normalizedRoot, relativePath);
+      if (!isPathInsideRoot(normalizedRoot, requestedPath)) {
         res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Forbidden");
         return;
@@ -243,8 +254,7 @@ export function resolveWorkspaceTargetPath(agentTaskRunner: AgentTaskRunner, tar
   const normalized = (targetPath ?? "").trim();
   const workspaceRoot = resolve(agentTaskRunner.getWorkspaceRoot());
   const absolutePath = resolve(workspaceRoot, normalized);
-  const relativePath = relative(workspaceRoot, absolutePath);
-  if (relativePath.startsWith("..") || relativePath.includes("..\\") || relativePath.includes("../")) {
+  if (!isPathInsideRoot(workspaceRoot, absolutePath)) {
     throw new Error("Path escapes the workspace root.");
   }
   return absolutePath;

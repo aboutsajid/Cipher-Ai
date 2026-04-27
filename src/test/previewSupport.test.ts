@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildMissingWorkspaceTargetMessage,
+  isPathInsideRoot,
   openExternalTarget,
   openManagedPreviewTarget,
   openPreviewWindowTarget,
@@ -33,6 +34,21 @@ test("resolveWorkspaceTargetPath rejects paths that escape the workspace root", 
   assert.throws(
     () => resolveWorkspaceTargetPath(agentTaskRunner as never, "..\\outside"),
     /Path escapes the workspace root\./
+  );
+});
+
+test("isPathInsideRoot blocks prefix-based sibling escapes", () => {
+  assert.equal(
+    isPathInsideRoot("D:\\workspace\\generated-apps\\demo", "D:\\workspace\\generated-apps\\demo\\dist\\index.html"),
+    true
+  );
+  assert.equal(
+    isPathInsideRoot("D:\\workspace\\generated-apps\\demo", "D:\\workspace\\generated-apps\\demo-evil\\index.html"),
+    false
+  );
+  assert.equal(
+    isPathInsideRoot("D:\\workspace\\generated-apps\\demo", "D:\\workspace\\generated-apps\\demo\\..\\demo-evil\\index.html"),
+    false
   );
 });
 
