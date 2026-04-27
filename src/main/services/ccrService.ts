@@ -78,6 +78,20 @@ export class CcrService {
       .forEach(onLine);
   }
 
+  private spawnCcrProcess(args: string[]): ChildProcess {
+    if (process.platform === "win32") {
+      // Keep Windows command compatibility without shell+args deprecation warnings.
+      return spawn("cmd.exe", ["/d", "/s", "/c", "ccr", ...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      });
+    }
+    return spawn("ccr", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+  }
+
   private async runCcrCommand(args: string[], timeoutMs = 8000): Promise<CommandResult> {
     return new Promise((resolve) => {
       let settled = false;
@@ -93,11 +107,7 @@ export class CcrService {
 
       let cmd: ChildProcess;
       try {
-        cmd = spawn("ccr", args, {
-          shell: process.platform === "win32",
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true
-        });
+        cmd = this.spawnCcrProcess(args);
       } catch (err) {
         finish({
           code: null,
@@ -255,11 +265,7 @@ export class CcrService {
       };
 
       try {
-        proc = spawn("ccr", ["start"], {
-          shell: process.platform === "win32",
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true
-        });
+        proc = this.spawnCcrProcess(["start"]);
       } catch (err) {
         finish({ ok: false, message: `Failed to start router: ${err instanceof Error ? err.message : "unknown error"}` });
         return;

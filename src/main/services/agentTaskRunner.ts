@@ -4605,12 +4605,9 @@ export class AgentTaskRunner {
         delete childEnv.ELECTRON_RUN_AS_NODE;
       }
 
-      const proc = spawn(command, args, {
-        cwd,
+      const proc = this.spawnTaskProcess(command, args, cwd, {
         env: childEnv,
-        stdio: "pipe",
-        shell: useShell,
-        windowsHide: true
+        useShell
       });
 
       const finish = (result: TerminalCommandResult) => {
@@ -14769,12 +14766,31 @@ body {
     }
   }
 
-  private spawnTaskProcess(command: string, args: string[], cwd: string): ChildProcessWithoutNullStreams {
+  private spawnTaskProcess(
+    command: string,
+    args: string[],
+    cwd: string,
+    options?: {
+      env?: NodeJS.ProcessEnv;
+      useShell?: boolean;
+    }
+  ): ChildProcessWithoutNullStreams {
+    const env = options?.env ?? process.env;
+    const useShell = options?.useShell ?? process.platform === "win32";
+    if (process.platform === "win32" && useShell) {
+      // Avoid Node's shell+args deprecation while retaining cmd/.bat compatibility on Windows.
+      return spawn("cmd.exe", ["/d", "/s", "/c", command, ...args], {
+        cwd,
+        env,
+        stdio: "pipe",
+        windowsHide: true
+      });
+    }
     return spawn(command, args, {
       cwd,
-      env: process.env,
+      env,
       stdio: "pipe",
-      shell: process.platform === "win32",
+      shell: useShell,
       windowsHide: true
     });
   }
