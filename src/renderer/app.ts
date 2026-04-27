@@ -647,6 +647,7 @@ let voiceMediaStream: MediaStream | null = null;
 const activeStreamingMessageIds = new Set<string>();
 let chatSearchQuery = "";
 let cachedChatSummaries: ChatSummary[] = [];
+let ipcListenersInitialized = false;
 const VIRTUAL_OVERSCAN_ITEMS = 8;
 const VIRTUAL_ESTIMATED_ITEM_HEIGHT = 140;
 const VIRTUAL_FULL_RENDER_THRESHOLD = 1000;
@@ -7596,6 +7597,8 @@ async function syncRouterStateAcrossWindows(): Promise<void> {
 }
 
 function setupIpcListeners() {
+  if (ipcListenersInitialized) return;
+  ipcListenersInitialized = true;
   window.api.chat.onStoreChanged((payload) => {
     void syncChatStoreAcrossWindows(payload);
   });
