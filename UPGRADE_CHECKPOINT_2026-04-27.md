@@ -2,61 +2,61 @@
 
 ## Purpose
 - Keep a clear memory of what was being upgraded.
-- Provide a safe rollback anchor commit without disturbing current workflows.
+- Preserve rollback-safe anchors while continuing incremental improvements.
 
 ## Current Snapshot
 - Branch: `main`
-- Workspace state: already contains many existing modified/untracked files (in-progress workstream).
+- Workspace state: contains many existing modified/untracked files from the in-progress stream.
 - App status: Electron app launches and runs.
-- Landing work status: duplicate bottom tagline removed from main landing/empty state.
-- Test status (latest run): `387 passed / 1 failed`.
-  - Failing test: `renderer index html provides every id referenced by renderer app bindings`
-  - Missing ID: `local-agent-workspace-root`
-- Security audit status: `npm audit --omit=dev` reports `0` vulnerabilities.
+- Landing status: duplicate bottom tagline removed from the main landing/empty state.
+- Test status (latest run): `395 passed / 0 failed`.
+- Security audit status: `npm audit --omit=dev` previously reported `0` vulnerabilities.
 
-## What We Were Doing
-- Deep product-level analysis focused on safe enhancements only (no workflow break).
-- Target areas reviewed:
-  - Main process hardening and IPC boundaries
-  - Agent runner reliability and telemetry flow
-  - Renderer performance and polling behavior
-  - Preview path safety and command execution risk
-  - Packaging/CI coverage for Windows-first deployment
+## Work Completed In This Autopilot Run
 
-## High-Priority Enhancements (No Workflow Damage)
+### Performance / Reliability
+1. `perf(images): paginate and lazy-load generated image history` (`5184419`)
+2. `perf(router): switch MCP status refresh to event-driven updates` (`a2ecde5`)
+3. `perf(agent): push task updates and keep polling as fallback` (`83eb3df`)
+4. `fix(mcp): emit runtime change events for live router panel updates` (`366c7a1`)
 
-### P0 (Stability + Safety First)
-1. Fix renderer DOM contract mismatch (`local-agent-workspace-root`).
-2. Harden preview server path boundary validation (avoid string-prefix path checks).
-3. Remove/replace `shell: true` execution paths where possible (deprecation + safety).
+### Maintainability
+1. `refactor(preload): return unsubscribe handles for IPC listeners` (`a944637`)
 
-### P1 (Performance Without UX Change)
-1. Debounce/queue `AgentTaskRunner` state persistence to reduce sync disk churn.
-2. Coalesce chat streaming writes to reduce frequent full `chats.json` rewrites.
-3. Replace periodic polling with event-driven refresh where feasible.
-4. Paginate/lazy-load image history hydration for large histories.
+### Test Coverage
+1. `test(agent): cover task-change event emission paths` (`d483147`)
+2. `test(mcp): runtime onChanged notification coverage` (included in `366c7a1`)
+
+## Priority Matrix (Updated)
+
+### P0 (Stability + Safety)
+1. DOM contract mismatch: completed.
+2. Preview path guard hardening: completed.
+3. Shell/deprecation cleanup (`shell: true` removal path): completed.
+
+### P1 (Performance Without Workflow Change)
+1. Agent task-state persist rate limiting: completed.
+2. Chat streaming persist coalescing: completed.
+3. Polling replacement with event-driven refresh: mostly completed for agent/router/MCP paths with safe fallbacks.
+4. Image history pagination/lazy loading: completed.
 
 ### P2 (Maintainability)
-1. Split large renderer/runner files into focused modules with behavior parity.
-2. Add async buffered logging pipeline with redaction guardrails.
-3. Add unsubscribe-safe preload listener wrappers.
-4. Clean orphan placeholder files to reduce confusion.
-
-## Safe Execution Order
-1. P0.1 DOM contract fix + tests.
-2. P0.2 preview path guard hardening + tests.
-3. P0.3 shell/deprecation cleanup + tests.
-4. P1 performance work in small independent commits.
-5. P2 refactor in extraction-only steps first.
+1. Unsubscribe-safe preload listener wrappers: completed.
+2. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): pending.
+3. Async buffered logging with redaction guardrails: pending.
+4. Orphan placeholder cleanup: pending (defer until file ownership scope is explicit).
 
 ## Rollback Guidance
-- Keep one commit per small step (no mega commits).
-- Prefer commit messages like:
-  - `fix(renderer): restore missing local-agent-workspace-root binding`
-  - `fix(preview): harden workspace path boundary check`
-  - `refactor(exec): remove shell-true spawn usage on windows`
-  - `perf(agent): debounce task state persistence`
-- If a step regresses behavior, rollback to the last green commit immediately.
+- Keep one commit per small change (already followed).
+- If regression appears, rollback to the latest green checkpoint commit.
+- Suggested rollback anchors (latest first):
+  - `366c7a1`
+  - `d483147`
+  - `a944637`
+  - `83eb3df`
+  - `a2ecde5`
+  - `5184419`
 
 ## Notes
-- This file is a checkpoint doc only; no functional upgrade code was applied in this checkpoint commit.
+- All changes above were validated with full test runs after each enhancement cluster.
+- No workflow-breaking changes were intentionally introduced.
