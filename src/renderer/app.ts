@@ -467,6 +467,7 @@ interface Window {
       start: (name: string) => Promise<{ ok: boolean; message: string; servers: McpServerRuntime[]; tools: string[] }>;
       stop: (name: string) => Promise<{ ok: boolean; message: string; servers: McpServerRuntime[]; tools: string[] }>;
       status: () => Promise<McpStatus>;
+      onChanged: (cb: () => void) => void;
     };
     claude: {
       status: () => Promise<ClaudeSessionStatus>;
@@ -7675,6 +7676,13 @@ function setupIpcListeners() {
     void syncRouterStateAcrossWindows();
   });
 
+  window.api.mcp.onChanged(() => {
+    const panel = $("right-panel");
+    if (panel.style.display !== "none" && (panel.dataset["openTab"] ?? "") === "router") {
+      void refreshMcpStatus();
+    }
+  });
+
   window.api.claude.onOutput((payload) => {
     if (
       suppressClaudeExitNotice
@@ -11280,12 +11288,6 @@ async function init() {
   applyRawMode(rawModeEnabled);
   hideSummaryOverlay();
   updateScrollBottomButton();
-  window.setInterval(() => {
-    const panel = $("right-panel");
-    if (panel.style.display !== "none" && (panel.dataset["openTab"] ?? "") === "router") {
-      void refreshMcpStatus();
-    }
-  }, 2000);
 
   mountTopbarControls();
 

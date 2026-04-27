@@ -74,6 +74,10 @@ export function registerToolingIpcHandlers(deps: Deps): void {
     broadcastToWindows("router:stateChanged");
   };
 
+  const emitMcpChanged = (): void => {
+    broadcastToWindows("mcp:changed");
+  };
+
   ipcMain.removeHandler("settings:get");
   ipcMain.handle("settings:get", () => settingsStore.get());
 
@@ -150,6 +154,7 @@ export function registerToolingIpcHandlers(deps: Deps): void {
     const servers = await addMcpServer(settingsStore, server);
     emitSettingsChanged();
     emitRouterStateChanged();
+    emitMcpChanged();
     return servers;
   });
 
@@ -158,6 +163,7 @@ export function registerToolingIpcHandlers(deps: Deps): void {
     const servers = await removeMcpServer(settingsStore, mcpRuntimeManager, name);
     emitSettingsChanged();
     emitRouterStateChanged();
+    emitMcpChanged();
     return servers;
   });
 
@@ -165,6 +171,7 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   ipcMain.handle("mcp:start", async (_e, name: string) => {
     const status = await mcpRuntimeManager.start(name);
     emitRouterStateChanged();
+    emitMcpChanged();
     return status;
   });
 
@@ -172,6 +179,7 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   ipcMain.handle("mcp:stop", async (_e, name: string) => {
     const status = await mcpRuntimeManager.stop(name);
     emitRouterStateChanged();
+    emitMcpChanged();
     return status;
   });
 

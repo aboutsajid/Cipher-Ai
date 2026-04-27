@@ -97,7 +97,10 @@ const api = {
     remove: (name: string) => ipcRenderer.invoke("mcp:remove", name),
     start: (name: string) => ipcRenderer.invoke("mcp:start", name),
     stop: (name: string) => ipcRenderer.invoke("mcp:stop", name),
-    status: () => ipcRenderer.invoke("mcp:status")
+    status: () => ipcRenderer.invoke("mcp:status"),
+    onChanged: (cb: () => void) => {
+      ipcRenderer.on("mcp:changed", () => cb());
+    }
   },
   claude: {
       status: () => ipcRenderer.invoke("claude:status"),
