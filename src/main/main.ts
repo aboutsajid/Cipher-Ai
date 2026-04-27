@@ -202,6 +202,7 @@ const IPC_CHANNELS: IpcChannel[] = [
   "stats:get",
   "images:generate",
   "images:listHistory",
+  "images:listHistoryPage",
   "images:save",
   "images:deleteHistory",
   "attachments:pick",

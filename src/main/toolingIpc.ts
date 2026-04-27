@@ -23,6 +23,7 @@ import type {
   ClaudeChatFilesystemSettings,
   ClaudeManagedEdit,
   ClaudeManagedEditPermissions,
+  ImageHistoryListRequest,
   ImageGenerationRequest,
   ManagedWriteVerificationReport,
   McpServerConfig
@@ -124,6 +125,11 @@ export function registerToolingIpcHandlers(deps: Deps): void {
   ipcMain.removeHandler("images:listHistory");
   ipcMain.handle("images:listHistory", async () => {
     return imageGenerationService.listHistory();
+  });
+
+  ipcMain.removeHandler("images:listHistoryPage");
+  ipcMain.handle("images:listHistoryPage", async (_e, request?: ImageHistoryListRequest) => {
+    return imageGenerationService.listHistoryPage(request);
   });
 
   ipcMain.removeHandler("images:save");

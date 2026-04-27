@@ -7,7 +7,9 @@ import type {
   ClaudeChatFilesystemSettings,
   ChatContext,
   ClaudeManagedEditPermissions,
+  GeneratedImageHistoryPage,
   GeneratedImageHistoryItem,
+  ImageHistoryListRequest,
   ImageGenerationRequest,
   ImageGenerationResult,
   ImageHistoryMutationResult,
@@ -71,6 +73,7 @@ const api = {
   images: {
     generate: (request: ImageGenerationRequest): Promise<ImageGenerationResult> => ipcRenderer.invoke("images:generate", request),
     listHistory: (): Promise<GeneratedImageHistoryItem[]> => ipcRenderer.invoke("images:listHistory"),
+    listHistoryPage: (request?: ImageHistoryListRequest): Promise<GeneratedImageHistoryPage> => ipcRenderer.invoke("images:listHistoryPage", request),
     save: (dataUrl: string, suggestedName?: string, historyId?: string): Promise<ImageSaveResult> =>
       ipcRenderer.invoke("images:save", dataUrl, suggestedName, historyId),
     deleteHistory: (historyId: string): Promise<ImageHistoryMutationResult> => ipcRenderer.invoke("images:deleteHistory", historyId)

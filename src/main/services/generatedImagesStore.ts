@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
+  GeneratedImageHistoryPage,
   GeneratedImageAsset,
   GeneratedImageHistoryItem,
+  ImageHistoryListRequest,
   ImageGenerationAspectRatio
 } from "../../shared/types";
 
@@ -79,9 +81,24 @@ export class GeneratedImagesStore {
   }
 
   async list(): Promise<GeneratedImageHistoryItem[]> {
+    const page = await this.listPage();
+    return page.items;
+  }
+
+  async listPage(request?: ImageHistoryListRequest): Promise<GeneratedImageHistoryPage> {
     const sorted = [...this.history].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const hydrated = await Promise.all(sorted.map((entry) => this.hydrateEntry(entry)));
-    return hydrated.filter((entry): entry is GeneratedImageHistoryItem => Boolean(entry));
+    const offset = Math.max(0, Math.floor(Number(request?.offset ?? 0) || 0));
+    const requestedLimit = Math.floor(Number(request?.limit ?? 0) || 0);
+    const limit = requestedLimit > 0 ? Math.min(requestedLimit, 200) : sorted.length;
+    const selected = sorted.slice(offset, offset + limit);
+    const hydrated = await Promise.all(selected.map((entry) => this.hydrateEntry(entry)));
+    const nextOffset = Math.min(offset + selected.length, sorted.length);
+    return {
+      items: hydrated.filter((entry): entry is GeneratedImageHistoryItem => Boolean(entry)),
+      hasMore: nextOffset < sorted.length,
+      nextOffset,
+      total: sorted.length
+    };
   }
 
   async recordGeneration(input: {

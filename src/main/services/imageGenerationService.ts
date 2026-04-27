@@ -9,8 +9,10 @@ import {
   inferCloudProvider
 } from "../../shared/modelCatalog";
 import type {
+  GeneratedImageHistoryPage,
   GeneratedImageHistoryItem,
   GeneratedImageAsset,
+  ImageHistoryListRequest,
   ImageGenerationAspectRatio,
   ImageProvider,
   ImageGenerationRequest,
@@ -1214,6 +1216,18 @@ export class ImageGenerationService {
   async listHistory(): Promise<GeneratedImageHistoryItem[]> {
     if (!this.generatedImagesStore) return [];
     return this.generatedImagesStore.list();
+  }
+
+  async listHistoryPage(request?: ImageHistoryListRequest): Promise<GeneratedImageHistoryPage> {
+    if (!this.generatedImagesStore) {
+      return {
+        items: [],
+        hasMore: false,
+        nextOffset: 0,
+        total: 0
+      };
+    }
+    return this.generatedImagesStore.listPage(request);
   }
 
   async deleteHistoryItem(id: string): Promise<ImageHistoryMutationResult> {

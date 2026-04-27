@@ -50,3 +50,45 @@ test("GeneratedImagesStore records, saves, lists, and deletes generated assets",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("GeneratedImagesStore supports paged history reads", async () => {
+  const { dir, store } = await createStore();
+
+  try {
+    await store.recordGeneration({
+      prompt: "First image",
+      model: "google/gemini-2.5-flash-image",
+      aspectRatio: "1:1",
+      text: "first",
+      images: [{ dataUrl: "data:image/png;base64,YQ==", mimeType: "image/png" }]
+    });
+    await store.recordGeneration({
+      prompt: "Second image",
+      model: "google/gemini-2.5-flash-image",
+      aspectRatio: "1:1",
+      text: "second",
+      images: [{ dataUrl: "data:image/png;base64,Yg==", mimeType: "image/png" }]
+    });
+    await store.recordGeneration({
+      prompt: "Third image",
+      model: "google/gemini-2.5-flash-image",
+      aspectRatio: "1:1",
+      text: "third",
+      images: [{ dataUrl: "data:image/png;base64,Yw==", mimeType: "image/png" }]
+    });
+
+    const firstPage = await store.listPage({ offset: 0, limit: 2 });
+    assert.equal(firstPage.items.length, 2);
+    assert.equal(firstPage.hasMore, true);
+    assert.equal(firstPage.nextOffset, 2);
+    assert.equal(firstPage.total, 3);
+
+    const secondPage = await store.listPage({ offset: firstPage.nextOffset, limit: 2 });
+    assert.equal(secondPage.items.length, 1);
+    assert.equal(secondPage.hasMore, false);
+    assert.equal(secondPage.nextOffset, 3);
+    assert.equal(secondPage.total, 3);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

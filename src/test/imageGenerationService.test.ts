@@ -143,6 +143,51 @@ test("ImageGenerationService stores generated image history ids when a history s
   }
 });
 
+test("ImageGenerationService returns paged image history when requested", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cipher-image-service-page-test-"));
+  const historyStore = new GeneratedImagesStore(dir);
+  await historyStore.init();
+  const service = new ImageGenerationService(
+    createSettings() as never,
+    historyStore,
+    createRuntime(async () => Response.json({
+      choices: [
+        {
+          message: {
+            content: "Stored image.",
+            images: [
+              {
+                image_url: {
+                  url: "data:image/png;base64,YWJj"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }))
+  );
+
+  try {
+    await service.generate({ prompt: "One" });
+    await service.generate({ prompt: "Two" });
+
+    const page1 = await service.listHistoryPage({ offset: 0, limit: 1 });
+    assert.equal(page1.items.length, 1);
+    assert.equal(page1.hasMore, true);
+    assert.equal(page1.nextOffset, 1);
+    assert.equal(page1.total, 2);
+
+    const page2 = await service.listHistoryPage({ offset: page1.nextOffset, limit: 1 });
+    assert.equal(page2.items.length, 1);
+    assert.equal(page2.hasMore, false);
+    assert.equal(page2.nextOffset, 2);
+    assert.equal(page2.total, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("ImageGenerationService sends NVIDIA image-generation requests to the hosted genai endpoint", async () => {
   const service = new ImageGenerationService(createSettings({
     baseUrl: "https://integrate.api.nvidia.com/v1",

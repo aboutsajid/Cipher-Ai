@@ -27,6 +27,16 @@ interface GeneratedImageHistoryItem {
   lastSavedAt?: string;
   lastSavedPath?: string;
 }
+interface ImageHistoryListRequest {
+  offset?: number;
+  limit?: number;
+}
+interface GeneratedImageHistoryPage {
+  items: GeneratedImageHistoryItem[];
+  hasMore: boolean;
+  nextOffset: number;
+  total: number;
+}
 interface ImageGenerationRequest {
   prompt: string;
   provider?: ImageProviderMode;
@@ -433,6 +443,7 @@ interface Window {
     images: {
       generate: (request: ImageGenerationRequest) => Promise<ImageGenerationResult>;
       listHistory: () => Promise<GeneratedImageHistoryItem[]>;
+      listHistoryPage: (request?: ImageHistoryListRequest) => Promise<GeneratedImageHistoryPage>;
       save: (dataUrl: string, suggestedName?: string, historyId?: string) => Promise<ImageSaveResult>;
       deleteHistory: (historyId: string) => Promise<ImageHistoryMutationResult>;
     };
@@ -699,6 +710,7 @@ const LOCAL_CODER_PRIMARY = "qwen2.5-coder:14b";
 const LOCAL_CODER_FALLBACK = "qwen2.5-coder:7b";
 const LOCAL_VOICE_SUPPORTED = false;
 const IMAGE_GENERATION_ASPECT_RATIOS: ImageGenerationAspectRatio[] = ["1:1", "16:9", "21:9", "2:1", "9:16", "1:2", "4:3", "3:2", "2:3", "4:5", "5:4", "3:4"];
+const IMAGE_HISTORY_PAGE_SIZE = 40;
 const CHAT_MODE_TEMPLATES: ModeTemplate[] = [
   { name: "Explain Code", content: "Explain this code clearly, including what it does, key logic, and any risks or edge cases." },
   { name: "Write Reply", content: "Help me write a clear, concise reply in a professional but natural tone." },
@@ -711,7 +723,10 @@ const AGENT_MODE_TEMPLATES: ModeTemplate[] = [
 ];
 let imageGenerationSubmitting = false;
 let imageHistoryLoading = false;
+let imageHistoryLoadingMore = false;
 let imageHistoryItems: GeneratedImageHistoryItem[] = [];
+let imageHistoryHasMore = false;
+let imageHistoryOffset = 0;
 type ImageStudioSortMode = "newest" | "oldest" | "prompt-az" | "prompt-za";
 let imageStudioSearchQuery = "";
 let imageStudioSortMode: ImageStudioSortMode = "newest";
@@ -2386,6 +2401,17 @@ function refreshEmptyStateIfNeeded(): void {
   empty.replaceWith(createEmptyStateElement());
 }
 
+function syncAgentLandingFocusPanel(): void {
+  if (currentInteractionMode !== "agent") return;
+  if (renderedMessages.length > 0) return;
+  if (currentChatId) return;
+  const panel = document.getElementById("right-panel");
+  if (!(panel instanceof HTMLElement) || panel.style.display === "none") return;
+  const openTab = panel.dataset["openTab"] ?? rightPanelTab;
+  if (openTab !== "settings") return;
+  closeRightPanel();
+}
+
 function isAgentTaskRunning(): boolean {
   return Boolean(activeAgentTaskId && activeAgentTaskStatus === "running");
 }
@@ -2476,6 +2502,7 @@ function applyInteractionMode(mode: InteractionMode): void {
   renderComposerAttachments();
   refreshComposerContextUi();
   refreshEmptyStateIfNeeded();
+  syncAgentLandingFocusPanel();
   updateDirectSaveUi();
   refreshChatProviderMenuUi();
 }
@@ -5241,60 +5268,127 @@ function createEmptyStateElement(): HTMLDivElement {
   };
 
   const recentChats = cachedChatSummaries.slice(0, 3);
-  const quickActions = currentInteractionMode === "agent"
+  const quickActions: Array<{
+    label: string;
+    desc: string;
+    benefit: string;
+    content: string;
+    icon: string;
+  }> = currentInteractionMode === "agent"
     ? [
         {
           label: "Build UI",
           desc: "Ship a focused feature with verification.",
-          content: "Build a polished UI improvement in the current project, verify build and lint, and summarize what changed."
+          benefit: "Best for scoped feature delivery.",
+          content: AGENT_MODE_TEMPLATES[0]?.content ?? "Build this feature in the current project, verify build/lint, and summarize what changed.",
+          icon: "&#128736;"
         },
         {
           label: "Fix Bug",
           desc: "Investigate and patch a safe fix.",
-          content: "Investigate the current bug, make the smallest safe fix, run verification, and explain the root cause."
+          benefit: "Best for root-cause + safe patch.",
+          content: AGENT_MODE_TEMPLATES[1]?.content ?? "Investigate this bug, make the smallest safe fix, run verification, and explain the root cause.",
+          icon: "&#9888;"
         },
         {
           label: "Continue Build",
           desc: "Keep momentum on an existing task output.",
-          content: "Continue working on the current task output. Improve it, keep scope focused, and make sure it runs cleanly."
+          benefit: "Best for iteration on recent output.",
+          content: AGENT_MODE_TEMPLATES[2]?.content ?? "Continue working on the current task output. Improve it, keep scope focused, and make sure it runs cleanly.",
+          icon: "&#10227;"
         }
       ]
     : [
         {
           label: "Explain Code",
           desc: "Break down logic, risks, and edge cases.",
-          content: CHAT_MODE_TEMPLATES[0]?.content ?? "Explain this code clearly."
+          benefit: "Best for quick code understanding.",
+          content: CHAT_MODE_TEMPLATES[0]?.content ?? "Explain this code clearly.",
+          icon: "&#8505;"
         },
         {
           label: "Write Reply",
           desc: "Draft a concise, natural response.",
-          content: CHAT_MODE_TEMPLATES[1]?.content ?? "Help me write a clear reply."
+          benefit: "Best for polished communication.",
+          content: CHAT_MODE_TEMPLATES[1]?.content ?? "Help me write a clear reply.",
+          icon: "&#9998;"
         },
         {
           label: "Debug Idea",
           desc: "Think through likely causes and fixes.",
-          content: CHAT_MODE_TEMPLATES[2]?.content ?? "Think through this bug with me."
+          benefit: "Best for investigation planning.",
+          content: CHAT_MODE_TEMPLATES[2]?.content ?? "Think through this bug with me.",
+          icon: "&#129504;"
         }
       ];
 
   const empty = document.createElement("div");
   empty.className = `empty-state${currentInteractionMode === "agent" ? " agent-empty-state" : " chat-empty-state"}`;
   empty.innerHTML = currentInteractionMode === "agent"
-    ? '<div class="empty-hero"><div class="empty-kicker">Agent Mode</div><p><span class="empty-heading-icon" aria-hidden="true">&#9881;</span><span class="empty-heading-text">Run supervised coding tasks.</span></p><span class="empty-hero-copy">Start a focused build, bug fix, or follow-up run without leaving the main workspace.</span></div>'
+    ? '<div class="empty-hero"><div class="empty-kicker">Agent Mode</div><p><span class="empty-heading-icon" aria-hidden="true">&#9881;</span><span class="empty-heading-text">Run supervised coding tasks.</span></p><span class="empty-hero-copy empty-hero-copy-strong">Agent mode inspects, edits, verifies, and logs progress.</span><div class="empty-hero-metrics"><span>Safe edits</span><span>Verification checkpoints</span><span>Replayable run history</span></div></div>'
     : '<div class="empty-hero"><div class="empty-kicker">Workspace Home</div><p><span class="empty-heading-icon" aria-hidden="true">&#10024;</span><span class="empty-heading-text">Start work from a smarter home screen.</span></p><span class="empty-hero-copy"><span class="empty-subtle-icon">&#8984;</span> Chat, think, write, and launch focused tasks from one workspace.</span></div>';
 
   const actions = document.createElement("div");
   actions.className = "empty-actions";
   actions.innerHTML = currentInteractionMode === "agent"
-    ? '<button class="btn-primary empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>'
+    ? '<button class="btn-primary empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button><button class="btn-ghost empty-action-btn" type="button" data-empty-action="open-settings">Open Settings</button>'
     : '<button class="btn-primary empty-action-btn" type="button" data-empty-action="new-chat">Start Chat</button><button class="btn-ghost empty-action-btn" type="button" data-empty-action="local">Setup Local AI</button>';
   empty.appendChild(actions);
+
+  if (currentInteractionMode === "agent") {
+    const startStrip = document.createElement("section");
+    startStrip.className = "empty-start-strip";
+    startStrip.innerHTML = '<div class="empty-panel-head"><span class="empty-panel-kicker">Start Here</span><strong>Launch your first run in three short steps</strong></div>';
+
+    const steps = document.createElement("div");
+    steps.className = "empty-start-grid";
+    const stepItems: Array<{ title: string; detail: string; run: () => void }> = [
+      {
+        title: "Select provider",
+        detail: "Choose OpenRouter, NVIDIA, or Ollama in Settings.",
+        run: () => {
+          openPanel("settings");
+          showToast("Choose provider, model, then save settings.", 2200);
+        }
+      },
+      {
+        title: "Confirm workspace",
+        detail: "Check local workspace root before running tasks.",
+        run: () => {
+          openPanel("settings");
+          const rootDisplay = document.getElementById("local-agent-workspace-path");
+          if (rootDisplay instanceof HTMLElement) {
+            rootDisplay.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+          showToast("Workspace root selected in Settings.", 2200);
+        }
+      },
+      {
+        title: "Start first task",
+        detail: "Insert a starter prompt and press Enter to run.",
+        run: () => {
+          applyComposerDraft(quickActions[0]?.content ?? "Build this feature in the current project, verify build/lint, and summarize what changed.");
+          showToast("Starter task added to composer.", 2000);
+        }
+      }
+    ];
+    stepItems.forEach((step, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "empty-start-step";
+      btn.innerHTML = `<span class="empty-start-step-index">${idx + 1}</span><span class="empty-start-step-copy"><strong>${step.title}</strong><small>${step.detail}</small></span>`;
+      btn.onclick = step.run;
+      steps.appendChild(btn);
+    });
+    startStrip.appendChild(steps);
+    empty.appendChild(startStrip);
+  }
 
   const grid = document.createElement("div");
   grid.className = `empty-workspace-grid${currentInteractionMode === "agent" ? " agent-layout" : " chat-layout"}`;
 
   const quickSection = document.createElement("section");
-  quickSection.className = `empty-panel${currentInteractionMode === "agent" ? " empty-panel-inline" : ""}`;
+  quickSection.className = `empty-panel empty-panel-quick${currentInteractionMode === "agent" ? " empty-panel-inline" : ""}`;
   quickSection.innerHTML = `<div class="empty-panel-head"><span class="empty-panel-kicker">Quick Actions</span><strong>${currentInteractionMode === "agent" ? "Launch a task" : "Start with a strong prompt"}</strong></div>`;
   const quickList = document.createElement("div");
   quickList.className = "empty-action-grid";
@@ -5302,7 +5396,7 @@ function createEmptyStateElement(): HTMLDivElement {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "empty-quick-card";
-    button.innerHTML = `<strong>${action.label}</strong><span>${action.desc}</span>`;
+    button.innerHTML = `<span class="empty-quick-card-icon" aria-hidden="true">${action.icon}</span><span class="empty-quick-card-copy"><strong>${action.label}</strong><span>${action.desc}</span><small>${action.benefit}</small></span>`;
     button.onclick = () => applyComposerDraft(action.content);
     quickList.appendChild(button);
   }
@@ -5310,9 +5404,9 @@ function createEmptyStateElement(): HTMLDivElement {
   grid.appendChild(quickSection);
 
   const recentSection = document.createElement("section");
-  recentSection.className = "empty-panel";
+  recentSection.className = `empty-panel${currentInteractionMode === "agent" ? " empty-panel-recent" : ""}`;
   recentSection.innerHTML = currentInteractionMode === "agent"
-    ? `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Tasks</span><strong>${cachedAgentTasks.length > 0 ? "Resume recent runs" : "No recent tasks yet"}</strong></div>`
+    ? `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Runs</span><strong>${cachedAgentTasks.length > 0 ? "Resume recent runs" : "No recent tasks yet"}</strong></div>`
     : `<div class="empty-panel-head"><span class="empty-panel-kicker">Recent Chats</span><strong>${recentChats.length > 0 ? "Jump back into your work" : "No recent chats yet"}</strong></div>`;
   const recentList = document.createElement("div");
   recentList.className = currentInteractionMode === "agent" ? "empty-agent-task-list" : "empty-chat-list";
@@ -5326,12 +5420,6 @@ function createEmptyStateElement(): HTMLDivElement {
 
   empty.appendChild(grid);
 
-  const motto = document.createElement("small");
-  motto.className = "empty-motto";
-  motto.textContent = currentInteractionMode === "agent"
-    ? "Agent mode inspects, edits, verifies, and logs progress."
-    : "AI Workspace for Real Output";
-  empty.appendChild(motto);
   return empty;
 }
 
@@ -5342,6 +5430,9 @@ async function handleGuidedUiAction(action: string): Promise<void> {
       setProviderMode("ollama");
       openPanel("settings");
       await setupFreeLocalCodingMode();
+      return;
+    case "open-settings":
+      openPanel("settings");
       return;
     case "new-chat":
       await createNewChat();
@@ -6939,6 +7030,16 @@ function getImageStudioVisibleItems(allItems: GeneratedImageHistoryItem[]): Gene
   return items;
 }
 
+function mergeImageHistoryItems(
+  existingItems: GeneratedImageHistoryItem[],
+  nextItems: GeneratedImageHistoryItem[]
+): GeneratedImageHistoryItem[] {
+  const byId = new Map<string, GeneratedImageHistoryItem>();
+  for (const item of existingItems) byId.set(item.id, item);
+  for (const item of nextItems) byId.set(item.id, item);
+  return [...byId.values()].sort((left, right) => getImageHistorySortTime(right) - getImageHistorySortTime(left));
+}
+
 function createImageHistoryChip(label: string, tone: "default" | "accent" = "default"): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.className = `image-history-chip${tone === "accent" ? " accent" : ""}`;
@@ -7140,6 +7241,30 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
     card.appendChild(figure);
     list.appendChild(card);
   }
+
+  if (imageHistoryHasMore || imageHistoryLoadingMore) {
+    const footer = document.createElement("div");
+    footer.className = "image-history-footer";
+
+    const status = document.createElement("span");
+    status.className = "image-history-status";
+    status.textContent = imageHistoryLoadingMore ? "Loading more images..." : "More history available.";
+    footer.appendChild(status);
+
+    if (imageHistoryHasMore) {
+      const loadMoreBtn = document.createElement("button");
+      loadMoreBtn.type = "button";
+      loadMoreBtn.className = "btn-ghost-sm";
+      loadMoreBtn.textContent = imageHistoryLoadingMore ? "Loading..." : "Load More";
+      loadMoreBtn.disabled = imageHistoryLoadingMore;
+      loadMoreBtn.onclick = () => {
+        void loadMoreImageHistory();
+      };
+      footer.appendChild(loadMoreBtn);
+    }
+
+    list.appendChild(footer);
+  }
 }
 
 function renderImageHistoryViews(): void {
@@ -7147,13 +7272,44 @@ function renderImageHistoryViews(): void {
   renderImageHistoryListInto("image-studio-history-list", "image-studio-empty");
 }
 
-async function refreshImageHistory(): Promise<void> {
-  imageHistoryLoading = true;
+async function loadMoreImageHistory(): Promise<void> {
+  if (imageHistoryLoading || imageHistoryLoadingMore || !imageHistoryHasMore) return;
+  imageHistoryLoadingMore = true;
   renderImageHistoryViews();
   try {
-    imageHistoryItems = await window.api.images.listHistory();
+    const page = await window.api.images.listHistoryPage({
+      offset: imageHistoryOffset,
+      limit: IMAGE_HISTORY_PAGE_SIZE
+    });
+    imageHistoryItems = mergeImageHistoryItems(imageHistoryItems, page.items);
+    imageHistoryOffset = page.nextOffset;
+    imageHistoryHasMore = page.hasMore;
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "Failed to load more images.", 3200);
+  } finally {
+    imageHistoryLoadingMore = false;
+    renderImageHistoryViews();
+  }
+}
+
+async function refreshImageHistory(): Promise<void> {
+  imageHistoryLoading = true;
+  imageHistoryLoadingMore = false;
+  imageHistoryOffset = 0;
+  imageHistoryHasMore = false;
+  renderImageHistoryViews();
+  try {
+    const page = await window.api.images.listHistoryPage({
+      offset: 0,
+      limit: IMAGE_HISTORY_PAGE_SIZE
+    });
+    imageHistoryItems = page.items;
+    imageHistoryOffset = page.nextOffset;
+    imageHistoryHasMore = page.hasMore;
   } catch (err) {
     imageHistoryItems = [];
+    imageHistoryOffset = 0;
+    imageHistoryHasMore = false;
     showToast(err instanceof Error ? err.message : "Failed to load image history.", 3200);
   } finally {
     imageHistoryLoading = false;
@@ -8444,16 +8600,19 @@ function buildTaskPrimaryActions(task: AgentTask, variant: "main" | "panel"): st
   const previewAttr = variant === "main" ? "data-main-agent-history-preview" : "data-agent-history-preview";
   const openAttr = variant === "main" ? "data-main-agent-history-open-folder" : "data-agent-history-open-folder";
   const copyRunAttr = variant === "main" ? "data-main-agent-history-copy-run" : "data-agent-history-copy-run";
+  const previewLabel = variant === "main" ? "Open Preview" : "Preview";
+  const openLabel = variant === "main" ? "Open Output" : getArtifactOpenLabel(task.artifactType);
+  const rerunLabel = variant === "main" ? "Re-run Command" : getAgentRunCommandButtonLabel(task.output?.primaryAction);
   const buttons: string[] = [];
   const copyRunButton = task.output?.runCommand
-    ? `<button class="btn-ghost-sm" type="button" ${copyRunAttr}="${escHtml(task.id)}">${escHtml(getAgentRunCommandButtonLabel(task.output.primaryAction))}</button>`
+    ? `<button class="btn-ghost-sm" type="button" ${copyRunAttr}="${escHtml(task.id)}">${escHtml(rerunLabel)}</button>`
     : "";
 
   const previewButton = isTaskPreviewable(task)
-    ? `<button class="btn-ghost-sm" type="button" ${previewAttr}="${escHtml(task.id)}"${targetMissing ? " disabled" : ""}>Preview</button>`
+    ? `<button class="btn-ghost-sm" type="button" ${previewAttr}="${escHtml(task.id)}"${targetMissing ? " disabled" : ""}>${escHtml(previewLabel)}</button>`
     : "";
   const openFolderButton = task.targetPath
-    ? `<button class="btn-ghost-sm" type="button" ${openAttr}="${escHtml(task.id)}"${targetMissing ? " disabled" : ""}>${escHtml(getArtifactOpenLabel(task.artifactType))}</button>`
+    ? `<button class="btn-ghost-sm" type="button" ${openAttr}="${escHtml(task.id)}"${targetMissing ? " disabled" : ""}>${escHtml(openLabel)}</button>`
     : "";
 
   if (isPreviewPrimaryAction(task.output?.primaryAction)) {
@@ -8752,7 +8911,7 @@ function buildMainChatCards(chats: ChatSummary[]): string {
 }
 
 function buildMainAgentTaskCards(tasks: AgentTask[]): string {
-  const recentTasks = tasks.slice(0, 3);
+  const recentTasks = tasks.slice(0, 4);
   if (recentTasks.length === 0) {
     return '<div class="empty-panel-note">Run your first supervised task and it will appear here.</div>';
   }
@@ -8760,20 +8919,34 @@ function buildMainAgentTaskCards(tasks: AgentTask[]): string {
   return recentTasks.map((task) => {
     const tone = task.status === "completed" ? "ok" : task.status === "failed" ? "err" : "";
     const targetMissing = isTaskTargetMissing(task);
+    const passedCount = (task.verification?.checks ?? []).filter((check) => check.status === "passed").length;
+    const failedCount = (task.verification?.checks ?? []).filter((check) => check.status === "failed").length;
+    const skippedCount = (task.verification?.checks ?? []).filter((check) => check.status === "skipped").length;
+    const verificationBadges: string[] = [];
+    if (passedCount > 0) verificationBadges.push(`<span class="agent-history-badge ok">${escHtml(`${passedCount} passed`)}</span>`);
+    if (failedCount > 0) verificationBadges.push(`<span class="agent-history-badge err">${escHtml(`${failedCount} failed`)}</span>`);
+    if (skippedCount > 0) verificationBadges.push(`<span class="agent-history-badge">${escHtml(`${skippedCount} skipped`)}</span>`);
 
     return `
       <div class="empty-agent-task-card${task.id === activeAgentTaskId ? " active" : ""}" data-main-agent-history-id="${escHtml(task.id)}">
         <div class="empty-agent-task-top">
-          <strong>${escHtml(summarizeAgentPrompt(task.prompt))}</strong>
-          <span>${escHtml(formatAgentTaskTimestamp(task.updatedAt))}</span>
+          <div class="empty-agent-task-title-stack">
+            <span class="empty-agent-task-kicker">Last run</span>
+            <strong>${escHtml(summarizeAgentPrompt(task.prompt))}</strong>
+          </div>
+          <div class="empty-agent-task-meta">
+            <span class="agent-history-badge ${tone}">${escHtml(task.status)}</span>
+            <span>${escHtml(formatAgentTaskTimestamp(task.updatedAt))}</span>
+          </div>
         </div>
         ${buildTaskResultOverview(task, "main")}
         <div class="empty-agent-task-badges">
-          <span class="agent-history-badge ${tone}">${escHtml(task.status)}</span>
           ${task.artifactType ? `<span class="agent-history-badge">${escHtml(formatAgentArtifactType(task.artifactType))}</span>` : ""}
+          ${verificationBadges.join("")}
           ${targetMissing ? `<span class="agent-history-badge err">${escHtml("Target missing")}</span>` : ""}
         </div>
         ${buildTaskPrimaryActions(task, "main")}
+        ${buildTaskRestartActions(task, "main")}
       </div>
     `;
   }).join("");

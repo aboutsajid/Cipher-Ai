@@ -170,6 +170,18 @@ export interface GeneratedImageHistoryItem {
   lastSavedPath?: string;
 }
 
+export interface ImageHistoryListRequest {
+  offset?: number;
+  limit?: number;
+}
+
+export interface GeneratedImageHistoryPage {
+  items: GeneratedImageHistoryItem[];
+  hasMore: boolean;
+  nextOffset: number;
+  total: number;
+}
+
 export interface ImageHistoryMutationResult {
   ok: boolean;
   message: string;
@@ -512,6 +524,7 @@ export type IpcChannel =
   | "stats:get"
   | "images:generate"
   | "images:listHistory"
+  | "images:listHistoryPage"
   | "images:save"
   | "images:deleteHistory"
   | "settings:get"
