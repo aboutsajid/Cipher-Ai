@@ -39,4 +39,19 @@ test("renderer index html provides every id referenced by renderer app bindings"
     `renderer app references missing HTML ids: ${missingIds.join(", ")}`
   );
   assert.ok(referencedIds.includes("agent-refresh-route-health-btn"));
+  assert.ok(referencedIds.includes("agent-history-toggle-btn"));
+  assert.ok(referencedIds.includes("agent-target-modal-suggest-btn"));
+  assert.ok(referencedIds.includes("generate-image-btn"));
+  assert.ok(referencedIds.includes("image-history-btn"));
+  assert.ok(referencedIds.includes("claude-chat-safety-panel"));
+  assert.ok(referencedIds.includes("claude-target-chip"));
+  assert.ok(referencedIds.includes("claude-resume-btn"));
+  assert.ok(referencedIds.includes("claude-fs-timeline"));
+  assert.ok(referencedIds.includes("sidebar-resize-handle"));
+  assert.ok(referencedIds.includes("panel-resize-handle"));
+});
+
+test("renderer IPC listener setup is idempotent to avoid duplicate subscriptions", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+  assert.match(rendererSource, /function setupIpcListeners\(\)\s*\{\s*if \(ipcListenersInitialized\) return;\s*ipcListenersInitialized = true;/);
 });
