@@ -3,6 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Chat, ChatContext, ChatSummary, Message } from "../../shared/types";
 
+const STREAM_UPDATE_PERSIST_DEBOUNCE_MS = 60;
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -53,6 +55,9 @@ export class ChatsStore {
   private filePath: string;
   private userDataPath: string;
   private chats: Chat[] = [];
+  private pendingPersistTimer: NodeJS.Timeout | null = null;
+  private persistWriteChain: Promise<void> = Promise.resolve();
+  private backgroundPersistError: Error | null = null;
 
   constructor(userDataPath: string) {
     this.userDataPath = userDataPath;
@@ -197,16 +202,56 @@ export class ChatsStore {
     if (!msg) return;
     Object.assign(msg, patch);
     chat.updatedAt = now();
-    await this.persist();
+    this.queuePersist();
   }
 
   makeId(prefix: string): string {
     return makeId(prefix);
   }
 
+  async flushPendingWrites(): Promise<void> {
+    if (this.pendingPersistTimer) {
+      clearTimeout(this.pendingPersistTimer);
+      this.pendingPersistTimer = null;
+      await this.enqueuePersistWrite();
+    } else {
+      await this.persistWriteChain;
+    }
+    this.throwIfBackgroundPersistFailed();
+  }
+
+  private queuePersist(): void {
+    if (this.pendingPersistTimer) return;
+    this.pendingPersistTimer = setTimeout(() => {
+      this.pendingPersistTimer = null;
+      void this.enqueuePersistWrite().catch((err) => {
+        this.backgroundPersistError = err instanceof Error ? err : new Error(String(err));
+      });
+    }, STREAM_UPDATE_PERSIST_DEBOUNCE_MS);
+  }
+
+  private throwIfBackgroundPersistFailed(): void {
+    if (!this.backgroundPersistError) return;
+    const err = this.backgroundPersistError;
+    this.backgroundPersistError = null;
+    throw err;
+  }
+
+  private enqueuePersistWrite(): Promise<void> {
+    this.persistWriteChain = this.persistWriteChain.then(async () => {
+      await mkdir(join(this.filePath, ".."), { recursive: true });
+      await writeFile(this.filePath, JSON.stringify({ chats: this.chats }, null, 2), "utf8");
+    });
+    return this.persistWriteChain;
+  }
+
   private async persist(): Promise<void> {
-    await mkdir(join(this.filePath, ".."), { recursive: true });
-    await writeFile(this.filePath, JSON.stringify({ chats: this.chats }, null, 2), "utf8");
+    if (this.pendingPersistTimer) {
+      clearTimeout(this.pendingPersistTimer);
+      this.pendingPersistTimer = null;
+    }
+    await this.enqueuePersistWrite();
+    this.throwIfBackgroundPersistFailed();
   }
 
   private getLegacyChatPaths(): string[] {

@@ -103,3 +103,27 @@ test("ChatsStore persists chat context updates", async () => {
     });
   });
 });
+
+test("ChatsStore flushPendingWrites persists debounced stream updates", async () => {
+  await withTempDir(async (userDataPath) => {
+    const store = new ChatsStore(userDataPath);
+    await store.init();
+
+    const chat = await store.create();
+    const assistantMessage = makeMessage("Booting response...", "assistant");
+    await store.appendMessage(chat.id, assistantMessage);
+
+    await store.updateMessage(chat.id, assistantMessage.id, { content: "Booting response... 25%" });
+    await store.updateMessage(chat.id, assistantMessage.id, { content: "Booting response... 50%" });
+    await store.updateMessage(chat.id, assistantMessage.id, { content: "Booting response... done" });
+    await store.flushPendingWrites();
+
+    const persistedPath = join(userDataPath, "cipher-workspace", "chats.json");
+    const persisted = JSON.parse(await readFile(persistedPath, "utf8")) as {
+      chats: Array<{ id: string; messages: Array<{ id: string; content: string }> }>;
+    };
+    const savedChat = persisted.chats.find((candidate) => candidate.id === chat.id);
+    const savedMessage = savedChat?.messages.find((candidate) => candidate.id === assistantMessage.id);
+    assert.equal(savedMessage?.content, "Booting response... done");
+  });
+});

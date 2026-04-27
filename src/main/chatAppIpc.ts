@@ -318,6 +318,7 @@ export function registerChatAppIpcHandlers(deps: Deps): void {
       });
     } finally {
       activeControllers.delete(chatId);
+      await chatsStore.flushPendingWrites();
     }
   });
 
