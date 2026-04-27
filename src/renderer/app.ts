@@ -440,11 +440,11 @@ interface Window {
         options?: { attachments?: AttachmentPayload[]; compareModel?: string; context?: ChatContext; enabledTools?: string[]; }
       ) => Promise<void>;
       stop: (chatId: string) => Promise<boolean>;
-      onMessage: (cb: (chatId: string, msg: Message) => void) => void;
-      onChunk: (cb: (chatId: string, msgId: string, chunk: string) => void) => void;
-      onDone: (cb: (chatId: string, msgId: string) => void) => void;
-      onError: (cb: (chatId: string, msgId: string, err: string) => void) => void;
-      onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => void;
+      onMessage: (cb: (chatId: string, msg: Message) => void) => () => void;
+      onChunk: (cb: (chatId: string, msgId: string, chunk: string) => void) => () => void;
+      onDone: (cb: (chatId: string, msgId: string) => void) => () => void;
+      onError: (cb: (chatId: string, msgId: string, err: string) => void) => () => void;
+      onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => () => void;
     };
     images: {
       generate: (request: ImageGenerationRequest) => Promise<ImageGenerationResult>;
@@ -473,7 +473,7 @@ interface Window {
       start: (name: string) => Promise<{ ok: boolean; message: string; servers: McpServerRuntime[]; tools: string[] }>;
       stop: (name: string) => Promise<{ ok: boolean; message: string; servers: McpServerRuntime[]; tools: string[] }>;
       status: () => Promise<McpStatus>;
-      onChanged: (cb: () => void) => void;
+      onChanged: (cb: () => void) => () => void;
     };
     claude: {
       status: () => Promise<ClaudeSessionStatus>;
@@ -501,9 +501,9 @@ interface Window {
       verifyManagedEdits: (edits: ClaudeManagedEdit[]) => Promise<ManagedWriteVerificationReport>;
       repairManagedEdits: (edits: ClaudeManagedEdit[], verification: ManagedWriteVerificationReport) => Promise<ManagedWriteRepairResult>;
       stop: () => Promise<ClaudeSessionResult>;
-      onOutput: (cb: (payload: ClaudeOutputPayload) => void) => void;
-      onError: (cb: (message: string) => void) => void;
-      onExit: (cb: (payload: { code: number | null; signal: string | null }) => void) => void;
+      onOutput: (cb: (payload: ClaudeOutputPayload) => void) => () => void;
+      onError: (cb: (message: string) => void) => () => void;
+      onExit: (cb: (payload: { code: number | null; signal: string | null }) => void) => () => void;
     };
     agent: {
       listTasks: () => Promise<AgentTask[]>;
@@ -516,7 +516,7 @@ interface Window {
       listSnapshots: () => Promise<WorkspaceSnapshot[]>;
       getRestoreState: () => Promise<AgentSnapshotRestoreResult | null>;
       restoreSnapshot: (snapshotId: string) => Promise<AgentSnapshotRestoreResult>;
-      onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) => void;
+      onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) => () => void;
     };
     terminal: {
       run: (request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) => Promise<TerminalCommandResult>;
@@ -532,7 +532,7 @@ interface Window {
     settings: {
       get: () => Promise<Settings>;
       save: (partial: Partial<Settings>) => Promise<Settings>;
-      onChanged: (cb: () => void) => void;
+      onChanged: (cb: () => void) => () => void;
     };
     stats: {
       get: () => Promise<ChatStats>;
@@ -546,8 +546,8 @@ interface Window {
       start: () => Promise<{ ok: boolean; message: string }>;
       stop: () => Promise<{ ok: boolean; message: string }>;
       test: () => Promise<{ ok: boolean; message: string }>;
-      onLog: (cb: (line: string) => void) => void;
-      onStateChanged: (cb: () => void) => void;
+      onLog: (cb: (line: string) => void) => () => void;
+      onStateChanged: (cb: () => void) => () => void;
     };
   };
 }
