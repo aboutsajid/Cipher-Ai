@@ -7245,6 +7245,57 @@ test("AgentTaskRunner persists task route telemetry summary across reload", asyn
   });
 });
 
+test("AgentTaskRunner rate-limits log persistence and flushes on explicit persistTaskState", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const now = new Date().toISOString();
+    const runner = createRunnerWithServices(workspaceRoot) as never as {
+      tasks: Map<string, {
+        id: string;
+        prompt: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        summary: string;
+        steps: unknown[];
+        telemetry: { fallbackUsed: boolean; modelAttempts: unknown[] };
+      }>;
+      taskLogs: Map<string, string[]>;
+      appendLog: (taskId: string, line: string) => void;
+      persistTaskState: () => void;
+      lastTaskStatePersistAt: number;
+    };
+
+    runner.tasks = new Map([[
+      "task-1",
+      {
+        id: "task-1",
+        prompt: "Build notes app",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+        summary: "",
+        steps: [],
+        telemetry: {
+          fallbackUsed: false,
+          modelAttempts: []
+        }
+      }
+    ]]) as never;
+    runner.taskLogs = new Map([["task-1", []]]);
+
+    runner.appendLog("task-1", "Started work.");
+    const firstPersistAt = runner.lastTaskStatePersistAt;
+    assert.ok(firstPersistAt > 0);
+    runner.appendLog("task-1", "Continuing work.");
+    assert.equal(runner.lastTaskStatePersistAt, firstPersistAt);
+    runner.persistTaskState();
+    assert.ok(runner.lastTaskStatePersistAt >= firstPersistAt);
+
+    const persistedState = await readFile(join(workspaceRoot, ".cipher-snapshots", "agent-task-state.json"), "utf8");
+    assert.match(persistedState, /Continuing work\./);
+  });
+});
+
 test("AgentTaskRunner remembers recurring repair failures as reusable memory", async () => {
   await withTempDir(async (workspaceRoot) => {
     const runner = createRunnerWithServices(workspaceRoot) as never as {

@@ -43,6 +43,7 @@ import {
 } from "../../shared/modelCatalog";
 
 const MAX_LOG_LINES = 400;
+const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
 const MAX_MODEL_ATTEMPTS = 60;
 const MAX_FILE_READ_BYTES = 256_000;
 const MAX_FILE_WRITE_BYTES = MAX_FILE_READ_BYTES;
@@ -303,6 +304,7 @@ export class AgentTaskRunner {
   private readonly taskStageRoutes = new Map<string, Map<string, TaskStageRouteState>>();
   private lastRestoreState: AgentSnapshotRestoreResult | null = null;
   private activeTaskId: string | null = null;
+  private lastTaskStatePersistAt = 0;
 
   constructor(workspaceRoot: string, settingsStore: SettingsStore, ccrService: CcrService) {
     this.workspaceRoot = resolve(workspaceRoot);
@@ -513,7 +515,13 @@ export class AgentTaskRunner {
     return cloned;
   }
 
-  private persistTaskState(): void {
+  private queueTaskStatePersist(): void {
+    const nowMs = Date.now();
+    if (nowMs - this.lastTaskStatePersistAt < TASK_STATE_PERSIST_DEBOUNCE_MS) return;
+    this.persistTaskStateNow(nowMs);
+  }
+
+  private persistTaskStateNow(persistedAt = Date.now()): void {
     try {
       if (!existsSync(this.snapshotRoot)) {
         mkdirSync(this.snapshotRoot, { recursive: true });
@@ -530,9 +538,14 @@ export class AgentTaskRunner {
           .map((entry) => ({ ...entry }))
       };
       writeFileSync(this.taskStatePath, JSON.stringify(payload, null, 2), "utf8");
+      this.lastTaskStatePersistAt = persistedAt;
     } catch {
       // Ignore persistence failures; runtime state remains authoritative.
     }
+  }
+
+  private persistTaskState(): void {
+    this.persistTaskStateNow();
   }
 
   private async hasSnapshot(snapshotId: string): Promise<boolean> {
@@ -14851,7 +14864,7 @@ body {
     if (logs.length > MAX_LOG_LINES) logs.splice(0, logs.length - MAX_LOG_LINES);
     this.taskLogs.set(taskId, logs);
     if (taskId !== "manual") {
-      this.persistTaskState();
+      this.queueTaskStatePersist();
     }
   }
 
