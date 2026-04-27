@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { AgentTaskRunner } from "../main/services/agentTaskRunner";
-import type { Settings } from "../shared/types";
+import type { AgentTaskChangedPayload, Settings } from "../shared/types";
 
 async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "cipher-runner-test-"));
@@ -67,6 +67,46 @@ function createRunnerWithServices(workspaceRoot: string, settingsOverrides: Part
   };
   return new AgentTaskRunner(workspaceRoot, settingsStore as never, ccrOverrides as never);
 }
+
+test("AgentTaskRunner emits change events for persisted log and restore updates", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const settingsStore = {
+      get: (): Settings => ({
+        apiKey: "",
+        baseUrl: "https://openrouter.ai/api/v1",
+        defaultModel: "qwen/qwen3-coder:free",
+        routerPort: 3456,
+        models: ["qwen/qwen3-coder:free"],
+        customTemplates: [],
+        ollamaEnabled: false,
+        ollamaBaseUrl: "http://localhost:11434/v1",
+        ollamaModels: [],
+        localVoiceEnabled: false,
+        localVoiceModel: "base",
+        mcpServers: [],
+        routing: {
+          default: "qwen/qwen3-coder:free",
+          think: "qwen/qwen3-coder:free",
+          longContext: "qwen/qwen3-coder:free"
+        }
+      })
+    };
+
+    const events: AgentTaskChangedPayload[] = [];
+    const runner = new AgentTaskRunner(workspaceRoot, settingsStore as never, {} as never, {
+      onTaskChanged: (payload) => events.push(payload)
+    }) as never as {
+      appendLog: (taskId: string, line: string) => void;
+      persistTaskState: (taskId?: string, reason?: "task" | "log" | "restore") => void;
+    };
+
+    runner.appendLog("task-log-event", "line");
+    runner.persistTaskState("task-restore-event", "restore");
+
+    assert.ok(events.some((event) => event.reason === "log" && event.taskId === "task-log-event"));
+    assert.ok(events.some((event) => event.reason === "restore" && event.taskId === "task-restore-event"));
+  });
+});
 
 test("AgentTaskRunner writes files inside the workspace and returns normalized relative paths", async () => {
   await withTempDir(async (workspaceRoot) => {
@@ -310,6 +350,32 @@ test("AgentTaskRunner continue-fix prompts include prior failure context", async
     assert.match(capturedPrompt, /generated-apps\/youtube-video-summarizer-pro/);
     assert.match(capturedPrompt, /Windows packaging failed\./);
     assert.match(capturedPrompt, /Verification failures to fix/i);
+  });
+});
+
+test("AgentTaskRunner normalizes explicit task targets inside the workspace", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      normalizeTaskTargetPath: (targetPath?: string) => string | undefined;
+    };
+
+    assert.equal(runner.normalizeTaskTargetPath(" generated-apps\\custom-app "), "generated-apps/custom-app");
+    assert.equal(runner.normalizeTaskTargetPath(join(workspaceRoot, "generated-apps", "custom-app")), "generated-apps/custom-app");
+    assert.equal(runner.normalizeTaskTargetPath(workspaceRoot), ".");
+    assert.equal(runner.normalizeTaskTargetPath("   "), undefined);
+  });
+});
+
+test("AgentTaskRunner rejects explicit task targets outside the workspace", async () => {
+  await withTempDir(async (workspaceRoot) => {
+    const runner = createRunner(workspaceRoot) as never as {
+      normalizeTaskTargetPath: (targetPath?: string) => string | undefined;
+    };
+
+    assert.throws(
+      () => runner.normalizeTaskTargetPath(join(workspaceRoot, "..", "outside-folder")),
+      /Path escapes the workspace root/
+    );
   });
 });
 
