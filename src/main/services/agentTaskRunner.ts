@@ -56,6 +56,11 @@ import {
   describeArtifactType as describeArtifactTypeText,
   extractTerminalFailureDetail as extractTerminalFailureDetailText
 } from "./agentTaskMessages";
+import {
+  isNoSpaceLeftError as isNoSpaceLeftErrorText,
+  isRetriableWorkspaceFsError as isRetriableWorkspaceFsErrorText,
+  withWorkspaceFsRetry as withWorkspaceFsRetryOperation
+} from "./workspaceFsRetry";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -352,30 +357,19 @@ export class AgentTaskRunner {
   }
 
   private isRetriableWorkspaceFsError(error: unknown): boolean {
-    const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-    return code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY";
+    return isRetriableWorkspaceFsErrorText(error);
   }
 
   private isNoSpaceLeftError(error: unknown): boolean {
-    const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-    const message = error instanceof Error ? error.message : String(error ?? "");
-    return code === "ENOSPC" || /\bENOSPC\b|no space left on device/i.test(message);
+    return isNoSpaceLeftErrorText(error);
   }
 
   private async withWorkspaceFsRetry<T>(operation: () => Promise<T>, attempts = 4, delayMs = 150): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        return await operation();
-      } catch (error) {
-        lastError = error;
-        if (!this.isRetriableWorkspaceFsError(error) || attempt === attempts - 1) {
-          throw error;
-        }
-        await delay(delayMs * (attempt + 1));
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error("Workspace filesystem retry exhausted.");
+    return withWorkspaceFsRetryOperation(operation, {
+      attempts,
+      delayMs,
+      isRetriable: (error) => this.isRetriableWorkspaceFsError(error)
+    });
   }
 
   getTask(taskId: string): AgentTask | null {
