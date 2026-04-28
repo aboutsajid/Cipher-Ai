@@ -26,6 +26,11 @@
 1. `refactor(preload): return unsubscribe handles for IPC listeners` (`a944637`)
 2. `refactor(renderer): teardown ipc listeners on unload` (`2127ce0`)
 3. `refactor(agent): extract workspace folder guard helpers` (`7c7e89a`)
+4. `refactor(agent): extract snapshot listing helpers` (`d147fe5`)
+5. `refactor(agent): extract task summary and failure message helpers` (`fde71a8`)
+6. `refactor(agent): extract workspace fs retry helpers` (`0f40aaa`)
+7. `refactor(agent): extract lifecycle prompt and restore message helpers` (`05b4224`)
+8. `refactor(agent): extract referenced snapshot id collection` (`48c0d39`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -51,14 +56,14 @@
 ### P2 (Maintainability)
 1. Unsubscribe-safe preload listener wrappers: completed.
 2. Renderer listener teardown on unload: completed.
-3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction started).
+3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle slices).
 4. Async buffered logging with redaction guardrails: pending.
 5. Orphan placeholder cleanup: pending (defer until file ownership scope is explicit).
 
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (started with workspace guard extraction).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, and fs retry helpers extracted).
 2. Logging hardening:
    - Introduce async buffered logging with redaction guardrails.
 3. Cleanup pass:
@@ -68,6 +73,11 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `48c0d39`
+  - `05b4224`
+  - `0f40aaa`
+  - `fde71a8`
+  - `d147fe5`
   - `7c7e89a`
   - `2127ce0`
   - `a6e0d8f`
