@@ -115,6 +115,7 @@ import {
   buildRuntimeVerificationAfterRepairDetails as buildRuntimeVerificationAfterRepairDetailsText,
   buildRuntimeVerificationDetails as buildRuntimeVerificationDetailsText
 } from "./runtimeVerificationMessages";
+import { resolvePreferredRunCommand as resolvePreferredRunCommandText } from "./runCommandResolver";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -2008,34 +2009,7 @@ export class AgentTaskRunner {
   }
 
   private resolvePreferredRunCommand(artifactType: AgentArtifactType, scripts?: PackageScripts): string | undefined {
-    const commandFor = (scriptName: keyof PackageScripts): string => scriptName === "start"
-      ? "npm start"
-      : `npm run ${scriptName}`;
-
-    if (!scripts) return undefined;
-
-    if (artifactType === "web-app") {
-      if (scripts.dev) return commandFor("dev");
-      if (scripts.start) return commandFor("start");
-      return undefined;
-    }
-
-    if (artifactType === "api-service" || artifactType === "desktop-app" || artifactType === "script-tool") {
-      if (scripts.start) return commandFor("start");
-      if (scripts.dev) return commandFor("dev");
-      return undefined;
-    }
-
-    if (artifactType === "library") {
-      if (scripts.build) return commandFor("build");
-      if (scripts.test) return commandFor("test");
-      return undefined;
-    }
-
-    if (scripts.start) return commandFor("start");
-    if (scripts.dev) return commandFor("dev");
-    if (scripts.build) return commandFor("build");
-    return undefined;
+    return resolvePreferredRunCommandText(artifactType, scripts);
   }
 
   private async verifyExpectedEntryFiles(plan: TaskExecutionPlan, artifactType: AgentArtifactType): Promise<AgentVerificationCheck> {
