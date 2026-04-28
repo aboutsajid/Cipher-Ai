@@ -291,6 +291,12 @@
 65. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+66. `refactor(agent): extract workspace existence check helpers`
+   - Moved filesystem existence checks from `pathExists` and `allFilesExist` in `src/main/services/agentTaskRunner.ts` into `src/main/services/workspaceExistenceChecks.ts`.
+   - Kept behavior unchanged by preserving `stat`-based semantics and delegating through thin wrappers in `agentTaskRunner`.
+67. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

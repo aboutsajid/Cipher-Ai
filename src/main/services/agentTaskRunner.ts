@@ -298,6 +298,10 @@ import { classifyArtifactType as classifyArtifactTypeText } from "./artifactType
 import { inferArtifactTypeFromPackage as inferArtifactTypeFromPackageText } from "./packageArtifactType";
 import { buildTaskOutput as buildTaskOutputText } from "./taskOutputBuilder";
 import {
+  allFilesExist as allFilesExistText,
+  pathExists as pathExistsText
+} from "./workspaceExistenceChecks";
+import {
   getPackagingVerificationLabel as getPackagingVerificationLabelText,
   shouldVerifyWindowsPackaging as shouldVerifyWindowsPackagingText
 } from "./windowsPackagingVerificationGuards";
@@ -3948,12 +3952,7 @@ export class AgentTaskRunner {
   }
 
   private async pathExists(targetPath: string): Promise<boolean> {
-    try {
-      await stat(targetPath);
-      return true;
-    } catch {
-      return false;
-    }
+    return pathExistsText(targetPath);
   }
 
   private async runStep<T>(
@@ -5594,14 +5593,9 @@ export class AgentTaskRunner {
   }
 
   private async allFilesExist(paths: string[]): Promise<boolean> {
-    for (const targetPath of paths) {
-      try {
-        await stat(this.resolveWorkspacePath(targetPath));
-      } catch {
-        return false;
-      }
-    }
-    return true;
+    return allFilesExistText(paths, {
+      resolveWorkspacePath: (targetPath) => this.resolveWorkspacePath(targetPath)
+    });
   }
 
   private buildTaskWorkItems(
