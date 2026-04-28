@@ -1,11 +1,34 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { WorkspaceSnapshot } from "../../shared/types";
+import type {
+  AgentSnapshotRestoreResult,
+  AgentTask,
+  WorkspaceSnapshot
+} from "../../shared/types";
 
 export interface StoredSnapshotEntry {
   directoryName: string;
   directoryPath: string;
   snapshot: WorkspaceSnapshot | null;
+}
+
+export function collectReferencedSnapshotIds(
+  tasks: Iterable<AgentTask>,
+  lastRestoreState: AgentSnapshotRestoreResult | null
+): Set<string> {
+  const referencedIds = new Set<string>();
+
+  for (const task of tasks) {
+    const rollbackSnapshotId = (task.rollbackSnapshotId ?? "").trim();
+    const completionSnapshotId = (task.completionSnapshotId ?? "").trim();
+    if (rollbackSnapshotId) referencedIds.add(rollbackSnapshotId);
+    if (completionSnapshotId) referencedIds.add(completionSnapshotId);
+  }
+
+  const restoredSnapshotId = (lastRestoreState?.snapshotId ?? "").trim();
+  if (restoredSnapshotId) referencedIds.add(restoredSnapshotId);
+
+  return referencedIds;
 }
 
 function parseSnapshot(raw: string): WorkspaceSnapshot | null {

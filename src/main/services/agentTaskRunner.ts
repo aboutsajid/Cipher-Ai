@@ -45,6 +45,7 @@ import {
 } from "../../shared/modelCatalog";
 import { isIgnoredWorkspaceFolder, isSnapshotPreserveFolder } from "./workspaceFolderGuards";
 import {
+  collectReferencedSnapshotIds as collectReferencedSnapshotIdsFromState,
   listSnapshots as listStoredSnapshots,
   listStoredSnapshotEntries,
   type StoredSnapshotEntry
@@ -582,19 +583,7 @@ export class AgentTaskRunner {
   }
 
   private collectReferencedSnapshotIds(): Set<string> {
-    const referencedIds = new Set<string>();
-
-    for (const task of this.tasks.values()) {
-      const rollbackSnapshotId = (task.rollbackSnapshotId ?? "").trim();
-      const completionSnapshotId = (task.completionSnapshotId ?? "").trim();
-      if (rollbackSnapshotId) referencedIds.add(rollbackSnapshotId);
-      if (completionSnapshotId) referencedIds.add(completionSnapshotId);
-    }
-
-    const restoredSnapshotId = (this.lastRestoreState?.snapshotId ?? "").trim();
-    if (restoredSnapshotId) referencedIds.add(restoredSnapshotId);
-
-    return referencedIds;
+    return collectReferencedSnapshotIdsFromState(this.tasks.values(), this.lastRestoreState);
   }
 
   private async listStoredSnapshotEntries(): Promise<StoredSnapshotEntry[]> {
