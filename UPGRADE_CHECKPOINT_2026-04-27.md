@@ -11,7 +11,7 @@
 - App status: Electron app launches and runs.
 - Manual launch check: `npm run start` executed on `2026-04-28`; Electron renderer processes started successfully.
 - Landing status: duplicate bottom tagline removed from the main landing/empty state.
-- Test status (latest run): `417 passed / 0 failed`.
+- Test status (latest run): `419 passed / 0 failed`.
 - Security audit status: `npm audit --omit=dev` previously reported `0` vulnerabilities.
 
 ## Work Completed In This Autopilot Run
@@ -57,6 +57,7 @@
 32. `refactor(agent): extract route telemetry summary helper` (`d44f5c5`)
 33. `refactor(logging): add async buffered logger redaction guardrails` (`815682c`)
 34. `refactor(agent): extract structured fix response parser` (`bedf67a`)
+35. `refactor(agent): extract task log store helpers` (`a5d6879`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -69,6 +70,7 @@
 5. `test(agent): add model route task state helper coverage` (`8d327c7`)
 6. `test(agent): add route telemetry summary helper coverage` (`d44f5c5`)
 7. `test(logging): add buffered logger and redaction guardrail coverage` (`815682c`)
+8. `test(agent): add task log store helper coverage` (`a5d6879`)
 
 ## Priority Matrix (Updated)
 
@@ -87,14 +89,14 @@
 ### P2 (Maintainability)
 1. Unsubscribe-safe preload listener wrappers: completed.
 2. Renderer listener teardown on unload: completed.
-3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle/fix-response-parser slices).
+3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle/task-log-store slices).
 4. Async buffered logging with redaction guardrails: completed.
 5. Orphan placeholder cleanup: pending (defer until file ownership scope is explicit).
 
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, route telemetry summary helper, and structured fix response parser extracted).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, route telemetry summary helper, structured fix response parser, and task log store helpers extracted).
 2. Cleanup pass:
    - Remove orphan placeholders only after ownership/scope is explicitly confirmed.
 
@@ -102,6 +104,7 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `a5d6879`
   - `bedf67a`
   - `815682c`
   - `d44f5c5`
