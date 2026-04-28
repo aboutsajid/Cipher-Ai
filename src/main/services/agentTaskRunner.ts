@@ -71,6 +71,10 @@ import {
   ensureVerificationRequired as ensureVerificationRequiredGuard,
   upsertVerificationCheck as upsertVerificationCheckGuard
 } from "./agentTaskVerificationGuards";
+import {
+  describeRestartMode as describeRestartModeText,
+  ensureNoRunningTask as ensureNoRunningTaskGuard
+} from "./agentTaskRunGuards";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -1440,11 +1444,7 @@ export class AgentTaskRunner {
   }
 
   private ensureNoRunningTask(): void {
-    if (!this.activeTaskId) return;
-    const active = this.tasks.get(this.activeTaskId);
-    if (active && active.status === "running") {
-      throw new Error("Another agent task is already running.");
-    }
+    ensureNoRunningTaskGuard(this.activeTaskId, this.tasks);
   }
 
   private buildRestartPrompt(task: AgentTask, mode: AgentTaskRestartMode): string {
@@ -1452,9 +1452,7 @@ export class AgentTaskRunner {
   }
 
   private describeRestartMode(mode: AgentTaskRestartMode): string {
-    if (mode === "retry-clean") return "Retry Clean";
-    if (mode === "continue-fix") return "Continue Fix";
-    return "Retry";
+    return describeRestartModeText(mode);
   }
 
   private async tryAutoFixExecutionSpec(
