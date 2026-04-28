@@ -1,9 +1,12 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createBufferedLogWriter, redactDebugLogText, type BufferedLogWriter } from "./debugLogBuffer";
 
 let logPath = "";
 let initialized = false;
 let processHooksRegistered = false;
+let bufferedWriter: BufferedLogWriter | null = null;
 
 const MAX_PART_LENGTH = 6000;
 
@@ -18,18 +21,15 @@ function normalizePart(part: unknown): string {
 }
 
 function writeLine(level: string, parts: unknown[]): void {
-  if (!logPath) return;
+  if (!logPath || !bufferedWriter) return;
   const text = parts
     .map((part) => normalizePart(part))
     .join(" ")
     .slice(0, MAX_PART_LENGTH);
+  const sanitized = redactDebugLogText(text);
 
-  const line = `${new Date().toISOString()} [${level}] ${text}\n`;
-  try {
-    appendFileSync(logPath, line, "utf8");
-  } catch {
-    // Best-effort logging only.
-  }
+  const line = `${new Date().toISOString()} [${level}] ${sanitized}\n`;
+  bufferedWriter.appendLine(line);
 }
 
 function patchConsole(): void {
@@ -62,10 +62,20 @@ function registerProcessHooks(): void {
 
   process.on("uncaughtException", (err) => {
     writeLine("FATAL", ["uncaughtException", err]);
+    flushDebugLoggerSync();
   });
 
   process.on("unhandledRejection", (reason) => {
     writeLine("FATAL", ["unhandledRejection", reason]);
+    flushDebugLoggerSync();
+  });
+
+  process.on("beforeExit", () => {
+    flushDebugLoggerSync();
+  });
+
+  process.on("exit", () => {
+    flushDebugLoggerSync();
   });
 }
 
@@ -73,6 +83,10 @@ export function initDebugLogger(userDataPath: string): string {
   const logsDir = join(userDataPath, "cipher-workspace", "logs");
   mkdirSync(logsDir, { recursive: true });
   logPath = join(logsDir, "main.log");
+  bufferedWriter = createBufferedLogWriter({
+    append: async (chunk) => appendFile(logPath, chunk, "utf8"),
+    appendSync: (chunk) => appendFileSync(logPath, chunk, "utf8")
+  });
 
   patchConsole();
   registerProcessHooks();
@@ -86,4 +100,17 @@ export function writeDebugLog(level: string, ...parts: unknown[]): void {
 
 export function getDebugLogPath(): string {
   return logPath;
+}
+
+export async function flushDebugLogger(): Promise<void> {
+  if (!bufferedWriter) return;
+  await bufferedWriter.flush();
+}
+
+export function flushDebugLoggerSync(): void {
+  bufferedWriter?.flushSync();
+}
+
+export function shutdownDebugLogger(): void {
+  flushDebugLoggerSync();
 }

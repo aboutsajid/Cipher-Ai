@@ -8,7 +8,7 @@ import { CcrService } from "./services/ccrService";
 import { AgentTaskRunner } from "./services/agentTaskRunner";
 import { ImageGenerationService } from "./services/imageGenerationService";
 import { GeneratedImagesStore } from "./services/generatedImagesStore";
-import { getDebugLogPath, initDebugLogger, writeDebugLog } from "./services/debugLogger";
+import { getDebugLogPath, initDebugLogger, shutdownDebugLogger, writeDebugLog } from "./services/debugLogger";
 import type { AgentTaskChangedPayload, IpcChannel } from "../shared/types";
 
 const workspaceWindows = new Set<BrowserWindow>();
@@ -659,6 +659,7 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error("Bootstrap failed:", err);
     writeDebugLog("FATAL", "bootstrap failed", err);
+    shutdownDebugLogger();
     app.exit(1);
   }
 });
@@ -678,5 +679,8 @@ app.on("window-all-closed", () => {
     finishStartupSmoke(1, "Electron quit before startup smoke completed.");
     return;
   }
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin") {
+    shutdownDebugLogger();
+    app.quit();
+  }
 });
