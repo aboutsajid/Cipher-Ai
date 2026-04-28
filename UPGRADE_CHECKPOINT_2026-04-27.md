@@ -218,6 +218,12 @@
 41. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+42. `refactor(agent): extract generated prompt guard helpers`
+   - Moved generated notes/package prompt guard logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicGeneratedPromptGuards.ts`.
+   - Kept behavior unchanged by preserving existing regex heuristics and delegating `isSimpleNotesAppPrompt` and `isSimpleGeneratedPackagePrompt` through thin wrappers in `agentTaskRunner`.
+43. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
