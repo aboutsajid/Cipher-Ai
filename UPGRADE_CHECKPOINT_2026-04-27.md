@@ -203,7 +203,10 @@
 32. `refactor(agent): extract desktop heuristic prompt guard helpers`
    - Moved desktop prompt-classification guard logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDesktopPromptGuards.ts`.
    - Kept behavior unchanged by preserving existing regex heuristics and delegating `isSimpleDesktopShellPrompt`, `isDesktopBusinessReportingPrompt`, and `isSimpleDesktopUtilityPrompt` through thin wrappers in `agentTaskRunner`.
-33. Validation:
+34. `refactor(agent): extract starter placeholder marker helpers`
+   - Moved starter placeholder marker detection logic from `detectStarterPlaceholderSignals` in `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicStarterPlaceholderSignals.ts`.
+   - Kept behavior unchanged by preserving the existing marker list and delegating through a thin wrapper method in `agentTaskRunner`.
+35. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
 
