@@ -132,6 +132,11 @@ import {
   classifyFailureCategory as classifyFailureCategoryText,
   deriveFinalVerificationResult as deriveFinalVerificationResultText
 } from "./taskFailureClassification";
+import {
+  normalizeTaskTargetPath as normalizeTaskTargetPathText,
+  resolveWorkspacePath as resolveWorkspacePathText,
+  toWorkspaceRelative as toWorkspaceRelativeText
+} from "./workspacePathResolver";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -16622,24 +16627,15 @@ if (statusEl && buttonEl) {
   }
 
   private resolveWorkspacePath(targetPath: string): string {
-    const rawTarget = (targetPath ?? ".").trim() || ".";
-    const fullPath = isAbsolute(rawTarget) ? resolve(rawTarget) : resolve(this.workspaceRoot, rawTarget);
-    const relativePath = relative(this.workspaceRoot, fullPath);
-    if (relativePath.startsWith("..") || normalize(relativePath) === "..") {
-      throw new Error("Path escapes the workspace root.");
-    }
-    return fullPath;
+    return resolveWorkspacePathText(this.workspaceRoot, targetPath);
   }
 
   private normalizeTaskTargetPath(targetPath?: string): string | undefined {
-    const normalizedTarget = (targetPath ?? "").trim();
-    if (!normalizedTarget) return undefined;
-    return this.toWorkspaceRelative(this.resolveWorkspacePath(normalizedTarget));
+    return normalizeTaskTargetPathText(this.workspaceRoot, targetPath);
   }
 
   private toWorkspaceRelative(fullPath: string): string {
-    const relPath = relative(this.workspaceRoot, fullPath) || ".";
-    return relPath.split("\\").join("/");
+    return toWorkspaceRelativeText(this.workspaceRoot, fullPath);
   }
 
   private ensureTaskTelemetry(task: AgentTask): AgentTaskTelemetry {
