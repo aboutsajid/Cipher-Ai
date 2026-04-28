@@ -278,6 +278,7 @@ import {
   isPathInsideWorkingDirectory as isPathInsideWorkingDirectoryText,
   joinWorkspacePath as joinWorkspacePathText
 } from "./heuristicWorkspacePathHelpers";
+import { getRequestedEntryPathAliasGroups as getRequestedEntryPathAliasGroupsText } from "./entryPathAliasGroups";
 import {
   getConflictingScaffoldPaths as getConflictingScaffoldPathsText,
   isBuilderRecoveryPrimaryPlan as isBuilderRecoveryPrimaryPlanText,
@@ -2122,42 +2123,7 @@ export class AgentTaskRunner {
     plan: TaskExecutionPlan,
     artifactType: AgentArtifactType
   ): string[][] {
-    if (artifactType !== "desktop-app" || plan.workspaceKind !== "react") {
-      return [];
-    }
-
-    const fileName = requestedPath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
-    switch (fileName) {
-      case "main.js":
-        return [
-          [this.joinWorkspacePath(workingDirectory, "electron/main.mjs")],
-          [this.joinWorkspacePath(workingDirectory, "electron/main.js")],
-          [this.joinWorkspacePath(workingDirectory, "electron/main.ts")]
-        ];
-      case "preload.js":
-        return [
-          [this.joinWorkspacePath(workingDirectory, "electron/preload.mjs")],
-          [this.joinWorkspacePath(workingDirectory, "electron/preload.js")],
-          // Modern Electron React shells can wire preload behavior directly from the main process.
-          [this.joinWorkspacePath(workingDirectory, "electron/main.mjs")]
-        ];
-      case "renderer.js":
-        return [
-          [this.joinWorkspacePath(workingDirectory, "src/main.tsx")],
-          [this.joinWorkspacePath(workingDirectory, "src/main.jsx")],
-          [this.joinWorkspacePath(workingDirectory, "src/App.tsx"), this.joinWorkspacePath(workingDirectory, "index.html")],
-          [this.joinWorkspacePath(workingDirectory, "src/App.jsx"), this.joinWorkspacePath(workingDirectory, "index.html")]
-        ];
-      case "styles.css":
-        return [
-          [this.joinWorkspacePath(workingDirectory, "src/index.css")],
-          [this.joinWorkspacePath(workingDirectory, "src/App.css")],
-          [this.joinWorkspacePath(workingDirectory, "src/styles.css")],
-          [this.joinWorkspacePath(workingDirectory, "dist/assets")]
-        ];
-      default:
-        return [];
-    }
+    return getRequestedEntryPathAliasGroupsText(requestedPath, workingDirectory, plan.workspaceKind, artifactType);
   }
 
   private getEntryVerificationLabel(artifactType: AgentArtifactType): string {

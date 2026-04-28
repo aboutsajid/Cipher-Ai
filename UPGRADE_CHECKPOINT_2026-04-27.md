@@ -279,6 +279,12 @@
 61. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+62. `refactor(agent): extract entry-path alias group helper`
+   - Moved requested entry-path alias group resolution logic from `getRequestedEntryPathAliasGroups` in `src/main/services/agentTaskRunner.ts` into `src/main/services/entryPathAliasGroups.ts`.
+   - Kept behavior unchanged by preserving desktop-react alias mapping and delegating through a thin wrapper in `agentTaskRunner`.
+63. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
