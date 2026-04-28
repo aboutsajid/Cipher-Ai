@@ -189,6 +189,7 @@ import {
   toDisplayLabel as toDisplayLabelText,
   toDisplayNameFromDirectory as toDisplayNameFromDirectoryText
 } from "./projectNaming";
+import { buildBootstrapCommands as buildBootstrapCommandsText } from "./bootstrapCommandBuilder";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14569,38 +14570,7 @@ body {
   }
 
   private buildBootstrapCommands(template: BootstrapPlan["template"], targetDirectory: string): TerminalCommandRequest[] {
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-    const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-
-    if (template === "nextjs") {
-      return [{
-        command: npxCommand,
-        args: ["create-next-app@latest", targetDirectory, "--ts", "--eslint", "--app", "--src-dir", "--use-npm", "--yes"],
-        timeoutMs: 300_000
-      }];
-    }
-
-    if (template === "static") {
-      return [];
-    }
-
-    if (template === "node-package") {
-      return [];
-    }
-
-    return [
-      {
-        command: npmCommand,
-        args: ["create", "vite@latest", targetDirectory, "--", "--template", "react-ts"],
-        timeoutMs: 180_000
-      },
-      {
-        command: npmCommand,
-        args: ["install"],
-        cwd: targetDirectory,
-        timeoutMs: 180_000
-      }
-    ];
+    return buildBootstrapCommandsText(template, targetDirectory, { platform: process.platform });
   }
 
   private async executeBootstrapPlan(taskId: string, plan: BootstrapPlan): Promise<{ summary: string }> {
