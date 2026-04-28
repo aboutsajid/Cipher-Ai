@@ -128,6 +128,10 @@ import {
   cloneTaskAttachments as cloneTaskAttachmentsText,
   taskRequiresVisionRoute as taskRequiresVisionRouteText
 } from "./taskAttachmentHelpers";
+import {
+  classifyFailureCategory as classifyFailureCategoryText,
+  deriveFinalVerificationResult as deriveFinalVerificationResultText
+} from "./taskFailureClassification";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -16720,41 +16724,7 @@ if (statusEl && buttonEl) {
   }
 
   private classifyFailureCategory(stage: string, message: string): AgentTaskFailureCategory {
-    const normalized = `${stage} ${message}`.trim().toLowerCase();
-    if (!normalized) return "unknown";
-    if (normalized.includes("malformed json") || normalized.includes("valid structured json") || normalized.includes("json without usable edits")) {
-      return "malformed-json";
-    }
-    if (normalized.includes("path escapes") || normalized.includes("outside allowed") || normalized.includes("outside planned") || normalized.includes("unsupported path")) {
-      return "unsupported-path";
-    }
-    if (normalized.includes("wrong scaffold") || normalized.includes("scaffold") || normalized.includes("react leftovers") || normalized.includes("conflicting static scaffold")) {
-      return "wrong-scaffold";
-    }
-    if ((normalized.includes("missing") || normalized.includes("not found")) && normalized.includes("asset")) {
-      return "asset-missing";
-    }
-    if ((normalized.includes("missing") || normalized.includes("not found")) && (normalized.includes("file") || normalized.includes("entry"))) {
-      return "missing-file";
-    }
-    if (
-      normalized.includes("dependency install")
-      || normalized.includes("npm install")
-      || normalized.includes("dependency")
-      || normalized.includes("package.json")
-      || normalized.includes("node_modules")
-    ) {
-      return "build-error";
-    }
-    if (normalized.includes("preview")) return "preview-error";
-    if (normalized.includes("lint")) return "lint-error";
-    if (normalized.includes("test")) return "test-error";
-    if (normalized.includes("launch") || normalized.includes("runtime") || normalized.includes("startup") || normalized.includes("boot")) {
-      return "runtime-error";
-    }
-    if (normalized.includes("build")) return "build-error";
-    if (normalized.includes("verify") || normalized.includes("verification")) return "verification-error";
-    return "unknown";
+    return classifyFailureCategoryText(stage, message);
   }
 
   private getMostRelevantFailureStage(task: AgentTask): string {
@@ -16765,14 +16735,7 @@ if (statusEl && buttonEl) {
   }
 
   private deriveFinalVerificationResult(report: AgentVerificationReport): AgentTaskFinalVerificationResult | undefined {
-    const checks = report.checks ?? [];
-    if (checks.length === 0) return undefined;
-    if (checks.some((check) => check.status === "failed")) return "failed";
-    const passedCount = checks.filter((check) => check.status === "passed").length;
-    const skippedCount = checks.filter((check) => check.status === "skipped").length;
-    if (passedCount > 0) return "passed";
-    if (skippedCount > 0) return "skipped";
-    return undefined;
+    return deriveFinalVerificationResultText(report);
   }
 
   private updateTaskVerificationTelemetry(task: AgentTask, report: AgentVerificationReport): void {
