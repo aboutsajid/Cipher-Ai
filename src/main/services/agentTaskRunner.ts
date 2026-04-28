@@ -121,6 +121,7 @@ import {
   resolveVerificationScripts as resolveVerificationScriptsText
 } from "./verificationScriptResolver";
 import { parseLoosePackageManifest as parseLoosePackageManifestText } from "./packageManifestParser";
+import { buildNpmScriptRequest as buildNpmScriptRequestText } from "./npmScriptRequestBuilder";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14544,12 +14545,7 @@ body {
   }
 
   private buildNpmScriptRequest(scriptName: string, timeoutMs: number, cwd = ".", extraArgs: string[] = []): TerminalCommandRequest {
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-    const passthrough = extraArgs.length > 0 ? ["--", ...extraArgs] : [];
-    if (scriptName === "test" || scriptName === "start") {
-      return { command: npmCommand, args: [scriptName, ...passthrough], timeoutMs, cwd };
-    }
-    return { command: npmCommand, args: ["run", scriptName, ...passthrough], timeoutMs, cwd };
+    return buildNpmScriptRequestText(scriptName, timeoutMs, cwd, extraArgs);
   }
 
   private async tryReadPackageJson(targetDirectory = "."): Promise<PackageManifest | null> {
