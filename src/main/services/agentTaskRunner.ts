@@ -164,6 +164,11 @@ import {
   buildNextModelRouteReliabilityStats as buildNextModelRouteReliabilityStatsText,
   normalizeModelRouteReliabilityStats as normalizeModelRouteReliabilityStatsText
 } from "./modelRouteStats";
+import {
+  isTaskModelBlacklisted as isTaskModelBlacklistedText,
+  recordTaskModelFailureState as recordTaskModelFailureStateText,
+  rememberTaskStageRouteState as rememberTaskStageRouteStateText
+} from "./modelRouteTaskState";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14091,27 +14096,24 @@ body {
     model: string,
     outcome: Extract<AgentTaskModelAttempt["outcome"], "transient-error" | "error" | "semantic-error">
   ): boolean {
-    const normalizedModel = (model ?? "").trim();
-    if (!taskId || !normalizedModel) return false;
-    const taskFailures = this.taskModelFailureCounts.get(taskId) ?? new Map<string, number>();
-    const nextCount = (taskFailures.get(normalizedModel) ?? 0) + 1;
-    taskFailures.set(normalizedModel, nextCount);
-    this.taskModelFailureCounts.set(taskId, taskFailures);
+    const result = recordTaskModelFailureStateText({
+      taskId,
+      model,
+      outcome,
+      taskModelFailureCounts: this.taskModelFailureCounts,
+      taskModelBlacklist: this.taskModelBlacklist,
+      hardFailureThreshold: AGENT_MODEL_BLACKLIST_THRESHOLD,
+      transientFailureThreshold: AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD
+    });
+    if (!result.updated) return false;
     this.syncTaskRouteTelemetry(taskId);
-
-    const threshold = outcome === "transient-error"
-      ? AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD
-      : AGENT_MODEL_BLACKLIST_THRESHOLD;
-    if (nextCount < threshold) return false;
-    const blacklist = this.taskModelBlacklist.get(taskId) ?? new Set<string>();
-    blacklist.add(normalizedModel);
-    this.taskModelBlacklist.set(taskId, blacklist);
+    if (!result.blacklisted) return false;
     this.syncTaskRouteTelemetry(taskId);
     return true;
   }
 
   private isTaskModelBlacklisted(taskId: string, model: string): boolean {
-    return this.taskModelBlacklist.get(taskId)?.has((model ?? "").trim()) ?? false;
+    return isTaskModelBlacklistedText(this.taskModelBlacklist, taskId, model);
   }
 
   private rememberTaskStageRoute(
@@ -14121,15 +14123,15 @@ body {
     routeIndex: number,
     attempt: number
   ): void {
-    const normalizedStage = (stage ?? "").trim();
-    if (!taskId || !normalizedStage) return;
-    const taskRoutes = this.taskStageRoutes.get(taskId) ?? new Map<string, TaskStageRouteState>();
-    taskRoutes.set(normalizedStage, {
-      route: { ...route },
+    const updated = rememberTaskStageRouteStateText({
+      taskId,
+      stage,
+      route,
       routeIndex,
-      attempt
+      attempt,
+      taskStageRoutes: this.taskStageRoutes
     });
-    this.taskStageRoutes.set(taskId, taskRoutes);
+    if (!updated) return;
     this.syncTaskRouteTelemetry(taskId);
   }
 
