@@ -36,7 +36,7 @@ import type {
   WorkspaceFileSearchResult
 } from "../../shared/types";
 import { normalizeAttachments } from "../attachmentSupport";
-import { buildAttachmentAwarePromptMessages, type ChatHistoryEntry } from "../chatSendSupport";
+import { type ChatHistoryEntry } from "../chatSendSupport";
 import {
   buildStagePreferredCloudModelList,
   getDefaultBaseUrlForCloudProvider,
@@ -123,6 +123,11 @@ import {
 import { parseLoosePackageManifest as parseLoosePackageManifestText } from "./packageManifestParser";
 import { buildNpmScriptRequest as buildNpmScriptRequestText } from "./npmScriptRequestBuilder";
 import { buildTaskStageSelectionReason as buildTaskStageSelectionReasonText } from "./modelRouteSelectionReason";
+import {
+  buildTaskPromptMessages as buildTaskPromptMessagesText,
+  cloneTaskAttachments as cloneTaskAttachmentsText,
+  taskRequiresVisionRoute as taskRequiresVisionRouteText
+} from "./taskAttachmentHelpers";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14098,11 +14103,11 @@ body {
   }
 
   private getTaskAttachments(taskId: string): AttachmentPayload[] {
-    return (this.tasks.get(taskId)?.attachments ?? []).map((attachment) => ({ ...attachment }));
+    return cloneTaskAttachmentsText(this.tasks.get(taskId)?.attachments);
   }
 
   private taskRequiresVisionRoute(taskId: string): boolean {
-    return this.getTaskAttachments(taskId).some((attachment) => attachment.type === "image");
+    return taskRequiresVisionRouteText(this.getTaskAttachments(taskId));
   }
 
   private buildTaskPromptMessages(
@@ -14110,10 +14115,7 @@ body {
     attachments: AttachmentPayload[],
     systemPreamble: string
   ): ChatHistoryEntry[] {
-    return [
-      { role: "system", content: systemPreamble },
-      ...buildAttachmentAwarePromptMessages(prompt, attachments)
-    ];
+    return buildTaskPromptMessagesText(prompt, attachments, systemPreamble);
   }
 
   private buildTaskStageSelectionReason(taskId: string, stage: string, route: ModelRoute, routeIndex: number): string {
