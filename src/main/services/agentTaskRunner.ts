@@ -49,6 +49,13 @@ import {
   listStoredSnapshotEntries,
   type StoredSnapshotEntry
 } from "./snapshotStore";
+import {
+  buildCommandFailureMessage as buildCommandFailureMessageText,
+  buildCompletedTaskSummary as buildCompletedTaskSummaryText,
+  buildRequirementFailureMessage as buildRequirementFailureMessageText,
+  describeArtifactType as describeArtifactTypeText,
+  extractTerminalFailureDetail as extractTerminalFailureDetailText
+} from "./agentTaskMessages";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -1458,59 +1465,23 @@ export class AgentTaskRunner {
   }
 
   private buildCompletedTaskSummary(task: AgentTask): string {
-    const artifact = this.describeArtifactType(task.artifactType);
-    const target = (task.targetPath ?? "").trim();
-    const normalizedTarget = target === "." ? "" : target;
-    const targetPart = normalizedTarget ? ` for ${normalizedTarget}` : "";
-    const verificationPart = task.verification?.summary ? ` Verification: ${task.verification.summary}.` : "";
-    return `Completed ${artifact}${targetPart}.${verificationPart}`.trim();
+    return buildCompletedTaskSummaryText(task);
   }
 
   private buildRequirementFailureMessage(checks: AgentVerificationCheck[]): string {
-    const failed = checks.filter((check) => check.status === "failed");
-    if (failed.length === 0) return "Prompt requirements not met.";
-    return `Prompt requirements not met: ${failed.map((check) => check.label).join(", ")}.`;
+    return buildRequirementFailureMessageText(checks);
   }
 
   private buildCommandFailureMessage(label: string, result: TerminalCommandResult, qualifier = "failed"): string {
-    const reason = result.timedOut
-      ? `timed out after ${Math.max(1, Math.round(result.durationMs / 1000))}s`
-      : typeof result.code === "number"
-        ? `exited with code ${result.code}`
-        : result.signal
-          ? `ended with signal ${result.signal}`
-          : "did not complete successfully";
-    const detail = this.extractTerminalFailureDetail(result);
-    return `${label} ${qualifier}. ${reason}.${detail ? ` Last output: ${detail}` : ""}`.trim();
+    return buildCommandFailureMessageText(label, result, qualifier);
   }
 
   private extractTerminalFailureDetail(result: TerminalCommandResult): string {
-    const lines = (result.combinedOutput || `${result.stderr}\n${result.stdout}`)
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (lines.length === 0) return "";
-    const candidate = lines[lines.length - 1].replace(/\s+/g, " ");
-    return candidate.length > 220 ? `${candidate.slice(0, 217)}...` : candidate;
+    return extractTerminalFailureDetailText(result);
   }
 
   private describeArtifactType(artifactType: AgentArtifactType | undefined): string {
-    switch (artifactType) {
-      case "web-app":
-        return "web app";
-      case "api-service":
-        return "API service";
-      case "script-tool":
-        return "script tool";
-      case "library":
-        return "library";
-      case "desktop-app":
-        return "desktop app";
-      case "workspace-change":
-        return "workspace change";
-      default:
-        return "task";
-    }
+    return describeArtifactTypeText(artifactType);
   }
 
   private upsertVerificationCheck(checks: AgentVerificationCheck[], next: AgentVerificationCheck): void {
