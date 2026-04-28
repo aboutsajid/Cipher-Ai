@@ -183,6 +183,12 @@ import {
   trimFailureMemoryStore as trimFailureMemoryStoreText,
   upsertFailureMemoryEntry as upsertFailureMemoryEntryText
 } from "./failureMemoryStore";
+import {
+  extractProjectName as extractProjectNameText,
+  extractPromptTerms as extractPromptTermsText,
+  toDisplayLabel as toDisplayLabelText,
+  toDisplayNameFromDirectory as toDisplayNameFromDirectoryText
+} from "./projectNaming";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -6717,14 +6723,7 @@ export class AgentTaskRunner {
   }
 
   private extractPromptTerms(prompt: string): string[] {
-    const stopWords = new Set([
-      "the", "and", "for", "with", "this", "that", "then", "build", "fix", "current", "workspace", "apply",
-      "minimal", "safe", "changes", "confirm", "result", "verify", "launch", "cleanly", "app"
-    ]);
-    return (prompt.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? [])
-      .filter((term) => !stopWords.has(term))
-      .filter((term, index, arr) => arr.indexOf(term) === index)
-      .slice(0, 10);
+    return extractPromptTermsText(prompt);
   }
 
   private async requestTaskImplementation(
@@ -8927,24 +8926,11 @@ textarea {
   }
 
   private toDisplayNameFromDirectory(workingDirectory: string): string {
-    const source = workingDirectory.split("/").filter(Boolean).pop() ?? "Focus Notes";
-    return this.toDisplayLabel(source, "Focus Notes");
+    return toDisplayNameFromDirectoryText(workingDirectory, "Focus Notes");
   }
 
   private toDisplayLabel(value: string, fallback = "Generated App"): string {
-    const normalized = (value ?? "")
-      .trim()
-      .replace(/\.[^.]+$/, "")
-      .replace(/[_-]+/g, " ")
-      .replace(/\s+/g, " ");
-    if (!normalized) return fallback;
-
-    const parts = normalized.split(" ").filter(Boolean);
-    if (parts.length === 0) return fallback;
-
-    return parts
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
+    return toDisplayLabelText(value, fallback);
   }
 
   private buildNotesAppTsx(title: string, options: { wantsSearch: boolean; wantsDelete: boolean; wantsAdd: boolean }): string {
@@ -15020,14 +15006,7 @@ body {
   }
 
   private extractProjectName(prompt: string): string {
-    const namedMatch = /(?:called|named)\s+["']?([a-z0-9][a-z0-9 -]{1,40})["']?/i.exec(prompt);
-    const rawName = namedMatch?.[1] ?? this.extractPromptTerms(prompt).slice(0, 3).join("-");
-    const slug = rawName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 36);
-    return slug || "agent-app";
+    return extractProjectNameText(prompt);
   }
 
   private joinWorkspacePath(...parts: string[]): string {
