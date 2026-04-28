@@ -279,6 +279,7 @@ import {
   joinWorkspacePath as joinWorkspacePathText
 } from "./heuristicWorkspacePathHelpers";
 import { getRequestedEntryPathAliasGroups as getRequestedEntryPathAliasGroupsText } from "./entryPathAliasGroups";
+import { buildRequiredEntryPaths as buildRequiredEntryPathsText } from "./entryFileRequirements";
 import {
   getConflictingScaffoldPaths as getConflictingScaffoldPathsText,
   isBuilderRecoveryPrimaryPlan as isBuilderRecoveryPrimaryPlanText,
@@ -2010,7 +2011,6 @@ export class AgentTaskRunner {
   }
 
   private async verifyExpectedEntryFiles(plan: TaskExecutionPlan, artifactType: AgentArtifactType): Promise<AgentVerificationCheck> {
-    const requiredPaths = new Set<string>();
     const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
     const entryLabel = this.getEntryVerificationLabel(artifactType);
 
@@ -2031,21 +2031,13 @@ export class AgentTaskRunner {
       };
     }
 
-    if (plan.workspaceKind === "static") {
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "index.html"));
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "styles.css"));
-    } else if (plan.workspaceKind === "react") {
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "index.html"));
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/main.tsx"));
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "src/App.tsx"));
-      if (artifactType === "desktop-app") {
-        requiredPaths.add(this.joinWorkspacePath(workingDirectory, "scripts/desktop-launch.mjs"));
-        requiredPaths.add(this.joinWorkspacePath(workingDirectory, "electron/main.mjs"));
-      }
-    } else {
-      requiredPaths.add(this.joinWorkspacePath(workingDirectory, "package.json"));
-    }
+    const requiredPaths = new Set(
+      buildRequiredEntryPathsText({
+        workingDirectory,
+        workspaceKind: plan.workspaceKind,
+        artifactType
+      })
+    );
 
     const conflictingPaths = await this.collectConflictingWorkspaceFiles(plan);
 

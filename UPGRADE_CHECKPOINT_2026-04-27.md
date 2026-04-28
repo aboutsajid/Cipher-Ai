@@ -285,6 +285,12 @@
 63. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+64. `refactor(agent): extract entry-file requirement path helper`
+   - Moved required entry-path assembly from `verifyExpectedEntryFiles` in `src/main/services/agentTaskRunner.ts` into `src/main/services/entryFileRequirements.ts`.
+   - Kept behavior unchanged by preserving workspace-kind and desktop-react entry requirements, while delegating path set construction through a thin wrapper in `agentTaskRunner`.
+65. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
