@@ -39,6 +39,7 @@
 14. `refactor(agent): extract runtime verification message helpers` (`96017a3`)
 15. `refactor(agent): extract preferred run command resolver` (`aea3620`)
 16. `refactor(agent): extract verification script resolver helpers` (`2ca447d`)
+17. `refactor(agent): extract loose package manifest parser` (`b2460bc`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -71,7 +72,7 @@
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, and verification script resolver extracted).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, and loose manifest parser extracted).
 2. Logging hardening:
    - Introduce async buffered logging with redaction guardrails.
 3. Cleanup pass:
@@ -81,6 +82,7 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `b2460bc`
   - `2ca447d`
   - `aea3620`
   - `96017a3`
