@@ -11,7 +11,7 @@
 - App status: Electron app launches and runs.
 - Manual launch check: `npm run start` executed on `2026-04-28`; Electron renderer processes started successfully.
 - Landing status: duplicate bottom tagline removed from the main landing/empty state.
-- Test status (latest run): `430 passed / 0 failed`.
+- Test status (latest run): `433 passed / 0 failed`.
 - Security audit status: `npm audit --omit=dev` previously reported `0` vulnerabilities.
 
 ## Work Completed In This Autopilot Run
@@ -62,6 +62,7 @@
 37. `refactor(agent): extract task route state cleanup helper` (`fc36878`)
 38. `refactor(agent): extract failure memory upsert helper` (`f4869bd`)
 39. `refactor(agent): extract project naming helpers` (`6debaaf`)
+40. `refactor(agent): extract bootstrap command builder` (`16333cd`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -79,6 +80,7 @@
 10. `test(agent): add task route state cleanup helper coverage` (`fc36878`)
 11. `test(agent): add failure memory upsert helper coverage` (`f4869bd`)
 12. `test(agent): add project naming helper coverage` (`6debaaf`)
+13. `test(agent): add bootstrap command builder coverage` (`16333cd`)
 
 ## Priority Matrix (Updated)
 
@@ -104,7 +106,7 @@
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, task route state cleanup helper, route telemetry summary helper, structured fix response parser, task log store helpers, failure memory store helpers, failure memory upsert helper, and project naming helpers extracted).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, task route state cleanup helper, route telemetry summary helper, structured fix response parser, task log store helpers, failure memory store helpers, failure memory upsert helper, project naming helpers, and bootstrap command builder extracted).
 2. Cleanup pass:
    - Remove orphan placeholders only after ownership/scope is explicitly confirmed.
 
@@ -112,6 +114,7 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `16333cd`
   - `6debaaf`
   - `f4869bd`
   - `fc36878`
