@@ -323,6 +323,7 @@ import {
   buildSpecRequiredFiles as buildSpecRequiredFilesText,
   buildSpecRequiredScriptGroups as buildSpecRequiredScriptGroupsText
 } from "./taskExecutionSpecBuilders";
+import { buildTaskExecutionSpec as buildTaskExecutionSpecText } from "./taskExecutionSpecPlanner";
 import { buildTaskWorkItems as buildTaskWorkItemsText } from "./taskWorkItemBuilder";
 import {
   getPackagingVerificationLabel as getPackagingVerificationLabelText,
@@ -4920,27 +4921,20 @@ export class AgentTaskRunner {
     promptArtifact: AgentArtifactType | null,
     requestedPaths: string[]
   ): TaskExecutionSpec {
-    const starterProfile = this.inferStarterProfile(promptArtifact, builderMode, workspaceKind);
-    const domainFocus = this.inferDomainFocus(prompt, starterProfile, promptArtifact);
-    const expectsReadme = this.looksLikeNewProjectPrompt((prompt ?? "").trim().toLowerCase())
-      || requestedPaths.length > 0
-      || this.joinWorkspacePath(workingDirectory).startsWith("generated-apps/");
-    const requiredFiles = this.buildSpecRequiredFiles(workingDirectory, workspaceKind, starterProfile, expectsReadme, requestedPaths);
-    const requiredScriptGroups = this.buildSpecRequiredScriptGroups(starterProfile, workspaceKind);
-    const deliverables = this.buildSpecDeliverables(starterProfile, workspaceKind, expectsReadme);
-    const acceptanceCriteria = this.buildSpecAcceptanceCriteria(starterProfile, builderMode, promptArtifact, domainFocus);
-    const qualityGates = this.buildSpecQualityGates(starterProfile, workspaceKind, expectsReadme);
-    return {
-      summary: `${this.describeStarterProfile(starterProfile)} for ${this.describeDomainFocus(domainFocus)} workflows with ${acceptanceCriteria.length} acceptance gate(s).`,
-      starterProfile,
-      domainFocus,
-      deliverables,
-      acceptanceCriteria,
-      qualityGates,
-      requiredFiles,
-      requiredScriptGroups,
-      expectsReadme
-    };
+    return buildTaskExecutionSpecText(prompt, workingDirectory, workspaceKind, builderMode, promptArtifact, requestedPaths, {
+      buildSpecAcceptanceCriteria: (profile, mode, artifact, domainFocus) => this.buildSpecAcceptanceCriteria(profile, mode, artifact, domainFocus),
+      buildSpecDeliverables: (profile, kind, expectsReadme) => this.buildSpecDeliverables(profile, kind, expectsReadme),
+      buildSpecQualityGates: (profile, kind, expectsReadme) => this.buildSpecQualityGates(profile, kind, expectsReadme),
+      buildSpecRequiredFiles: (dir, kind, profile, expectsReadme, nextRequestedPaths) =>
+        this.buildSpecRequiredFiles(dir, kind, profile, expectsReadme, nextRequestedPaths),
+      buildSpecRequiredScriptGroups: (profile, kind) => this.buildSpecRequiredScriptGroups(profile, kind),
+      describeDomainFocus: (domainFocus) => this.describeDomainFocus(domainFocus),
+      describeStarterProfile: (profile) => this.describeStarterProfile(profile),
+      inferDomainFocus: (nextPrompt, profile, artifact) => this.inferDomainFocus(nextPrompt, profile, artifact),
+      inferStarterProfile: (artifact, mode, kind) => this.inferStarterProfile(artifact, mode, kind),
+      joinWorkspacePath: (...parts) => this.joinWorkspacePath(...parts),
+      looksLikeNewProjectPrompt: (normalizedPrompt) => this.looksLikeNewProjectPrompt(normalizedPrompt)
+    });
   }
 
   private async buildRepositoryContext(

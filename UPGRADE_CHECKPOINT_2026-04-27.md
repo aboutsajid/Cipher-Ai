@@ -333,6 +333,12 @@
 79. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+80. `refactor(agent): extract task execution spec planner helper`
+   - Moved execution-spec assembly orchestration from `buildTaskExecutionSpec` in `src/main/services/agentTaskRunner.ts` into `src/main/services/taskExecutionSpecPlanner.ts`.
+   - Kept behavior unchanged by preserving starter/domain/readme gating logic and delegating all spec sub-builder invocations through callbacks from `agentTaskRunner`.
+81. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
