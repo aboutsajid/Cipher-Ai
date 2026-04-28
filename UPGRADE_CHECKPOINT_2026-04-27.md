@@ -309,6 +309,12 @@
 71. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+72. `refactor(agent): extract starter profile and domain focus heuristics`
+   - Moved starter-profile and domain-focus heuristics from `inferStarterProfile`, `describeStarterProfile`, `inferDomainFocus`, and `describeDomainFocus` in `src/main/services/agentTaskRunner.ts` into `src/main/services/starterDomainFocusHeuristics.ts`.
+   - Kept behavior unchanged by preserving existing artifact/builder-mode/domain regex rules and delegating through thin wrappers in `agentTaskRunner`.
+73. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
