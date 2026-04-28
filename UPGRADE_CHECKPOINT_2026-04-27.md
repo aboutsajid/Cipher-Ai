@@ -105,10 +105,107 @@
 
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
-   - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, task route state cleanup helper, route telemetry summary helper, structured fix response parser, task log store helpers, failure memory store helpers, failure memory upsert helper, project naming helpers, and bootstrap command builder extracted).
+   - Split `src/renderer/app.ts` into smaller modules with no behavior change (in progress; type/interface declarations plus text/markdown/path helper slices are extracted, while runtime orchestration logic remains in `app.ts`).
+   - `src/main/services/agentTaskRunner.ts` helper extraction track is largely complete through `bootstrapCommandBuilder`; current working-tree progress now extracts desktop, notes, kanban, marketing, style, dashboard/CRUD heuristic template generation, dashboard/CRUD heuristic workspace edit-assembly builders, dashboard/CRUD domain-aware template composition builders, notes/kanban heuristic workspace edit-assembly builders, marketing heuristic workspace edit-assembly builders, desktop/API domain-content builders, bootstrap template builders, node-package starter template builders, node-package manifest/bootstrap metadata builders, generated React scaffold file templates, generated React/Desktop scaffold file-list builders, generated package-manifest normalization helpers, and generated generic-artifact inference helpers into dedicated helper modules.
 2. Cleanup pass:
    - Remove orphan placeholders only after ownership/scope is explicitly confirmed.
+3. Verification note:
+   - All `46` commit anchors referenced in this checkpoint were validated in local git history on `2026-04-28`.
+
+## Current Working-Tree Progress (Uncommitted, Apr 28, 2026)
+1. `refactor(agent): extract desktop heuristic workspace template builder`
+   - Moved large `buildHeuristicDesktopWorkspace` string-template blocks from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDesktopWorkspaceTemplate.ts`.
+   - Kept behavior unchanged by wiring `agentTaskRunner` to consume `buildHeuristicDesktopWorkspaceTemplate(...)`.
+2. `refactor(agent): extract notes heuristic template builders`
+   - Moved `buildNotesAppTsx`, `buildStaticNotesHtml`, `buildStaticNotesCss`, and `buildStaticNotesJs` template bodies into `src/main/services/heuristicNotesTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+3. `refactor(agent): extract kanban heuristic template builders`
+   - Moved `buildKanbanBoardTsx`, `buildKanbanBoardCss`, `buildKanbanBoardIndexCss`, `buildStaticKanbanHtml`, and `buildStaticKanbanJs` template bodies into `src/main/services/heuristicKanbanTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+4. `refactor(agent): extract marketing heuristic template builders`
+   - Moved pricing, announcement, and landing page template bodies from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicMarketingTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+5. `refactor(agent): extract style heuristic template builders`
+   - Moved dashboard and CRUD stylesheet template bodies from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicStyleTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+6. `refactor(agent): extract static dashboard and CRUD template builders`
+   - Moved `buildStaticDashboardHtml`, `buildStaticDashboardJs`, `buildStaticCrudHtml`, and `buildStaticCrudJs` template bodies from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicStaticDashboardCrudTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+7. `refactor(agent): extract React dashboard and CRUD template builders`
+   - Moved `buildDashboardTsx`, `buildCrudAppTsx`, and `buildVendorPaymentsCrudAppTsx` template bodies from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicReactDashboardCrudTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+8. `refactor(agent): extract dashboard and CRUD domain-content builders`
+   - Moved `buildDashboardDomainContent` and `buildCrudDomainContent` data builders from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDashboardCrudDomainContent.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+9. `refactor(renderer): extract app type/interface declarations`
+   - Moved the large renderer type/interface declaration block from `src/renderer/app.ts` into `src/renderer/appTypes.ts`.
+   - Kept behavior unchanged by leaving runtime logic in `app.ts` and preserving the existing non-module renderer script load path.
+10. `refactor(agent): extract desktop and API domain-content builders`
+   - Moved `buildDesktopDomainContent` and `buildApiEntityForDomain` data builders from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDesktopApiDomainContent.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+11. `refactor(renderer): extract non-module text/markdown utility helpers`
+   - Moved shared renderer helpers (`formatUiTime`, `compactModelName`, `stripAnsi`, `escHtml`, `sanitizeDownloadName`, `renderMarkdown`, and `formatConsoleValue`) from `src/renderer/app.ts` into `src/renderer/appTextUtils.ts`.
+   - Preserved classic script runtime behavior by loading `appTextUtils.js` before `app.js` in `src/renderer/index.html`.
+12. `refactor(renderer): extract non-module path utility helpers`
+   - Moved shared renderer path helpers (`normalizePathForComparison`, `isSameOrInsidePath`, `getParentPath`, `findCommonPath`, `getPathDisplayName`, and `formatClaudeTimelinePath`) from `src/renderer/app.ts` into `src/renderer/appPathUtils.ts`.
+   - Preserved classic script runtime behavior by loading `appPathUtils.js` before `appTextUtils.js` and `app.js` in `src/renderer/index.html`.
+13. `refactor(agent): extract bootstrap template builders`
+   - Moved general React starter, static bootstrap HTML/CSS/JS, desktop bootstrap app/style templates, and generated desktop Electron main/preload template bodies from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicBootstrapTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+14. `test: update source-introspection coverage for extracted helper modules`
+   - Updated renderer/source introspection tests to load the compiled runtime script set (`appPathUtils.js`, `appTextUtils.js`, and `app.js`) instead of assuming all helper functions live in `app.js`.
+   - Updated generated desktop installer workflow coverage to assert `agentTaskRunner` delegation plus template-body ownership in `heuristicBootstrapTemplates.ts`.
+15. `refactor(agent): extract node-package starter templates`
+   - Moved `buildNodePackageStarterContent` template bodies from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicNodePackageTemplates.ts`.
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner` and passing domain-resolved API entity content.
+16. `refactor(agent): extract node-package manifest/bootstrap metadata builders`
+   - Moved `buildNodePackageScripts`, `buildNodePackageManifest`, `buildReactBootstrapHtml`, and `buildGeneratedDesktopAppId` template/helper bodies from `src/main/services/agentTaskRunner.ts` into dedicated helper modules (`src/main/services/heuristicNodePackageTemplates.ts` and `src/main/services/heuristicBootstrapTemplates.ts`).
+   - Kept behavior unchanged by using delegating wrappers from `agentTaskRunner`.
+17. `refactor(agent): extract project readme template builder`
+   - Moved `buildProjectReadme` content assembly and run-command recommendation logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/projectReadmeTemplate.ts`.
+   - Kept behavior unchanged by preserving the same markdown sections and delegating starter-profile label rendering through existing `agentTaskRunner` logic.
+18. `refactor(agent): extract generated desktop launch script template`
+   - Moved the large generated desktop `scripts/desktop-launch.mjs` scaffold body from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicBootstrapTemplates.ts`.
+   - Kept behavior unchanged by delegating `ensureGeneratedReactProjectFiles` script writing to `buildGeneratedDesktopLaunchScriptTemplate()`.
+19. `refactor(agent): extract generated react scaffold file templates`
+   - Moved generated React scaffold file bodies for `vite.config.ts`, `eslint.config.js`, `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`, and `src/main.tsx` from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicBootstrapTemplates.ts`.
+   - Kept behavior unchanged by delegating `ensureGeneratedReactProjectFiles` file writes to the new helper builders.
+20. `refactor(agent): extract generated package-manifest normalization helpers`
+   - Moved static/generic generated `package.json` normalization logic from `ensureGeneratedAppPackageJson` in `src/main/services/agentTaskRunner.ts` into `src/main/services/generatedPackageManifestTemplates.ts`.
+   - Kept behavior unchanged by delegating static/generic manifest construction while preserving the existing react/desktop manifest block in `agentTaskRunner`.
+21. `refactor(agent): extract generated generic artifact inference helper`
+   - Moved `inferGeneratedGenericArtifactType` decision logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/generatedGenericArtifactType.ts`.
+   - Kept behavior unchanged by preserving the `agentTaskRunner` method signature and delegating to the helper.
+22. `refactor(agent): extract generated react scaffold generic-artifact inference helper`
+   - Moved the `generated-apps` generic workspace artifact inference rules (`api-service` / `script-tool` / `library`) into `src/main/services/generatedGenericArtifactType.ts`.
+   - Kept behavior unchanged by delegating the existing `agentTaskRunner` method to the new helper.
+23. `refactor(agent): extract generated react/desktop scaffold file-list builders`
+   - Moved generated scaffold file-list assembly from `ensureGeneratedReactProjectFiles` in `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicBootstrapTemplates.ts` via `buildGeneratedReactScaffoldFiles(...)` and `buildGeneratedDesktopScaffoldFiles(...)`.
+   - Kept behavior unchanged by delegating scaffold write orchestration to helper-provided file lists while preserving the existing launch-script and desktop process/preload writes.
+24. `refactor(agent): extract dashboard/crud heuristic workspace edit builders`
+   - Moved heuristic dashboard/CRUD workspace edit assembly from `buildHeuristicDashboard` and `buildHeuristicCrudApp` in `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDashboardCrudWorkspaceBuilders.ts`.
+   - Kept behavior unchanged by delegating summary + edit payload construction while preserving prompt detection, domain-focus inference, and template-builder wiring in `agentTaskRunner`.
+25. `refactor(agent): extract dashboard/crud domain-aware template composition builders`
+   - Moved dashboard/CRUD domain-aware template composition wrappers from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDashboardCrudTemplateComposers.ts`.
+   - Kept behavior unchanged by delegating `buildStaticDashboardHtml`, `buildStaticDashboardJs`, `buildStaticCrudHtml`, `buildStaticCrudJs`, `buildDashboardTsx`, and `buildCrudAppTsx` while preserving existing call sites.
+26. `refactor(agent): extract marketing heuristic workspace edit builders`
+   - Moved landing/pricing/announcement heuristic workspace edit assembly from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicMarketingWorkspaceBuilders.ts`.
+   - Kept behavior unchanged by preserving prompt-intent checks and delegating summary + edit payload construction to helper builders.
+27. `refactor(agent): extract notes/kanban heuristic workspace edit builders`
+   - Moved notes and kanban heuristic workspace edit assembly from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicNotesKanbanWorkspaceBuilders.ts`.
+   - Kept behavior unchanged by preserving prompt-intent checks and delegating summary + edit payload construction to helper builders.
+28. `refactor(agent): extract generic API/script/library heuristic workspace edit builders`
+   - Moved API service, script-tool, and library heuristic workspace edit assembly from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicGenericWorkspaceBuilders.ts`.
+   - Kept behavior unchanged by preserving existing prompt-intent/workspace checks and delegating domain/entity/project/path wiring from `agentTaskRunner`.
+30. `refactor(agent): extract desktop heuristic workspace edit builder`
+   - Moved desktop heuristic workspace edit assembly from `buildHeuristicDesktopWorkspace` in `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDesktopWorkspaceBuilders.ts`.
+   - Kept behavior unchanged by preserving existing desktop prompt classification checks and delegating summary + edit payload construction to the helper builder.
+32. `refactor(agent): extract desktop heuristic prompt guard helpers`
+   - Moved desktop prompt-classification guard logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicDesktopPromptGuards.ts`.
+   - Kept behavior unchanged by preserving existing regex heuristics and delegating `isSimpleDesktopShellPrompt`, `isDesktopBusinessReportingPrompt`, and `isSimpleDesktopUtilityPrompt` through thin wrappers in `agentTaskRunner`.
+33. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
