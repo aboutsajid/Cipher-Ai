@@ -103,6 +103,14 @@ import {
   getTestVerificationLabel as getTestVerificationLabelText,
   resolveRuntimeVerificationScript as resolveRuntimeVerificationScriptText
 } from "./verificationLabelHelpers";
+import {
+  shouldVerifyLaunch as shouldVerifyLaunchText,
+  shouldVerifyPreviewHealth as shouldVerifyPreviewHealthText,
+  shouldVerifyRuntimeDepth as shouldVerifyRuntimeDepthText,
+  shouldVerifyServedWebPage as shouldVerifyServedWebPageText,
+  shouldVerifyUiSmoke as shouldVerifyUiSmokeText,
+  usesStartupVerification as usesStartupVerificationText
+} from "./runtimeVerificationSelectors";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -2659,27 +2667,27 @@ export class AgentTaskRunner {
   }
 
   private usesStartupVerification(artifactType: AgentArtifactType): boolean {
-    return artifactType === "web-app" || artifactType === "api-service" || artifactType === "desktop-app";
+    return usesStartupVerificationText(artifactType);
   }
 
   private shouldVerifyLaunch(artifactType: AgentArtifactType): boolean {
-    return artifactType !== "library" && artifactType !== "workspace-change";
+    return shouldVerifyLaunchText(artifactType);
   }
 
   private shouldVerifyPreviewHealth(artifactType: AgentArtifactType): boolean {
-    return artifactType === "web-app";
+    return shouldVerifyPreviewHealthText(artifactType);
   }
 
   private shouldVerifyUiSmoke(artifactType: AgentArtifactType): boolean {
-    return artifactType === "web-app";
+    return shouldVerifyUiSmokeText(artifactType);
   }
 
   private shouldVerifyServedWebPage(artifactType: AgentArtifactType): boolean {
-    return artifactType === "web-app";
+    return shouldVerifyServedWebPageText(artifactType);
   }
 
   private shouldVerifyRuntimeDepth(artifactType: AgentArtifactType): boolean {
-    return artifactType === "api-service" || artifactType === "script-tool" || artifactType === "desktop-app";
+    return shouldVerifyRuntimeDepthText(artifactType);
   }
 
   private async executeArtifactRuntimeVerification(
