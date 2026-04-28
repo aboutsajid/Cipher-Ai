@@ -49,6 +49,7 @@
 24. `refactor(agent): extract startup signal detection helpers` (`5990ab3`)
 25. `refactor(agent): extract failure category guidance helper` (`9b09236`)
 26. `refactor(agent): extract model failure status helper` (`f6ee151`)
+27. `refactor(agent): extract failure memory guidance helpers` (`f133937`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -81,7 +82,7 @@
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, and model failure status helper extracted).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, and failure memory guidance helpers extracted).
 2. Logging hardening:
    - Introduce async buffered logging with redaction guardrails.
 3. Cleanup pass:
@@ -91,6 +92,7 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `f133937`
   - `f6ee151`
   - `9b09236`
   - `5990ab3`
