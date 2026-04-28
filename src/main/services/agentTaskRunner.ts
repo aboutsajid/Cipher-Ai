@@ -175,6 +175,11 @@ import {
   tryParseStructuredFixResponse as tryParseStructuredFixResponseText
 } from "./fixResponseParser";
 import { appendTaskLogLine as appendTaskLogLineText, extractTaskOutputLogLines as extractTaskOutputLogLinesText } from "./taskLogStore";
+import {
+  formatFailureMemoryForPrompt as formatFailureMemoryForPromptText,
+  selectRelevantFailureMemory as selectRelevantFailureMemoryText,
+  trimFailureMemoryStore as trimFailureMemoryStoreText
+} from "./failureMemoryStore";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -13593,22 +13598,15 @@ body {
             : plan?.spec?.starterProfile === "node-library"
               ? "library"
               : "unknown");
-    const normalizedStage = (stageLabel ?? "").trim().toLowerCase();
-
-    return [...this.failureMemory.values()]
-      .filter((entry) => entry.count >= 2 || entry.category === failureCategory)
-      .filter((entry) => entry.category === failureCategory || normalizedStage.includes(entry.stage.toLowerCase().split(" ")[0] ?? ""))
-      .filter((entry) => entry.artifactType === "unknown" || currentArtifact === "unknown" || entry.artifactType === currentArtifact)
-      .sort((a, b) => b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt))
-      .slice(0, 3);
+    return selectRelevantFailureMemoryText([...this.failureMemory.values()], {
+      failureCategory,
+      stageLabel,
+      currentArtifact
+    }) as FailureMemoryEntry[];
   }
 
   private formatFailureMemoryForPrompt(entries: FailureMemoryEntry[]): string[] {
-    if (entries.length === 0) return [];
-    return [
-      "Recurring failure memory:",
-      ...entries.map((entry) => `- ${entry.count}x ${entry.category}/${entry.signature}: ${entry.guidance}`)
-    ];
+    return formatFailureMemoryForPromptText(entries);
   }
 
   private tryParseFixResponse(raw: string, responseLabel = "Fix", options: ParseFixResponseOptions = {}): ParsedFixResponse | null {
@@ -13910,14 +13908,7 @@ body {
   }
 
   private trimFailureMemory(): void {
-    const entries = [...this.failureMemory.values()];
-    if (entries.length <= MAX_FAILURE_MEMORY_ENTRIES) return;
-    entries
-      .sort((a, b) => b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt))
-      .slice(MAX_FAILURE_MEMORY_ENTRIES)
-      .forEach((entry) => {
-        this.failureMemory.delete(entry.key);
-      });
+    trimFailureMemoryStoreText(this.failureMemory, MAX_FAILURE_MEMORY_ENTRIES);
   }
 
   private buildFailureMemorySignature(category: AgentTaskFailureCategory, message: string): string {
