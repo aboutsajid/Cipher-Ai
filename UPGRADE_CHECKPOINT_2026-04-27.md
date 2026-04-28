@@ -303,6 +303,12 @@
 69. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+70. `refactor(agent): extract repository convention detector helpers`
+   - Moved repository convention detection logic from `detectModuleFormat`, `detectUiFramework`, `detectStylingApproach`, `detectTestingTool`, and `detectLintingTool` in `src/main/services/agentTaskRunner.ts` into `src/main/services/repositoryConventionDetectors.ts`.
+   - Kept behavior unchanged by preserving dependency/script heuristics and delegating through thin wrappers in `agentTaskRunner`.
+71. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

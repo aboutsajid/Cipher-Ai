@@ -303,6 +303,13 @@ import {
 } from "./workspaceExistenceChecks";
 import { detectWorkspaceKind as detectWorkspaceKindText } from "./workspaceKindDetector";
 import {
+  detectLintingTool as detectLintingToolText,
+  detectModuleFormat as detectModuleFormatText,
+  detectStylingApproach as detectStylingApproachText,
+  detectTestingTool as detectTestingToolText,
+  detectUiFramework as detectUiFrameworkText
+} from "./repositoryConventionDetectors";
+import {
   getPackagingVerificationLabel as getPackagingVerificationLabelText,
   shouldVerifyWindowsPackaging as shouldVerifyWindowsPackagingText
 } from "./windowsPackagingVerificationGuards";
@@ -5041,65 +5048,29 @@ export class AgentTaskRunner {
   }
 
   private detectModuleFormat(packageManifest: PackageManifest | null): TaskRepositoryContext["moduleFormat"] {
-    const type = (packageManifest?.type ?? "").trim().toLowerCase();
-    if (type === "module") return "esm";
-    if (type === "commonjs") return "commonjs";
-    const main = (packageManifest?.main ?? "").trim().toLowerCase();
-    if (main.endsWith(".mjs")) return "esm";
-    if (main.endsWith(".cjs")) return "commonjs";
-    return "unknown";
+    return detectModuleFormatText(packageManifest);
   }
 
   private detectUiFramework(
     packageManifest: PackageManifest | null,
     workspaceKind: "static" | "react" | "generic"
   ): TaskRepositoryContext["uiFramework"] {
-    const deps = new Set([
-      ...Object.keys(packageManifest?.dependencies ?? {}),
-      ...Object.keys(packageManifest?.devDependencies ?? {})
-    ].map((item) => item.toLowerCase()));
-    if (deps.has("next")) return "nextjs";
-    if (deps.has("react") || deps.has("react-dom") || workspaceKind === "react") return "react";
-    if (workspaceKind === "static") return "none";
-    return "unknown";
+    return detectUiFrameworkText(packageManifest, workspaceKind);
   }
 
   private detectStylingApproach(
     packageManifest: PackageManifest | null,
     workspaceKind: "static" | "react" | "generic"
   ): TaskRepositoryContext["styling"] {
-    const deps = new Set([
-      ...Object.keys(packageManifest?.dependencies ?? {}),
-      ...Object.keys(packageManifest?.devDependencies ?? {})
-    ].map((item) => item.toLowerCase()));
-    const hasTailwind = deps.has("tailwindcss") || deps.has("@tailwindcss/vite");
-    const hasCss = workspaceKind === "static" || deps.has("react") || deps.has("vite") || deps.has("next");
-    if (hasTailwind && hasCss) return "mixed";
-    if (hasTailwind) return "tailwind";
-    if (hasCss) return "css";
-    return "unknown";
+    return detectStylingApproachText(packageManifest, workspaceKind);
   }
 
   private detectTestingTool(packageManifest: PackageManifest | null): TaskRepositoryContext["testing"] {
-    const deps = new Set([
-      ...Object.keys(packageManifest?.dependencies ?? {}),
-      ...Object.keys(packageManifest?.devDependencies ?? {})
-    ].map((item) => item.toLowerCase()));
-    if (deps.has("vitest")) return "vitest";
-    if (deps.has("jest")) return "jest";
-    const scripts = Object.values(packageManifest?.scripts ?? {}).join(" ").toLowerCase();
-    if (/\bnode\b.*--test|\bnode:test\b/.test(scripts)) return "node:test";
-    return Object.keys(packageManifest?.scripts ?? {}).includes("test") ? "unknown" : "none";
+    return detectTestingToolText(packageManifest);
   }
 
   private detectLintingTool(packageManifest: PackageManifest | null): TaskRepositoryContext["linting"] {
-    const deps = new Set([
-      ...Object.keys(packageManifest?.dependencies ?? {}),
-      ...Object.keys(packageManifest?.devDependencies ?? {})
-    ].map((item) => item.toLowerCase()));
-    if (deps.has("eslint")) return "eslint";
-    if (deps.has("@biomejs/biome")) return "biome";
-    return Object.keys(packageManifest?.scripts ?? {}).includes("lint") ? "unknown" : "none";
+    return detectLintingToolText(packageManifest);
   }
 
   private inferStarterProfile(
