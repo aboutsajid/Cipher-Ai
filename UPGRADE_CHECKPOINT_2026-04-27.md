@@ -327,6 +327,12 @@
 77. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+78. `refactor(agent): extract task work-item planner helper`
+   - Moved task work-item planning logic from `buildTaskWorkItems` in `src/main/services/agentTaskRunner.ts` into `src/main/services/taskWorkItemBuilder.ts`.
+   - Kept behavior unchanged by preserving artifact-aware work-item branching and delegating prompt classification/domain labeling/path guards through callbacks from `agentTaskRunner`.
+79. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
