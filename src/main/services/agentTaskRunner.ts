@@ -283,6 +283,10 @@ import {
   isBuilderRecoveryPrimaryPlan as isBuilderRecoveryPrimaryPlanText,
   isUnexpectedGeneratedAppFile as isUnexpectedGeneratedAppFileText
 } from "./heuristicGeneratedScaffoldRecovery";
+import {
+  detectBuilderMode as detectBuilderModeText,
+  isLockedBuilderMode as isLockedBuilderModeText
+} from "./heuristicBuilderModeGuards";
 import { detectStarterPlaceholderSignals as detectStarterPlaceholderSignalsText } from "./heuristicStarterPlaceholderSignals";
 import {
   buildGeneratedDesktopScaffoldFiles,
@@ -5633,26 +5637,9 @@ export class AgentTaskRunner {
   }
 
   private detectBuilderMode(prompt: string): "notes" | "landing" | "dashboard" | "crud" | "kanban" | null {
-    const normalized = (prompt ?? "").trim().toLowerCase();
-    if (!normalized) return null;
-    const landingSignals = ["landing page", "website", "site", "homepage", "pricing page", "microsite", "showcase page", "marketing page"];
-    const dashboardSignals = ["dashboard", "admin panel", "analytics", "wallboard", "kpi", "incident", "escalation"];
-    if (["kanban", "task board"].some((term) => normalized.includes(term))) {
-      return "kanban";
-    }
-    if (this.looksLikeCrudAppPrompt(normalized)) {
-      return "crud";
-    }
-    if (["notes app", "note app", "notes", "todo"].some((term) => normalized.includes(term))) {
-      return "notes";
-    }
-    if (landingSignals.some((term) => normalized.includes(term))) {
-      return "landing";
-    }
-    if (dashboardSignals.some((term) => normalized.includes(term))) {
-      return "dashboard";
-    }
-    return null;
+    return detectBuilderModeText(prompt, {
+      looksLikeCrudAppPrompt: (normalizedPrompt) => this.looksLikeCrudAppPrompt(normalizedPrompt)
+    });
   }
 
   private extractPromptRequirements(prompt: string): PromptRequirement[] {
@@ -5669,7 +5656,7 @@ export class AgentTaskRunner {
   }
 
   private isLockedBuilderPlan(plan: TaskExecutionPlan): boolean {
-    return plan.builderMode === "crud" || plan.builderMode === "landing" || plan.builderMode === "dashboard" || plan.builderMode === "kanban";
+    return isLockedBuilderModeText(plan.builderMode);
   }
 
   private shouldPreferHeuristicImplementation(prompt: string, plan: TaskExecutionPlan): boolean {

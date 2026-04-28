@@ -242,6 +242,12 @@
 49. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+50. `refactor(agent): extract builder mode guard helpers`
+   - Moved builder-mode detection and locked-builder guard logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicBuilderModeGuards.ts`.
+   - Kept behavior unchanged by preserving prompt-signal heuristics and delegating `detectBuilderMode` plus `isLockedBuilderPlan` through thin wrappers in `agentTaskRunner`.
+51. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
