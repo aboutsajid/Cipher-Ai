@@ -296,6 +296,7 @@ import {
   buildNodePackageScriptsTemplate,
   buildNodePackageStarterContentTemplate
 } from "./heuristicNodePackageTemplates";
+import { resolveServedWebPageUrl as resolveServedWebPageUrlText } from "./servedWebPageUrlResolver";
 import {
   buildGeneratedGenericPackageManifest,
   buildGeneratedStaticPackageManifest
@@ -3384,19 +3385,13 @@ export class AgentTaskRunner {
     launch: TerminalCommandResult
   ): string | null {
     const combinedOutput = this.stripAnsiControlSequences(launch.combinedOutput || "");
-    const urlMatches = [...combinedOutput.matchAll(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/[^\s]*)?/gi)];
-    if (urlMatches.length > 0) {
-      return urlMatches[0]?.[0] ?? null;
-    }
-
-    const scriptValue = runtimeScript === "start" ? scripts.start : scripts.dev;
-    if (plan.workspaceKind === "static" && /http\.server\s+4173/.test(scriptValue ?? "")) {
-      return "http://127.0.0.1:4173/";
-    }
-    if (plan.workspaceKind === "react" && /\bvite\b/.test(scriptValue ?? "")) {
-      return "http://127.0.0.1:5173/";
-    }
-    return null;
+    return resolveServedWebPageUrlText({
+      workspaceKind: plan.workspaceKind,
+      runtimeScript,
+      startScript: scripts.start,
+      devScript: scripts.dev,
+      combinedOutput
+    });
   }
 
   private stripAnsiControlSequences(value: string): string {

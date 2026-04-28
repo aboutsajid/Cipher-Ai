@@ -212,7 +212,10 @@
 38. `refactor(agent): extract preview asset helper utilities`
    - Moved preview asset helper logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/previewAssetHelpers.ts`.
    - Kept behavior unchanged by preserving existing regex/path/css checks and delegating `normalizeLocalHtmlScriptsForVite`, `resolvePreviewAssetPath`, `escapeRegExp`, and `isLikelyValidStylesheet` through thin wrappers in `agentTaskRunner`.
-39. Validation:
+40. `refactor(agent): extract served web page URL resolver helper`
+   - Moved served web page URL resolution logic from `resolveServedWebPageUrl` in `src/main/services/agentTaskRunner.ts` into `src/main/services/servedWebPageUrlResolver.ts`.
+   - Kept behavior unchanged by preserving runtime-output URL parsing and static/react script fallback behavior, while delegating through a thin wrapper method in `agentTaskRunner`.
+41. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
 
