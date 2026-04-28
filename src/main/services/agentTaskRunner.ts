@@ -169,6 +169,7 @@ import {
   recordTaskModelFailureState as recordTaskModelFailureStateText,
   rememberTaskStageRouteState as rememberTaskStageRouteStateText
 } from "./modelRouteTaskState";
+import { buildTaskRouteTelemetrySummary as buildTaskRouteTelemetrySummaryText } from "./taskRouteTelemetrySummary";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -16474,49 +16475,19 @@ if (statusEl && buttonEl) {
   }
 
   private buildTaskRouteTelemetrySummary(taskId: string): AgentTaskRouteTelemetrySummary {
-    const visionRequested = this.taskRequiresVisionRoute(taskId);
-    const blacklistedModels = [...(this.taskModelBlacklist.get(taskId) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
-    const failureCounts = [...(this.taskModelFailureCounts.get(taskId)?.entries() ?? [])]
-      .map(([model, count]) => {
-        const status = this.buildTaskModelFailureStatus(taskId, model);
-        return {
-          model,
-          count,
-          blacklisted: status.blacklisted,
-          hardFailuresUntilBlacklist: status.hardFailuresUntilBlacklist,
-          transientFailuresUntilBlacklist: status.transientFailuresUntilBlacklist
-        };
-      })
-      .sort((a, b) => b.count - a.count || a.model.localeCompare(b.model));
-    const activeStageRoutes = [...(this.taskStageRoutes.get(taskId)?.entries() ?? [])]
-      .map(([stage, state]) => {
-        const failureStatus = this.buildTaskModelFailureStatus(taskId, state.route.model);
-        return {
-          stage,
-          model: state.route.model,
-          baseUrl: state.route.baseUrl,
-          provider: state.route.skipAuth ? "local" as const : "remote" as const,
-          routeIndex: state.routeIndex,
-          attempt: state.attempt,
-          score: this.getModelRouteScore(state.route),
-          scoreFactors: this.buildModelRouteScoreFactors(state.route),
-          failureCount: failureStatus.count,
-          blacklisted: failureStatus.blacklisted,
-          hardFailuresUntilBlacklist: failureStatus.hardFailuresUntilBlacklist,
-          transientFailuresUntilBlacklist: failureStatus.transientFailuresUntilBlacklist,
-          visionRequested,
-          visionCapable: getModelCapabilityHints(state.route.model).vision,
-          selectionReason: this.buildTaskStageSelectionReason(taskId, stage, state.route, state.routeIndex)
-        };
-      })
-      .sort((a, b) => a.stage.localeCompare(b.stage));
-
-    return {
-      blacklistedModels,
-      failureCounts,
-      visionRequested,
-      activeStageRoutes
-    };
+    return buildTaskRouteTelemetrySummaryText({
+      taskId,
+      taskModelBlacklist: this.taskModelBlacklist,
+      taskModelFailureCounts: this.taskModelFailureCounts,
+      taskStageRoutes: this.taskStageRoutes,
+      visionRequested: this.taskRequiresVisionRoute(taskId),
+      buildTaskModelFailureStatus: (targetTaskId, model) => this.buildTaskModelFailureStatus(targetTaskId, model),
+      getModelRouteScore: (route) => this.getModelRouteScore(route),
+      buildModelRouteScoreFactors: (route) => this.buildModelRouteScoreFactors(route),
+      buildTaskStageSelectionReason: (targetTaskId, stage, route, routeIndex) => (
+        this.buildTaskStageSelectionReason(targetTaskId, stage, route, routeIndex)
+      )
+    });
   }
 
   private syncTaskRouteTelemetry(taskId: string): void {
