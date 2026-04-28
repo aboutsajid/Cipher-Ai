@@ -43,6 +43,7 @@ import {
   getModelCapabilityHints,
   inferCloudProvider
 } from "../../shared/modelCatalog";
+import { isIgnoredWorkspaceFolder, isSnapshotPreserveFolder } from "./workspaceFolderGuards";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -62,20 +63,6 @@ const MAX_UNREFERENCED_AUTO_SNAPSHOTS = 24;
 const TEXT_FILE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".txt", ".html", ".css", ".scss", ".mjs", ".cjs", ".yml", ".yaml"
 ]);
-// Preserve local runtime assets like model checkpoints instead of copying them into rollback snapshots.
-const IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "release", "release-stage", "release-package", "build", "coverage", ".next", ".cache", "tmp", ".cipher-snapshots", "models"]);
-const SNAPSHOT_PRESERVE_FOLDERS = new Set([".git", "node_modules", ".cipher-snapshots", "models", "release-package"]);
-
-function isIgnoredWorkspaceFolder(name: string): boolean {
-  const normalized = (name ?? "").trim().toLowerCase();
-  return IGNORED_FOLDERS.has(name) || normalized.startsWith("release-package-");
-}
-
-function isSnapshotPreserveFolder(name: string): boolean {
-  const normalized = (name ?? "").trim().toLowerCase();
-  return SNAPSHOT_PRESERVE_FOLDERS.has(name) || normalized.startsWith("release-package-");
-}
-
 interface PackageScripts {
   build?: string;
   lint?: string;
