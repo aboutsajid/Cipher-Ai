@@ -236,6 +236,12 @@
 47. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+48. `refactor(agent): extract generated scaffold recovery heuristics`
+   - Moved builder-recovery scaffold heuristics from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicGeneratedScaffoldRecovery.ts`.
+   - Kept behavior unchanged by preserving builder-mode/scaffold conflict detection and delegating `isBuilderRecoveryPrimaryPlan`, `getConflictingScaffoldPaths`, and `isUnexpectedGeneratedAppFile` through thin wrappers in `agentTaskRunner`.
+49. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

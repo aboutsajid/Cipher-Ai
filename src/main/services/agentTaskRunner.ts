@@ -278,6 +278,11 @@ import {
   isPathInsideWorkingDirectory as isPathInsideWorkingDirectoryText,
   joinWorkspacePath as joinWorkspacePathText
 } from "./heuristicWorkspacePathHelpers";
+import {
+  getConflictingScaffoldPaths as getConflictingScaffoldPathsText,
+  isBuilderRecoveryPrimaryPlan as isBuilderRecoveryPrimaryPlanText,
+  isUnexpectedGeneratedAppFile as isUnexpectedGeneratedAppFileText
+} from "./heuristicGeneratedScaffoldRecovery";
 import { detectStarterPlaceholderSignals as detectStarterPlaceholderSignalsText } from "./heuristicStarterPlaceholderSignals";
 import {
   buildGeneratedDesktopScaffoldFiles,
@@ -5708,7 +5713,7 @@ export class AgentTaskRunner {
   }
 
   private isBuilderRecoveryPrimaryPlan(plan: TaskExecutionPlan): boolean {
-    return plan.builderMode === "crud" || plan.builderMode === "dashboard" || plan.builderMode === "landing" || plan.builderMode === "kanban";
+    return isBuilderRecoveryPrimaryPlanText(plan.builderMode);
   }
 
   private async pruneUnexpectedGeneratedAppFiles(taskId: string, plan: TaskExecutionPlan): Promise<string[]> {
@@ -5740,29 +5745,10 @@ export class AgentTaskRunner {
   }
 
   private getConflictingScaffoldPaths(plan: Pick<TaskExecutionPlan, "workingDirectory" | "workspaceKind">): string[] {
-    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
-    if (plan.workspaceKind === "static") {
-      return [
-        this.joinWorkspacePath(workingDirectory, "src/main.tsx"),
-        this.joinWorkspacePath(workingDirectory, "src/App.tsx"),
-        this.joinWorkspacePath(workingDirectory, "src/App.css"),
-        this.joinWorkspacePath(workingDirectory, "src/index.css"),
-        this.joinWorkspacePath(workingDirectory, "vite.config.ts"),
-        this.joinWorkspacePath(workingDirectory, "eslint.config.js"),
-        this.joinWorkspacePath(workingDirectory, "tsconfig.json"),
-        this.joinWorkspacePath(workingDirectory, "tsconfig.app.json"),
-        this.joinWorkspacePath(workingDirectory, "tsconfig.node.json")
-      ];
-    }
-
-    if (plan.workspaceKind === "react") {
-      return [
-        this.joinWorkspacePath(workingDirectory, "styles.css"),
-        this.joinWorkspacePath(workingDirectory, "app.js")
-      ];
-    }
-
-    return [];
+    return getConflictingScaffoldPathsText({
+      workingDirectory: plan.workingDirectory,
+      workspaceKind: plan.workspaceKind
+    });
   }
 
   private async collectConflictingWorkspaceFiles(plan: Pick<TaskExecutionPlan, "workingDirectory" | "workspaceKind">): Promise<string[]> {
@@ -5779,29 +5765,7 @@ export class AgentTaskRunner {
   }
 
   private isUnexpectedGeneratedAppFile(path: string, workingDirectory: string, allowed: Set<string>): boolean {
-    if (allowed.has(path)) return false;
-
-    const normalized = path.replace(/\\/g, "/");
-    if (!normalized.startsWith(`${workingDirectory}/`)) return false;
-    if (
-      normalized === `${workingDirectory}/vite.config.ts` ||
-      normalized === `${workingDirectory}/eslint.config.js` ||
-      normalized === `${workingDirectory}/tsconfig.json` ||
-      normalized === `${workingDirectory}/tsconfig.app.json` ||
-      normalized === `${workingDirectory}/tsconfig.node.json`
-    ) return false;
-
-    if (/\/node_modules\//i.test(normalized) || /\/dist\//i.test(normalized) || /\/public\//i.test(normalized)) return false;
-    if (/\/src\/assets\//i.test(normalized)) return false;
-    if (/\.(png|jpg|jpeg|gif|svg|webp|ico|lock|md|json)$/i.test(normalized)) return false;
-
-    return (
-      /\.(ts|tsx|js|jsx|css|scss|html)$/i.test(normalized) &&
-      (
-        normalized.startsWith(`${workingDirectory}/src/`) ||
-        /^[^/]+\.(ts|tsx|js|jsx)$/i.test(normalized.slice(workingDirectory.length + 1))
-      )
-    );
+    return isUnexpectedGeneratedAppFileText(path, workingDirectory, allowed);
   }
 
   private async detectWorkspaceKind(workingDirectory: string): Promise<"static" | "react" | "generic"> {
