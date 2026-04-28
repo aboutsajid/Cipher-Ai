@@ -138,6 +138,9 @@ import {
   toWorkspaceRelative as toWorkspaceRelativeText
 } from "./workspacePathResolver";
 import { ensureTaskTelemetry as ensureTaskTelemetryText } from "./taskTelemetryHelpers";
+import {
+  hasStartupFailureSignal as hasStartupFailureSignalText
+} from "./startupSignalDetection";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14393,25 +14396,7 @@ body {
   }
 
   private hasStartupFailureSignal(output: string): boolean {
-    const normalized = (output ?? "").trim();
-    if (!normalized) return false;
-    const relevantLines = normalized
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((line) => !this.isBenignStartupWarning(line));
-
-    if (relevantLines.length === 0) return false;
-
-    return relevantLines.some((line) => (
-      /bootstrap failed|render-process-gone|\bunhandled\b|\buncaught\b|\bexception\b|\btypeerror\b|\breferenceerror\b|\bsyntaxerror\b|cannot find module|\beaddrinuse\b|failed:/i
-        .test(line)
-    ));
-  }
-
-  private isBenignStartupWarning(line: string): boolean {
-    return /unable to move the cache|unable to create cache|gpu cache creation failed|console-message' arguments are deprecated/i
-      .test(line);
+    return hasStartupFailureSignalText(output);
   }
 
   private async terminateProcessTree(proc: ChildProcessWithoutNullStreams): Promise<void> {
