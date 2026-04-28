@@ -315,6 +315,12 @@
 73. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+74. `refactor(agent): extract task execution spec builder helpers`
+   - Moved execution-spec assembly logic from `buildSpecRequiredFiles`, `buildSpecRequiredScriptGroups`, `buildSpecDeliverables`, `buildSpecAcceptanceCriteria`, and `buildSpecQualityGates` in `src/main/services/agentTaskRunner.ts` into `src/main/services/taskExecutionSpecBuilders.ts`.
+   - Kept behavior unchanged by preserving starter-profile/workspace/domain rules and delegating path-guard checks through callbacks from `agentTaskRunner`.
+75. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
