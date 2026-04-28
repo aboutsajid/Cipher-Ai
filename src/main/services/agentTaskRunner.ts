@@ -137,6 +137,7 @@ import {
   resolveWorkspacePath as resolveWorkspacePathText,
   toWorkspaceRelative as toWorkspaceRelativeText
 } from "./workspacePathResolver";
+import { ensureTaskTelemetry as ensureTaskTelemetryText } from "./taskTelemetryHelpers";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -16639,19 +16640,7 @@ if (statusEl && buttonEl) {
   }
 
   private ensureTaskTelemetry(task: AgentTask): AgentTaskTelemetry {
-    if (!task.telemetry) {
-      task.telemetry = {
-        fallbackUsed: false,
-        modelAttempts: []
-      };
-    }
-    if (!Array.isArray(task.telemetry.modelAttempts)) {
-      task.telemetry.modelAttempts = [];
-    }
-    if (!Array.isArray(task.telemetry.failureMemoryHints)) {
-      task.telemetry.failureMemoryHints = [];
-    }
-    return task.telemetry;
+    return ensureTaskTelemetryText(task);
   }
 
   private buildTaskRouteTelemetrySummary(taskId: string): AgentTaskRouteTelemetrySummary {
