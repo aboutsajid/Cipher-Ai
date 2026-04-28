@@ -91,6 +91,10 @@ import {
   isTransientGeneratedInstallLockFailure as isTransientGeneratedInstallLockFailureText,
   isTransientGeneratedPackagingLockFailure as isTransientGeneratedPackagingLockFailureText
 } from "./generatedInstallFailureGuards";
+import {
+  buildElectronBuilderPackagingRequest as buildElectronBuilderPackagingRequestText,
+  parseCommandArgs as parseCommandArgsText
+} from "./packagingRequestBuilder";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -2301,17 +2305,7 @@ export class AgentTaskRunner {
   }
 
   private parseCommandArgs(command: string): string[] {
-    const tokens = command.match(/"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|\S+/g) ?? [];
-    return tokens.map((token) => {
-      const trimmed = token.trim();
-      if (
-        (trimmed.startsWith("\"") && trimmed.endsWith("\""))
-        || (trimmed.startsWith("'") && trimmed.endsWith("'"))
-      ) {
-        return trimmed.slice(1, -1);
-      }
-      return trimmed;
-    });
+    return parseCommandArgsText(command);
   }
 
   private buildElectronBuilderPackagingRequest(
@@ -2319,18 +2313,7 @@ export class AgentTaskRunner {
     workingDirectory: string,
     outputDirectory: string
   ): TerminalCommandRequest | null {
-    const normalizedScript = (script ?? "").trim();
-    if (!/^electron-builder(?:\s|$)/i.test(normalizedScript)) return null;
-
-    const scriptArgs = this.parseCommandArgs(normalizedScript.replace(/^electron-builder(?:\s+)?/i, ""))
-      .filter((arg) => !/^--config\.directories\.output=/i.test(arg));
-
-    return {
-      command: process.platform === "win32" ? "npm.cmd" : "npm",
-      args: ["exec", "electron-builder", "--", ...scriptArgs, `--config.directories.output=${outputDirectory}`],
-      cwd: workingDirectory,
-      timeoutMs: 300_000
-    };
+    return buildElectronBuilderPackagingRequestText(script, workingDirectory, outputDirectory);
   }
 
   private async verifyWindowsDesktopPackaging(
