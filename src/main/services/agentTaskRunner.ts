@@ -160,6 +160,10 @@ import {
   type AgentRoutingStage as AgentRoutingStageText,
   type ModelRouteReliabilityStats
 } from "./modelRouteScoring";
+import {
+  buildNextModelRouteReliabilityStats as buildNextModelRouteReliabilityStatsText,
+  normalizeModelRouteReliabilityStats as normalizeModelRouteReliabilityStatsText
+} from "./modelRouteStats";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -553,13 +557,7 @@ export class AgentTaskRunner {
 
       for (const [routeKey, stats] of Object.entries(parsed.modelRouteStats ?? {})) {
         if (!routeKey || !stats) continue;
-        this.modelRouteStats.set(routeKey, {
-          successes: Math.max(0, Number(stats.successes) || 0),
-          failures: Math.max(0, Number(stats.failures) || 0),
-          transientFailures: Math.max(0, Number(stats.transientFailures) || 0),
-          semanticFailures: Math.max(0, Number(stats.semanticFailures) || 0),
-          lastUsedAt: typeof stats.lastUsedAt === "string" ? stats.lastUsedAt : undefined
-        });
+        this.modelRouteStats.set(routeKey, normalizeModelRouteReliabilityStatsText(stats));
       }
 
       for (const entry of parsed.failureMemory ?? []) {
@@ -14083,25 +14081,7 @@ body {
     outcome: AgentTaskModelAttempt["outcome"]
   ): void {
     const key = this.buildModelRouteKey(route);
-    const current = this.modelRouteStats.get(key) ?? {
-      successes: 0,
-      failures: 0,
-      transientFailures: 0,
-      semanticFailures: 0
-    };
-    const next: ModelRouteStats = {
-      ...current,
-      lastUsedAt: new Date().toISOString()
-    };
-    if (outcome === "success") {
-      next.successes += 1;
-    } else if (outcome === "transient-error") {
-      next.transientFailures += 1;
-    } else if (outcome === "semantic-error") {
-      next.semanticFailures += 1;
-    } else {
-      next.failures += 1;
-    }
+    const next: ModelRouteStats = buildNextModelRouteReliabilityStatsText(this.modelRouteStats.get(key), outcome);
     this.modelRouteStats.set(key, next);
     this.persistTaskState(this.activeTaskId ?? undefined);
   }
