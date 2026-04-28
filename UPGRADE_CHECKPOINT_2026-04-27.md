@@ -297,6 +297,12 @@
 67. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+68. `refactor(agent): extract workspace kind detector helper`
+   - Moved workspace kind detection logic from `detectWorkspaceKind` in `src/main/services/agentTaskRunner.ts` into `src/main/services/workspaceKindDetector.ts`.
+   - Kept behavior unchanged by preserving static/react file checks and delegating through a thin wrapper in `agentTaskRunner`.
+69. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

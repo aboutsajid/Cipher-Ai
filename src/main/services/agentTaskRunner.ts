@@ -301,6 +301,7 @@ import {
   allFilesExist as allFilesExistText,
   pathExists as pathExistsText
 } from "./workspaceExistenceChecks";
+import { detectWorkspaceKind as detectWorkspaceKindText } from "./workspaceKindDetector";
 import {
   getPackagingVerificationLabel as getPackagingVerificationLabelText,
   shouldVerifyWindowsPackaging as shouldVerifyWindowsPackagingText
@@ -5520,21 +5521,10 @@ export class AgentTaskRunner {
   }
 
   private async detectWorkspaceKind(workingDirectory: string): Promise<"static" | "react" | "generic"> {
-    const staticFiles = [
-      this.joinWorkspacePath(workingDirectory, "index.html"),
-      this.joinWorkspacePath(workingDirectory, "styles.css"),
-      this.joinWorkspacePath(workingDirectory, "app.js")
-    ];
-    const reactFiles = [
-      this.joinWorkspacePath(workingDirectory, "src/main.tsx"),
-      this.joinWorkspacePath(workingDirectory, "src/App.tsx")
-    ];
-
-    const hasStatic = await this.allFilesExist(staticFiles);
-    if (hasStatic) return "static";
-    const hasReact = await this.allFilesExist(reactFiles);
-    if (hasReact) return "react";
-    return "generic";
+    return detectWorkspaceKindText(workingDirectory, {
+      allFilesExist: (paths) => this.allFilesExist(paths),
+      joinWorkspacePath: (...parts) => this.joinWorkspacePath(...parts)
+    });
   }
 
   private resolveWorkspaceKindForPrompt(
