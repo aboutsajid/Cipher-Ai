@@ -4,6 +4,7 @@ import {
   formatFailureMemoryForPrompt,
   selectRelevantFailureMemory,
   trimFailureMemoryStore,
+  upsertFailureMemoryEntry,
   type FailureMemoryRecord
 } from "../main/services/failureMemoryStore";
 
@@ -86,4 +87,73 @@ test("trimFailureMemoryStore removes lowest-priority entries beyond limit", () =
   assert.equal(memory.has("a"), true);
   assert.equal(memory.has("b"), true);
   assert.equal(memory.has("c"), false);
+});
+
+test("upsertFailureMemoryEntry creates a new entry with initial counters", () => {
+  const result = upsertFailureMemoryEntry({
+    current: undefined,
+    key: "script-tool|runtime-error|missing-start-script",
+    artifactType: "script-tool",
+    category: "runtime-error",
+    stage: "Launch recovery",
+    signature: "missing-start-script",
+    guidance: "Add a start script before launching.",
+    example: "npm ERR! missing script: start",
+    now: "2026-04-28T08:00:00.000Z"
+  });
+
+  assert.equal(result.created, true);
+  assert.deepEqual(result.entry, {
+    key: "script-tool|runtime-error|missing-start-script",
+    artifactType: "script-tool",
+    category: "runtime-error",
+    stage: "Launch recovery",
+    signature: "missing-start-script",
+    guidance: "Add a start script before launching.",
+    example: "npm ERR! missing script: start",
+    count: 1,
+    firstSeenAt: "2026-04-28T08:00:00.000Z",
+    lastSeenAt: "2026-04-28T08:00:00.000Z"
+  });
+});
+
+test("upsertFailureMemoryEntry updates existing entries and increments count", () => {
+  const current: FailureMemoryRecord = {
+    key: "script-tool|runtime-error|missing-start-script",
+    artifactType: "script-tool",
+    category: "runtime-error",
+    stage: "Build recovery",
+    signature: "missing-start-script",
+    guidance: "Old guidance",
+    example: "old example",
+    count: 2,
+    firstSeenAt: "2026-04-28T07:00:00.000Z",
+    lastSeenAt: "2026-04-28T07:30:00.000Z"
+  };
+
+  const result = upsertFailureMemoryEntry({
+    current,
+    key: "script-tool|runtime-error|missing-start-script",
+    artifactType: "script-tool",
+    category: "runtime-error",
+    stage: "Launch recovery",
+    signature: "missing-start-script",
+    guidance: "Add a start script before launching.",
+    example: "npm ERR! missing script: start",
+    now: "2026-04-28T08:00:00.000Z"
+  });
+
+  assert.equal(result.created, false);
+  assert.deepEqual(result.entry, {
+    key: "script-tool|runtime-error|missing-start-script",
+    artifactType: "script-tool",
+    category: "runtime-error",
+    stage: "Launch recovery",
+    signature: "missing-start-script",
+    guidance: "Add a start script before launching.",
+    example: "npm ERR! missing script: start",
+    count: 3,
+    firstSeenAt: "2026-04-28T07:00:00.000Z",
+    lastSeenAt: "2026-04-28T08:00:00.000Z"
+  });
 });

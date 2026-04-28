@@ -1,7 +1,7 @@
-export interface FailureMemoryRecord {
+export interface FailureMemoryRecord<ArtifactType extends string = string, Category extends string = string> {
   key: string;
-  artifactType: string;
-  category: string;
+  artifactType: ArtifactType;
+  category: Category;
   stage: string;
   signature: string;
   guidance: string;
@@ -55,4 +55,58 @@ export function trimFailureMemoryStore(memory: Map<string, FailureMemoryRecord>,
     .forEach((entry) => {
       memory.delete(entry.key);
     });
+}
+
+export function upsertFailureMemoryEntry<ArtifactType extends string, Category extends string>(options: {
+  current: FailureMemoryRecord<ArtifactType, Category> | undefined;
+  key: string;
+  artifactType: ArtifactType;
+  category: Category;
+  stage: string;
+  signature: string;
+  guidance: string;
+  example: string;
+  now?: string;
+}): { entry: FailureMemoryRecord<ArtifactType, Category>; created: boolean } {
+  const {
+    current,
+    key,
+    artifactType,
+    category,
+    stage,
+    signature,
+    guidance,
+    example,
+    now = new Date().toISOString()
+  } = options;
+
+  if (current) {
+    return {
+      created: false,
+      entry: {
+        ...current,
+        count: current.count + 1,
+        lastSeenAt: now,
+        example,
+        guidance,
+        stage
+      }
+    };
+  }
+
+  return {
+    created: true,
+    entry: {
+      key,
+      artifactType,
+      category,
+      stage,
+      signature,
+      guidance,
+      example,
+      count: 1,
+      firstSeenAt: now,
+      lastSeenAt: now
+    }
+  };
 }

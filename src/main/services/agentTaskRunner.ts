@@ -177,9 +177,11 @@ import {
 } from "./fixResponseParser";
 import { appendTaskLogLine as appendTaskLogLineText, extractTaskOutputLogLines as extractTaskOutputLogLinesText } from "./taskLogStore";
 import {
+  type FailureMemoryRecord,
   formatFailureMemoryForPrompt as formatFailureMemoryForPromptText,
   selectRelevantFailureMemory as selectRelevantFailureMemoryText,
-  trimFailureMemoryStore as trimFailureMemoryStoreText
+  trimFailureMemoryStore as trimFailureMemoryStoreText,
+  upsertFailureMemoryEntry as upsertFailureMemoryEntryText
 } from "./failureMemoryStore";
 
 const MAX_LOG_LINES = 400;
@@ -381,18 +383,7 @@ interface BootstrapPlan {
 
 type ModelRouteStats = ModelRouteReliabilityStats;
 
-interface FailureMemoryEntry {
-  key: string;
-  artifactType: AgentArtifactType | "unknown";
-  category: AgentTaskFailureCategory;
-  stage: string;
-  signature: string;
-  guidance: string;
-  example: string;
-  count: number;
-  firstSeenAt: string;
-  lastSeenAt: string;
-}
+type FailureMemoryEntry = FailureMemoryRecord<AgentArtifactType | "unknown", AgentTaskFailureCategory>;
 
 interface TaskStageRouteState {
   route: ModelRoute;
@@ -13877,30 +13868,19 @@ body {
       ?? "unknown";
     const signature = this.buildFailureMemorySignature(category, compact);
     const key = `${artifactType}|${category}|${signature}`;
-    const now = new Date().toISOString();
     const guidance = this.buildFailureMemoryGuidance(category, signature, compact);
-    const current = this.failureMemory.get(key);
-    if (current) {
-      current.count += 1;
-      current.lastSeenAt = now;
-      current.example = compact;
-      current.guidance = guidance;
-      current.stage = normalizedStage;
-    } else {
-      this.failureMemory.set(key, {
-        key,
-        artifactType,
-        category,
-        stage: normalizedStage,
-        signature,
-        guidance,
-        example: compact,
-        count: 1,
-        firstSeenAt: now,
-        lastSeenAt: now
-      });
-      this.trimFailureMemory();
-    }
+    const next = upsertFailureMemoryEntryText({
+      current: this.failureMemory.get(key),
+      key,
+      artifactType,
+      category,
+      stage: normalizedStage,
+      signature,
+      guidance,
+      example: compact
+    });
+    this.failureMemory.set(key, next.entry);
+    if (next.created) this.trimFailureMemory();
     this.persistTaskState(taskId);
   }
 
