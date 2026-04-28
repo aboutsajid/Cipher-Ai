@@ -339,6 +339,12 @@
 81. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+82. `refactor(agent): extract repository-context summary helper`
+   - Moved repository convention summary/conventions assembly from `buildRepositoryContext` in `src/main/services/agentTaskRunner.ts` into `src/main/services/repositoryContextSummary.ts`.
+   - Kept behavior unchanged by preserving package-manager/language/module/ui/styling/testing/linting summary wording and delegating only signal collection to `agentTaskRunner`.
+83. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

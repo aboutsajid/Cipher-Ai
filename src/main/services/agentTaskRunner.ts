@@ -310,6 +310,7 @@ import {
   detectTestingTool as detectTestingToolText,
   detectUiFramework as detectUiFrameworkText
 } from "./repositoryConventionDetectors";
+import { buildRepositoryContextSummary as buildRepositoryContextSummaryText } from "./repositoryContextSummary";
 import {
   describeDomainFocus as describeDomainFocusText,
   describeStarterProfile as describeStarterProfileText,
@@ -4950,33 +4951,7 @@ export class AgentTaskRunner {
     const styling = this.detectStylingApproach(packageManifest, workspaceKind);
     const testing = this.detectTestingTool(packageManifest);
     const linting = this.detectLintingTool(packageManifest);
-    const conventions = [
-      packageManager !== "unknown" ? `Use ${packageManager} commands and lockfile conventions.` : "",
-      languageStyle === "typescript" ? "Prefer TypeScript files and typed interfaces." : "",
-      languageStyle === "javascript" ? "Prefer JavaScript files unless the repo already mixes TS." : "",
-      moduleFormat === "esm" ? "Keep Node-facing code in ESM format unless a file already uses CommonJS." : "",
-      moduleFormat === "commonjs" ? "Keep Node-facing code in CommonJS unless there is a strong reason to migrate." : "",
-      uiFramework === "react" ? "Preserve the existing React app structure and entrypoint style." : "",
-      uiFramework === "nextjs" ? "Preserve Next.js app conventions instead of adding parallel entrypoints." : "",
-      styling === "tailwind" ? "Prefer existing utility-class styling over introducing parallel CSS systems." : "",
-      styling === "css" ? "Prefer the existing CSS file approach over introducing a new styling stack." : "",
-      testing !== "none" && testing !== "unknown" ? `Keep ${testing} as the primary test style.` : "",
-      linting !== "none" && linting !== "unknown" ? `Keep ${linting} as the linting convention.` : "",
-      workspaceShape === "monorepo" ? "Respect the current multi-package workspace layout and avoid flattening packages." : ""
-    ].filter(Boolean);
-
-    const summaryParts = [
-      workspaceShape !== "unknown" ? workspaceShape.replace(/-/g, " ") : "",
-      packageManager !== "unknown" ? packageManager : "",
-      languageStyle !== "unknown" ? languageStyle : "",
-      uiFramework !== "unknown" && uiFramework !== "none" ? uiFramework : "",
-      styling !== "unknown" ? styling : "",
-      testing !== "unknown" && testing !== "none" ? `tests: ${testing}` : "",
-      linting !== "unknown" && linting !== "none" ? `lint: ${linting}` : ""
-    ].filter(Boolean);
-
-    return {
-      summary: summaryParts.length > 0 ? `Repo conventions: ${summaryParts.join(", ")}.` : "Repo conventions are mostly unknown; prefer the current file layout.",
+    return buildRepositoryContextSummaryText({
       workspaceShape,
       packageManager,
       languageStyle,
@@ -4984,9 +4959,8 @@ export class AgentTaskRunner {
       uiFramework,
       styling,
       testing,
-      linting,
-      conventions
-    };
+      linting
+    });
   }
 
   private async detectPackageManager(workingDirectory: string): Promise<TaskRepositoryContext["packageManager"]> {
