@@ -261,6 +261,12 @@
 55. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+56. `refactor(agent): extract package artifact inference helper`
+   - Moved package-manifest artifact inference logic from `inferArtifactTypeFromPackage` in `src/main/services/agentTaskRunner.ts` into `src/main/services/packageArtifactType.ts`.
+   - Kept behavior unchanged by preserving dependency/script/name heuristics and delegating through a thin wrapper in `agentTaskRunner`.
+57. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
