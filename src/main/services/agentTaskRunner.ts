@@ -86,6 +86,11 @@ import {
   parseJsonFromOutput as parseJsonFromOutputText,
   stripAnsiControlSequences as stripAnsiControlSequencesText
 } from "./runtimeProbeParsers";
+import {
+  isRecoverableGeneratedInstallFailure as isRecoverableGeneratedInstallFailureText,
+  isTransientGeneratedInstallLockFailure as isTransientGeneratedInstallLockFailureText,
+  isTransientGeneratedPackagingLockFailure as isTransientGeneratedPackagingLockFailureText
+} from "./generatedInstallFailureGuards";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -2472,38 +2477,15 @@ export class AgentTaskRunner {
   }
 
   private isRecoverableGeneratedInstallFailure(result: TerminalCommandResult): boolean {
-    const normalized = `${result.combinedOutput || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
-    return [
-      "no matching version found",
-      "error code etarget",
-      "error notarget",
-      "unable to resolve dependency tree",
-      "could not resolve dependency",
-      "conflicting peer dependency",
-      "404 not found - get https://registry.npmjs.org/"
-    ].some((term) => normalized.includes(term));
+    return isRecoverableGeneratedInstallFailureText(result);
   }
 
   private isTransientGeneratedInstallLockFailure(result: TerminalCommandResult): boolean {
-    const normalized = `${result.combinedOutput || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
-    return normalized.includes("error code ebusy")
-      || normalized.includes("resource busy or locked")
-      || normalized.includes("default_app.asar")
-      || normalized.includes("errno -4082");
+    return isTransientGeneratedInstallLockFailureText(result);
   }
 
   private isTransientGeneratedPackagingLockFailure(result: TerminalCommandResult): boolean {
-    const normalized = `${result.combinedOutput || ""}\n${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
-    return normalized.includes("error code ebusy")
-      || normalized.includes("error code eperm")
-      || normalized.includes("errno -4082")
-      || normalized.includes("resource busy or locked")
-      || normalized.includes("the process cannot access the file because it is being used by another process")
-      || normalized.includes("win-unpacked\\resources\\app.asar")
-      || normalized.includes("win-unpacked/resources/app.asar")
-      || normalized.includes("operation not permitted, unlink")
-      || normalized.includes("cannot unlink")
-      || normalized.includes("err_electron_builder_cannot_execute");
+    return isTransientGeneratedPackagingLockFailureText(result);
   }
 
   private async cleanupGeneratedDesktopPackagingState(taskId: string, workingDirectory: string): Promise<void> {
