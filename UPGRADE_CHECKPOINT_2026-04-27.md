@@ -248,6 +248,12 @@
 51. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+52. `refactor(agent): extract prompt artifact guard helpers`
+   - Moved prompt artifact-classification heuristics from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicPromptArtifactGuards.ts`.
+   - Kept behavior unchanged by preserving desktop/CRUD/web/api/library/script signal rules and delegating `inferArtifactTypeFromPrompt`, `looksLikeDesktopPrompt`, and `looksLikeCrudAppPrompt` through thin wrappers in `agentTaskRunner`.
+53. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
