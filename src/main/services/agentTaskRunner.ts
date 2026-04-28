@@ -273,6 +273,11 @@ import {
 import {
   extractPromptRequirements as extractPromptRequirementsText
 } from "./heuristicPromptRequirements";
+import {
+  extractExplicitPromptFilePaths as extractExplicitPromptFilePathsText,
+  isPathInsideWorkingDirectory as isPathInsideWorkingDirectoryText,
+  joinWorkspacePath as joinWorkspacePathText
+} from "./heuristicWorkspacePathHelpers";
 import { detectStarterPlaceholderSignals as detectStarterPlaceholderSignalsText } from "./heuristicStarterPlaceholderSignals";
 import {
   buildGeneratedDesktopScaffoldFiles,
@@ -5655,26 +5660,7 @@ export class AgentTaskRunner {
   }
 
   private extractExplicitPromptFilePaths(prompt: string, workingDirectory: string): string[] {
-    const normalized = (prompt ?? "")
-      .replace(/\[SOAK:[^\]]+\]/gi, " ")
-      .replace(/\\/g, "/");
-    if (!normalized.trim()) return [];
-
-    const matches = normalized.match(/\b(?:[\w.-]+\/)*[\w.-]+\.(?:html|css|js|jsx|ts|tsx|json|md)\b/gi) ?? [];
-    const requested = new Set<string>();
-
-    for (const rawMatch of matches) {
-      const cleaned = rawMatch.trim().replace(/^\.?\//, "");
-      if (/^node\.js$/i.test(cleaned)) continue;
-      if (!cleaned || cleaned.startsWith("../")) continue;
-      const normalizedPath = cleaned.includes("/")
-        ? cleaned
-        : this.joinWorkspacePath(workingDirectory, cleaned);
-      if (!this.isPathInsideWorkingDirectory(normalizedPath, workingDirectory)) continue;
-      requested.add(normalizedPath);
-    }
-
-    return [...requested];
+    return extractExplicitPromptFilePathsText(prompt, workingDirectory);
   }
 
   private isLockedBuilderPlan(plan: TaskExecutionPlan): boolean {
@@ -6494,11 +6480,7 @@ export class AgentTaskRunner {
   }
 
   private isPathInsideWorkingDirectory(path: string, workingDirectory: string): boolean {
-    const normalizedPath = path.replace(/\\/g, "/").replace(/^\.?\//, "");
-    const normalizedWorkingDirectory = workingDirectory.replace(/\\/g, "/").replace(/^\.?\//, "");
-    if (!normalizedPath) return false;
-    if (!normalizedWorkingDirectory || normalizedWorkingDirectory === ".") return true;
-    return normalizedPath === normalizedWorkingDirectory || normalizedPath.startsWith(`${normalizedWorkingDirectory}/`);
+    return isPathInsideWorkingDirectoryText(path, workingDirectory);
   }
 
   private isCandidatePathRelevant(
@@ -8517,13 +8499,7 @@ export class AgentTaskRunner {
   }
 
   private joinWorkspacePath(...parts: string[]): string {
-    return parts
-      .filter(Boolean)
-      .join("/")
-      .replace(/\\/g, "/")
-      .replace(/\/{2,}/g, "/")
-      .replace(/^\.\//, "")
-      || ".";
+    return joinWorkspacePathText(...parts);
   }
 
   private buildGeneralReactStarterApp(projectName: string): string {

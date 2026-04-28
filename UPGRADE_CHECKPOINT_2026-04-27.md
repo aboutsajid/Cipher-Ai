@@ -230,6 +230,12 @@
 45. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+46. `refactor(agent): extract workspace path helper heuristics`
+   - Moved workspace path normalization/guard helpers and explicit prompt file-path extraction from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicWorkspacePathHelpers.ts`.
+   - Kept behavior unchanged by preserving path normalization rules and delegating `joinWorkspacePath`, `isPathInsideWorkingDirectory`, and `extractExplicitPromptFilePaths` through thin wrappers in `agentTaskRunner`.
+47. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
