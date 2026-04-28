@@ -11,7 +11,7 @@
 - App status: Electron app launches and runs.
 - Manual launch check: `npm run start` executed on `2026-04-28`; Electron renderer processes started successfully.
 - Landing status: duplicate bottom tagline removed from the main landing/empty state.
-- Test status (latest run): `406 passed / 0 failed`.
+- Test status (latest run): `411 passed / 0 failed`.
 - Security audit status: `npm audit --omit=dev` previously reported `0` vulnerabilities.
 
 ## Work Completed In This Autopilot Run
@@ -53,6 +53,7 @@
 28. `refactor(agent): extract model route failure message helpers` (`76b7659`)
 29. `refactor(agent): extract model route scoring helpers` (`231b95f`)
 30. `refactor(agent): extract model route stats helpers` (`c141306`)
+31. `refactor(agent): extract model route task state helpers` (`8d327c7`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -62,6 +63,7 @@
 2. `test(mcp): runtime onChanged notification coverage` (included in `366c7a1`)
 3. `test(agent): add model route scoring helper coverage` (`231b95f`)
 4. `test(agent): add model route stats helper coverage` (`c141306`)
+5. `test(agent): add model route task state helper coverage` (`8d327c7`)
 
 ## Priority Matrix (Updated)
 
@@ -80,14 +82,14 @@
 ### P2 (Maintainability)
 1. Unsubscribe-safe preload listener wrappers: completed.
 2. Renderer listener teardown on unload: completed.
-3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle/model-route-stats slices).
+3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle/model-route-task-state slices).
 4. Async buffered logging with redaction guardrails: pending.
 5. Orphan placeholder cleanup: pending (defer until file ownership scope is explicit).
 
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, and model route stats helpers extracted).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, and model route task state helpers extracted).
 2. Logging hardening:
    - Introduce async buffered logging with redaction guardrails.
 3. Cleanup pass:
@@ -97,6 +99,7 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `8d327c7`
   - `c141306`
   - `231b95f`
   - `76b7659`
