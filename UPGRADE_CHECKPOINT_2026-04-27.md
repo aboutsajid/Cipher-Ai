@@ -5,9 +5,11 @@
 - Preserve rollback-safe anchors while continuing incremental improvements.
 
 ## Current Snapshot
+- Last sync: `2026-04-28`
 - Branch: `main`
 - Workspace state: contains many existing modified/untracked files from the in-progress stream.
 - App status: Electron app launches and runs.
+- Manual launch check: `npm run start` executed on `2026-04-28`; Electron renderer processes started successfully.
 - Landing status: duplicate bottom tagline removed from the main landing/empty state.
 - Test status (latest run): `398 passed / 0 failed`.
 - Security audit status: `npm audit --omit=dev` previously reported `0` vulnerabilities.
@@ -23,6 +25,7 @@
 ### Maintainability
 1. `refactor(preload): return unsubscribe handles for IPC listeners` (`a944637`)
 2. `refactor(renderer): teardown ipc listeners on unload` (`2127ce0`)
+3. `refactor(agent): extract workspace folder guard helpers` (`7c7e89a`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -48,14 +51,24 @@
 ### P2 (Maintainability)
 1. Unsubscribe-safe preload listener wrappers: completed.
 2. Renderer listener teardown on unload: completed.
-3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): pending.
+3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction started).
 4. Async buffered logging with redaction guardrails: pending.
 5. Orphan placeholder cleanup: pending (defer until file ownership scope is explicit).
+
+## Confirmed Pending Scope (Apr 28, 2026)
+1. Modularization pass:
+   - Split `src/renderer/app.ts` into smaller modules with no behavior change.
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (started with workspace guard extraction).
+2. Logging hardening:
+   - Introduce async buffered logging with redaction guardrails.
+3. Cleanup pass:
+   - Remove orphan placeholders only after ownership/scope is explicitly confirmed.
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `7c7e89a`
   - `2127ce0`
   - `a6e0d8f`
   - `366c7a1`
