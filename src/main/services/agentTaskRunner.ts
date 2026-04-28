@@ -292,6 +292,10 @@ import {
   looksLikeCrudAppPrompt as looksLikeCrudAppPromptText,
   looksLikeDesktopPrompt as looksLikeDesktopPromptText
 } from "./heuristicPromptArtifactGuards";
+import {
+  getPackagingVerificationLabel as getPackagingVerificationLabelText,
+  shouldVerifyWindowsPackaging as shouldVerifyWindowsPackagingText
+} from "./windowsPackagingVerificationGuards";
 import { detectStarterPlaceholderSignals as detectStarterPlaceholderSignalsText } from "./heuristicStarterPlaceholderSignals";
 import {
   buildGeneratedDesktopScaffoldFiles,
@@ -2304,12 +2308,7 @@ export class AgentTaskRunner {
   }
 
   private getPackagingVerificationLabel(artifactType: AgentArtifactType): string {
-    switch (artifactType) {
-      case "desktop-app":
-        return "Windows packaging";
-      default:
-        return "Packaging";
-    }
+    return getPackagingVerificationLabelText(artifactType);
   }
 
   private resolveRuntimeVerificationScript(scripts: PackageScripts): "start" | "dev" | null {
@@ -2317,10 +2316,7 @@ export class AgentTaskRunner {
   }
 
   private shouldVerifyWindowsPackaging(artifactType: AgentArtifactType, plan: TaskExecutionPlan): boolean {
-    const workingDirectory = (plan.workingDirectory ?? ".").replace(/\\/g, "/");
-    return artifactType === "desktop-app"
-      && process.platform === "win32"
-      && workingDirectory.startsWith("generated-apps/");
+    return shouldVerifyWindowsPackagingText(artifactType, plan.workingDirectory);
   }
 
   private async findGeneratedDesktopInstaller(workingDirectory: string): Promise<string | null> {

@@ -254,6 +254,13 @@
 53. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+54. `refactor(agent): extract windows packaging verification guards`
+   - Moved Windows packaging verification label/platform guard logic from `src/main/services/agentTaskRunner.ts` into `src/main/services/windowsPackagingVerificationGuards.ts`.
+   - Kept behavior unchanged by delegating `getPackagingVerificationLabel` and `shouldVerifyWindowsPackaging` through thin wrappers in `agentTaskRunner`.
+   - Updated generated desktop installer workflow source-introspection coverage to assert delegation in `agentTaskRunner` and template ownership in `windowsPackagingVerificationGuards.ts`.
+55. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

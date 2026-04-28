@@ -20,19 +20,24 @@ test("generated desktop app scaffolds include Windows packaging scripts and Elec
 
 test("generated desktop app scaffolds include a packaged Electron main process entry", () => {
   const source = readProjectFile("src/main/services/agentTaskRunner.ts");
+  const templateSource = readProjectFile("src/main/services/heuristicBootstrapTemplates.ts");
 
   assert.match(source, /this\.joinWorkspacePath\(workingDirectory, "electron\/main\.mjs"\)/);
   assert.match(source, /private buildGeneratedDesktopMainProcess\(projectName: string\): string/);
-  assert.match(source, /window\.loadFile\(join\(__dirname, '\.\.', 'dist', 'index\.html'\)\)/);
+  assert.match(source, /buildGeneratedDesktopMainProcessTemplate\(projectName\)/);
+  assert.match(templateSource, /window\.loadFile\(join\(__dirname, '\.\.', 'dist', 'index\.html'\)\)/);
 });
 
 test("generated desktop app verification includes Windows packaging", () => {
   const source = readProjectFile("src/main/services/agentTaskRunner.ts");
+  const packagingGuardSource = readProjectFile("src/main/services/windowsPackagingVerificationGuards.ts");
 
   assert.match(source, /private shouldVerifyWindowsPackaging\(artifactType: AgentArtifactType, plan: TaskExecutionPlan\): boolean/);
   assert.match(source, /private async verifyWindowsDesktopPackaging\(/);
   assert.match(source, /private getPackagingVerificationLabel\(artifactType: AgentArtifactType\): string/);
-  assert.match(source, /return "Windows packaging";/);
+  assert.match(source, /getPackagingVerificationLabelText\(artifactType\)/);
+  assert.match(source, /shouldVerifyWindowsPackagingText\(artifactType, plan\.workingDirectory\)/);
+  assert.match(packagingGuardSource, /return "Windows packaging";/);
   assert.match(source, /buildNpmScriptRequest\(scriptName, 300_000, workingDirectory\)/);
   assert.match(source, /return "App build, start, and Windows packaging passed\."/);
 });
