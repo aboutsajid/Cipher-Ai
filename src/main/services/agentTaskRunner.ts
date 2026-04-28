@@ -95,6 +95,14 @@ import {
   buildElectronBuilderPackagingRequest as buildElectronBuilderPackagingRequestText,
   parseCommandArgs as parseCommandArgsText
 } from "./packagingRequestBuilder";
+import {
+  getBuildVerificationLabel as getBuildVerificationLabelText,
+  getEntryVerificationLabel as getEntryVerificationLabelText,
+  getLaunchVerificationLabel as getLaunchVerificationLabelText,
+  getLintVerificationLabel as getLintVerificationLabelText,
+  getTestVerificationLabel as getTestVerificationLabelText,
+  resolveRuntimeVerificationScript as resolveRuntimeVerificationScriptText
+} from "./verificationLabelHelpers";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -2171,88 +2179,23 @@ export class AgentTaskRunner {
   }
 
   private getEntryVerificationLabel(artifactType: AgentArtifactType): string {
-    switch (artifactType) {
-      case "web-app":
-        return "Entry files";
-      case "api-service":
-        return "Service entry";
-      case "script-tool":
-        return "Tool entry";
-      case "library":
-        return "Package entry";
-      case "desktop-app":
-        return "App entry";
-      case "workspace-change":
-        return "Workspace target";
-      default:
-        return "Entry files";
-    }
+    return getEntryVerificationLabelText(artifactType);
   }
 
   private getBuildVerificationLabel(artifactType: AgentArtifactType): string {
-    switch (artifactType) {
-      case "web-app":
-        return "Web build";
-      case "api-service":
-        return "Service build";
-      case "script-tool":
-        return "Tool build";
-      case "library":
-        return "Package build";
-      case "desktop-app":
-        return "App build";
-      default:
-        return "Build";
-    }
+    return getBuildVerificationLabelText(artifactType);
   }
 
   private getLintVerificationLabel(artifactType: AgentArtifactType): string {
-    switch (artifactType) {
-      case "api-service":
-        return "Service lint";
-      case "script-tool":
-        return "Tool lint";
-      case "library":
-        return "Package lint";
-      case "desktop-app":
-        return "App lint";
-      case "web-app":
-        return "Web lint";
-      default:
-        return "Lint";
-    }
+    return getLintVerificationLabelText(artifactType);
   }
 
   private getTestVerificationLabel(artifactType: AgentArtifactType): string {
-    switch (artifactType) {
-      case "api-service":
-        return "Service tests";
-      case "script-tool":
-        return "Tool tests";
-      case "library":
-        return "Package tests";
-      case "desktop-app":
-        return "App tests";
-      case "web-app":
-        return "Web tests";
-      default:
-        return "Tests";
-    }
+    return getTestVerificationLabelText(artifactType);
   }
 
   private getLaunchVerificationLabel(artifactType: AgentArtifactType): string {
-    switch (artifactType) {
-      case "web-app":
-        return "Launch";
-      case "api-service":
-        return "Service boot";
-      case "script-tool":
-        return "Run";
-      case "desktop-app":
-        return "App start";
-      default:
-        return "Launch";
-    }
+    return getLaunchVerificationLabelText(artifactType);
   }
 
   private getPackagingVerificationLabel(artifactType: AgentArtifactType): string {
@@ -2265,9 +2208,7 @@ export class AgentTaskRunner {
   }
 
   private resolveRuntimeVerificationScript(scripts: PackageScripts): "start" | "dev" | null {
-    if (scripts.start) return "start";
-    if (scripts.dev) return "dev";
-    return null;
+    return resolveRuntimeVerificationScriptText(scripts);
   }
 
   private shouldVerifyWindowsPackaging(artifactType: AgentArtifactType, plan: TaskExecutionPlan): boolean {
