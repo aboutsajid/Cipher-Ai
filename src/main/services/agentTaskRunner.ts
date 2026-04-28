@@ -120,6 +120,7 @@ import {
   extractScripts as extractScriptsText,
   resolveVerificationScripts as resolveVerificationScriptsText
 } from "./verificationScriptResolver";
+import { parseLoosePackageManifest as parseLoosePackageManifestText } from "./packageManifestParser";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14562,21 +14563,7 @@ body {
   }
 
   private parseLoosePackageManifest(raw: string): PackageManifest | null {
-    const candidates = [
-      raw,
-      this.normalizeLooseJson(raw),
-      this.normalizeLooseJson(raw).replace(/\\'/g, "'")
-    ].filter((value, index, arr) => Boolean(value) && arr.indexOf(value) === index);
-
-    for (const candidate of candidates) {
-      try {
-        return JSON.parse(candidate) as PackageManifest;
-      } catch {
-        // try next candidate
-      }
-    }
-
-    return null;
+    return parseLoosePackageManifestText(raw, (value) => this.normalizeLooseJson(value)) as PackageManifest | null;
   }
 
   private extractScripts(pkg: { scripts?: PackageScripts } | null): PackageScripts {
