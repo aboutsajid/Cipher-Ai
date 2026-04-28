@@ -142,6 +142,7 @@ import {
   hasStartupFailureSignal as hasStartupFailureSignalText
 } from "./startupSignalDetection";
 import { buildFailureCategoryGuidance as buildFailureCategoryGuidanceText } from "./failureCategoryGuidance";
+import { buildModelFailureStatus as buildModelFailureStatusText } from "./modelFailureStatus";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14083,12 +14084,12 @@ body {
   } {
     const normalizedModel = (model ?? "").trim();
     const count = this.taskModelFailureCounts.get(taskId)?.get(normalizedModel) ?? 0;
-    return {
+    return buildModelFailureStatusText({
       count,
       blacklisted: this.isTaskModelBlacklisted(taskId, normalizedModel),
-      hardFailuresUntilBlacklist: Math.max(0, AGENT_MODEL_BLACKLIST_THRESHOLD - count),
-      transientFailuresUntilBlacklist: Math.max(0, AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD - count)
-    };
+      hardFailureThreshold: AGENT_MODEL_BLACKLIST_THRESHOLD,
+      transientFailureThreshold: AGENT_MODEL_TRANSIENT_BLACKLIST_THRESHOLD
+    });
   }
 
   private getTaskAttachments(taskId: string): AttachmentPayload[] {
