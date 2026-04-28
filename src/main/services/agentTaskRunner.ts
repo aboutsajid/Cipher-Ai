@@ -147,6 +147,10 @@ import {
   buildFailureMemoryGuidance as buildFailureMemoryGuidanceText,
   buildFailureMemorySignature as buildFailureMemorySignatureText
 } from "./failureMemoryGuidance";
+import {
+  buildExhaustedModelRouteMessage as buildExhaustedModelRouteMessageText,
+  compactFailureMessage as compactFailureMessageText
+} from "./modelRouteFailureMessages";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14227,20 +14231,11 @@ body {
     stageLabel: string,
     failures: Array<{ model: string; messages: string[] }>
   ): string {
-    const detail = failures
-      .filter((failure) => failure.messages.length > 0)
-      .map((failure) => {
-        const uniqueMessages = [...new Set(failure.messages.map((message) => this.compactFailureMessage(message)))];
-        return `${failure.model} (${failure.messages.length} attempt${failure.messages.length === 1 ? "" : "s"}: ${uniqueMessages.join(" | ")})`;
-      })
-      .join("; ");
-
-    return `${stageLabel} exhausted all configured model routes. Tried: ${detail || "no model routes"}.`;
+    return buildExhaustedModelRouteMessageText(stageLabel, failures);
   }
 
   private compactFailureMessage(message: string): string {
-    const normalized = (message ?? "").replace(/\s+/g, " ").trim();
-    return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+    return compactFailureMessageText(message);
   }
 
   private rememberFailureMemory(taskId: string, stage: string, message: string): void {
