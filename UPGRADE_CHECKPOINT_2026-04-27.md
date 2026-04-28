@@ -273,6 +273,12 @@
 59. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+60. `refactor(agent): extract task output builder helper`
+   - Moved task output action/message selection logic from `buildTaskOutput` in `src/main/services/agentTaskRunner.ts` into `src/main/services/taskOutputBuilder.ts`.
+   - Kept behavior unchanged by preserving artifact-specific primary actions and usage-detail messaging, while delegating through a thin wrapper in `agentTaskRunner`.
+61. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
