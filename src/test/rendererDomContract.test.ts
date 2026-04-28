@@ -62,3 +62,10 @@ test("router status refresh only loads logs when explicitly requested", () => {
   assert.match(rendererSource, /if \(options\?\.includeLogs\) \{\s*await loadRouterLogs\(\);\s*\}/);
   assert.match(rendererSource, /if \(tab === "router"\) \{\s*void refreshRouterStatus\(\{ includeLogs: true \}\);/);
 });
+
+test("renderer tracks IPC unsubscriptions and tears listeners down on unload", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+  assert.match(rendererSource, /const ipcListenerUnsubscribers: Array<\(\) => void> = \[\];/);
+  assert.match(rendererSource, /function teardownIpcListeners\(\): void/);
+  assert.match(rendererSource, /window\.addEventListener\("beforeunload", teardownIpcListeners, \{ once: true \}\);/);
+});

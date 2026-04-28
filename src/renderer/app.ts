@@ -648,6 +648,7 @@ const activeStreamingMessageIds = new Set<string>();
 let chatSearchQuery = "";
 let cachedChatSummaries: ChatSummary[] = [];
 let ipcListenersInitialized = false;
+const ipcListenerUnsubscribers: Array<() => void> = [];
 const VIRTUAL_OVERSCAN_ITEMS = 8;
 const VIRTUAL_ESTIMATED_ITEM_HEIGHT = 140;
 const VIRTUAL_FULL_RENDER_THRESHOLD = 1000;
@@ -7596,14 +7597,32 @@ async function syncRouterStateAcrossWindows(): Promise<void> {
   await refreshMcpStatus();
 }
 
+function registerIpcListener(unsubscribe: (() => void) | void): void {
+  if (typeof unsubscribe === "function") {
+    ipcListenerUnsubscribers.push(unsubscribe);
+  }
+}
+
+function teardownIpcListeners(): void {
+  while (ipcListenerUnsubscribers.length > 0) {
+    const unsubscribe = ipcListenerUnsubscribers.pop();
+    try {
+      unsubscribe?.();
+    } catch {
+      // Best-effort cleanup during teardown.
+    }
+  }
+  ipcListenersInitialized = false;
+}
+
 function setupIpcListeners() {
   if (ipcListenersInitialized) return;
   ipcListenersInitialized = true;
-  window.api.chat.onStoreChanged((payload) => {
+  registerIpcListener(window.api.chat.onStoreChanged((payload) => {
     void syncChatStoreAcrossWindows(payload);
-  });
+  }));
 
-  window.api.chat.onMessage((chatId, msg) => {
+  registerIpcListener(window.api.chat.onMessage((chatId, msg) => {
     if (msg.role === "assistant" && pendingChatSaveGuard?.requested && pendingChatSaveGuard.chatId === chatId) {
       chatSaveGuardByMessageId.set(msg.id, {
         requested: true,
@@ -7614,17 +7633,17 @@ function setupIpcListeners() {
     if (msg.role === "assistant" && !msg.error) activeStreamingMessageIds.add(msg.id);
     appendMessage(msg);
     maybeAutoScroll();
-  });
+  }));
 
-  window.api.chat.onChunk((chatId, msgId, _chunk) => {
+  registerIpcListener(window.api.chat.onChunk((chatId, msgId, _chunk) => {
     if (chatId !== currentChatId) return;
     const existing = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
     const updated = existing + _chunk;
     updateMessageContent(msgId, updated, false, false);
     scheduleChunkAutoScroll();
-  });
+  }));
 
-  window.api.chat.onDone((chatId, msgId) => {
+  registerIpcListener(window.api.chat.onDone((chatId, msgId) => {
     activeStreamingMessageIds.delete(msgId);
     if (activeStreamChatId === chatId && pendingStreamResponses > 0) {
       pendingStreamResponses -= 1;
@@ -7643,9 +7662,9 @@ function setupIpcListeners() {
     updateMessageContent(msgId, raw, true);
     applyChatSaveGuard(msgId);
     flushChunkAutoScroll();
-  });
+  }));
 
-  window.api.chat.onError((chatId, msgId, err) => {
+  registerIpcListener(window.api.chat.onError((chatId, msgId, err) => {
     chatSaveGuardByMessageId.delete(msgId);
     activeStreamingMessageIds.delete(msgId);
     if (activeStreamChatId === chatId && pendingStreamResponses > 0) {
@@ -7680,9 +7699,9 @@ function setupIpcListeners() {
     }
     flushChunkAutoScroll();
     showToast("Error: " + err, 4000);
-  });
+  }));
 
-  window.api.agent.onChanged((payload) => {
+  registerIpcListener(window.api.agent.onChanged((payload) => {
     const changedTaskId = (payload?.taskId ?? "").trim();
     const activeTaskId = (activeAgentTaskId ?? "").trim();
     const isLogEvent = payload?.reason === "log";
@@ -7692,24 +7711,24 @@ function setupIpcListeners() {
       return;
     }
     scheduleAgentTaskRefreshFromEvent(shouldForceLogs);
-  });
+  }));
 
-  window.api.settings.onChanged(() => {
+  registerIpcListener(window.api.settings.onChanged(() => {
     void syncSettingsAcrossWindows();
-  });
+  }));
 
-  window.api.router.onStateChanged(() => {
+  registerIpcListener(window.api.router.onStateChanged(() => {
     void syncRouterStateAcrossWindows();
-  });
+  }));
 
-  window.api.mcp.onChanged(() => {
+  registerIpcListener(window.api.mcp.onChanged(() => {
     const panel = $("right-panel");
     if (panel.style.display !== "none" && (panel.dataset["openTab"] ?? "") === "router") {
       void refreshMcpStatus();
     }
-  });
+  }));
 
-  window.api.claude.onOutput((payload) => {
+  registerIpcListener(window.api.claude.onOutput((payload) => {
     if (
       suppressClaudeExitNotice
       && payload.stream === "system"
@@ -7721,9 +7740,9 @@ function setupIpcListeners() {
     const stream = payload.stream === "stderr" ? "stderr" : payload.stream === "system" ? "system" : "stdout";
     appendClaudeLine(payload.text, stream);
     setClaudeStatus("Running...", "busy");
-  });
+  }));
 
-  window.api.claude.onError((message) => {
+  registerIpcListener(window.api.claude.onError((message) => {
       claudeSessionRunning = false;
       claudeSessionChatId = null;
       pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
@@ -7735,9 +7754,9 @@ function setupIpcListeners() {
     setClaudeStatus(message, "err");
     setStreamingUi(false);
     showToast(message, 3500);
-  });
+  }));
 
-  window.api.claude.onExit((payload) => {
+  registerIpcListener(window.api.claude.onExit((payload) => {
     const normalCompletion = payload.code === 0 && payload.signal === null;
     const suppressExitNotice = suppressClaudeExitNotice;
     suppressClaudeExitNotice = false;
@@ -7773,13 +7792,13 @@ function setupIpcListeners() {
     const detail = `Claude Code session closed${typeof payload.code === "number" ? ` (code ${payload.code})` : ""}.`;
     appendClaudeLine(detail, "system");
     setClaudeStatus("Stopped", "");
-  });
+  }));
 
-  window.api.router.onLog((line) => {
+  registerIpcListener(window.api.router.onLog((line) => {
     const log = $("router-log");
     log.textContent += line + "\n";
     log.scrollTop = log.scrollHeight;
-  });
+  }));
 }
 
 // â”€â”€ Settings Panel â”€â”€
@@ -11301,6 +11320,7 @@ async function init() {
   try {
     setupVirtualScrolling();
     setupIpcListeners();
+    window.addEventListener("beforeunload", teardownIpcListeners, { once: true });
     setupChatListSearch();
     setupComposer();
     setupVoiceInput();
