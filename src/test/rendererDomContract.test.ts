@@ -55,3 +55,10 @@ test("renderer IPC listener setup is idempotent to avoid duplicate subscriptions
   const rendererSource = readProjectFile("src/renderer/app.ts");
   assert.match(rendererSource, /function setupIpcListeners\(\)\s*\{\s*if \(ipcListenersInitialized\) return;\s*ipcListenersInitialized = true;/);
 });
+
+test("router status refresh only loads logs when explicitly requested", () => {
+  const rendererSource = readProjectFile("src/renderer/app.ts");
+  assert.match(rendererSource, /async function refreshRouterStatus\(options\?: \{ includeLogs\?: boolean \}\)/);
+  assert.match(rendererSource, /if \(options\?\.includeLogs\) \{\s*await loadRouterLogs\(\);\s*\}/);
+  assert.match(rendererSource, /if \(tab === "router"\) \{\s*void refreshRouterStatus\(\{ includeLogs: true \}\);/);
+});

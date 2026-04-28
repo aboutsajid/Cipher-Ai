@@ -7896,7 +7896,7 @@ async function saveSettings() {
 }
 
 // â”€â”€ Router Panel â”€â”€
-async function refreshRouterStatus() {
+async function refreshRouterStatus(options?: { includeLogs?: boolean }) {
   const status = await window.api.router.status();
   const dot = $("router-dot");
   const text = $("router-status-text");
@@ -7912,7 +7912,9 @@ async function refreshRouterStatus() {
     portEl.textContent = `Port ${status.port}`;
   }
 
-  await loadRouterLogs();
+  if (options?.includeLogs) {
+    await loadRouterLogs();
+  }
 }
 
 async function loadRouterLogs() {
@@ -10128,8 +10130,7 @@ function openPanel(tab: string) {
   if (agentBtn instanceof HTMLElement) agentBtn.classList.toggle("active", tab === "agent");
 
   if (tab === "router") {
-    void refreshRouterStatus();
-    void loadRouterLogs();
+    void refreshRouterStatus({ includeLogs: true });
     void refreshMcpStatus();
   }
   if (tab === "agent") {
@@ -11816,14 +11817,16 @@ async function init() {
     setRouterMsg("Starting...");
     const res = await window.api.router.start();
     setRouterMsg(res.message);
-    await refreshRouterStatus();
+    await refreshRouterStatus({ includeLogs: true });
   };
   $("stop-router-btn").onclick = async () => {
     const res = await window.api.router.stop();
     setRouterMsg(res.message);
-    await refreshRouterStatus();
+    await refreshRouterStatus({ includeLogs: true });
   };
-  document.getElementById("refresh-diagnostics-btn")?.addEventListener("click", refreshRouterStatus);
+  document.getElementById("refresh-diagnostics-btn")?.addEventListener("click", () => {
+    void refreshRouterStatus({ includeLogs: true });
+  });
 
   try {
     await loadSettings();
@@ -11863,7 +11866,7 @@ async function init() {
       const started = await window.api.router.start();
       log.textContent += `[Auto] ${started.message}\n`;
       log.scrollTop = log.scrollHeight;
-      await refreshRouterStatus();
+      await refreshRouterStatus({ includeLogs: true });
     }
     if (shouldShowOnboarding()) {
       showOnboarding();
