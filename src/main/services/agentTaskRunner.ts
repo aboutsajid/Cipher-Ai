@@ -151,6 +151,15 @@ import {
   buildExhaustedModelRouteMessage as buildExhaustedModelRouteMessageText,
   compactFailureMessage as compactFailureMessageText
 } from "./modelRouteFailureMessages";
+import {
+  buildModelRouteKey as buildModelRouteKeyText,
+  buildModelRouteScoreFactors as buildModelRouteScoreFactorsText,
+  getModelRouteScore as getModelRouteScoreText,
+  inferRoutingStage as inferRoutingStageText,
+  isTransientModelFailure as isTransientModelFailureText,
+  type AgentRoutingStage as AgentRoutingStageText,
+  type ModelRouteReliabilityStats
+} from "./modelRouteScoring";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -349,13 +358,7 @@ interface BootstrapPlan {
   commands: TerminalCommandRequest[];
 }
 
-interface ModelRouteStats {
-  successes: number;
-  failures: number;
-  transientFailures: number;
-  semanticFailures: number;
-  lastUsedAt?: string;
-}
+type ModelRouteStats = ModelRouteReliabilityStats;
 
 interface FailureMemoryEntry {
   key: string;
@@ -376,7 +379,7 @@ interface TaskStageRouteState {
   attempt: number;
 }
 
-type AgentRoutingStage = "planner" | "generator" | "repair";
+type AgentRoutingStage = AgentRoutingStageText;
 
 interface AgentTaskRunnerHooks {
   onTaskChanged?: (payload: AgentTaskChangedPayload) => void;
@@ -14013,75 +14016,25 @@ body {
   }
 
   private isTransientModelFailure(message: string): boolean {
-    const normalized = (message ?? "").trim().toLowerCase();
-    if (!normalized) return false;
-    return [
-      "timed out",
-      "aborted",
-      "timeout",
-      "api error 429",
-      "api error 502",
-      "api error 503",
-      "api error 504",
-      "api error 500",
-      "rate limit",
-      "overloaded",
-      "temporarily unavailable",
-      "requires more system memory",
-      "not enough memory",
-      "insufficient memory",
-      "out of memory",
-      "econnreset",
-      "socket hang up",
-      "fetch failed"
-    ].some((term) => normalized.includes(term));
+    return isTransientModelFailureText(message);
   }
 
   private buildModelRouteKey(route: Pick<ModelRoute, "model" | "baseUrl" | "skipAuth">): string {
-    return `${route.skipAuth ? "local" : "remote"}|${route.baseUrl}|${route.model}`;
+    return buildModelRouteKeyText(route);
   }
 
   private getModelRouteScore(route: Pick<ModelRoute, "model" | "baseUrl" | "skipAuth">): number {
-    const stats = this.modelRouteStats.get(this.buildModelRouteKey(route));
-    if (!stats) return 0;
-    return (stats.successes * 3) - (stats.failures * 4) - (stats.semanticFailures * 5) - (stats.transientFailures * 2);
+    return getModelRouteScoreText(this.modelRouteStats, route);
   }
 
   private buildModelRouteScoreFactors(
     route: Pick<ModelRoute, "model" | "baseUrl" | "skipAuth">
   ): AgentModelRouteScoreFactor[] {
-    const stats = this.modelRouteStats.get(this.buildModelRouteKey(route));
-    if (!stats) {
-      return [{ label: "No reliability history", delta: 0 }];
-    }
-
-    const factors: AgentModelRouteScoreFactor[] = [];
-    if (stats.successes > 0) {
-      factors.push({ label: `${stats.successes} success${stats.successes === 1 ? "" : "es"}`, delta: stats.successes * 3 });
-    }
-    if (stats.failures > 0) {
-      factors.push({ label: `${stats.failures} hard fail${stats.failures === 1 ? "" : "s"}`, delta: stats.failures * -4 });
-    }
-    if (stats.transientFailures > 0) {
-      factors.push({
-        label: `${stats.transientFailures} transient fail${stats.transientFailures === 1 ? "ure" : "ures"}`,
-        delta: stats.transientFailures * -2
-      });
-    }
-    if (stats.semanticFailures > 0) {
-      factors.push({
-        label: `${stats.semanticFailures} semantic fail${stats.semanticFailures === 1 ? "ure" : "ures"}`,
-        delta: stats.semanticFailures * -5
-      });
-    }
-    return factors.length > 0 ? factors : [{ label: "No reliability history", delta: 0 }];
+    return buildModelRouteScoreFactorsText(this.modelRouteStats, route);
   }
 
   private inferRoutingStage(stageLabel: string): AgentRoutingStage {
-    const normalized = (stageLabel ?? "").trim().toLowerCase();
-    if (normalized.includes("plan")) return "planner";
-    if (normalized.includes("repair") || normalized.includes("fix") || normalized.includes("recovery")) return "repair";
-    return "generator";
+    return inferRoutingStageText(stageLabel);
   }
 
   private buildTaskModelFailureStatus(taskId: string, model: string): {
