@@ -206,7 +206,10 @@
 34. `refactor(agent): extract starter placeholder marker helpers`
    - Moved starter placeholder marker detection logic from `detectStarterPlaceholderSignals` in `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicStarterPlaceholderSignals.ts`.
    - Kept behavior unchanged by preserving the existing marker list and delegating through a thin wrapper method in `agentTaskRunner`.
-35. Validation:
+36. `refactor(agent): extract preview bootstrap signal helper`
+   - Moved preview bootstrap signal detection logic from `hasPreviewBootstrapSignals` in `src/main/services/agentTaskRunner.ts` into `src/main/services/previewBootstrapSignals.ts`.
+   - Kept behavior unchanged by preserving existing static/react marker checks and delegating through a thin wrapper method in `agentTaskRunner`.
+37. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
 

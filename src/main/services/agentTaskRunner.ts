@@ -284,6 +284,7 @@ import {
   buildStaticBootstrapHtmlTemplate,
   buildStaticBootstrapJsTemplate,
 } from "./heuristicBootstrapTemplates";
+import { hasPreviewBootstrapSignals as hasPreviewBootstrapSignalsText } from "./previewBootstrapSignals";
 import {
   buildNodePackageManifestTemplate,
   buildNodePackageScriptsTemplate,
@@ -4042,12 +4043,7 @@ export class AgentTaskRunner {
   }
 
   private hasPreviewBootstrapSignals(source: string, mode: "static" | "react"): boolean {
-    const normalized = (source ?? "").toLowerCase();
-    if (!normalized.trim()) return false;
-    if (mode === "react") {
-      return /createroot|root\.render|reactdom\.createroot/.test(normalized);
-    }
-    return /document\.queryselector|document\.getelementbyid|addeventlistener\("domcontentloaded"|addeventlistener\('domcontentloaded'|replacechildren|appendchild|insertadjacenthtml|innerhtml|classlist\./.test(normalized);
+    return hasPreviewBootstrapSignalsText(source, mode);
   }
 
   private async tryAutoFixPreviewHealth(
