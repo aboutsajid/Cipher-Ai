@@ -174,6 +174,7 @@ import {
   normalizeLooseJson as normalizeLooseJsonText,
   tryParseStructuredFixResponse as tryParseStructuredFixResponseText
 } from "./fixResponseParser";
+import { appendTaskLogLine as appendTaskLogLineText, extractTaskOutputLogLines as extractTaskOutputLogLinesText } from "./taskLogStore";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14046,18 +14047,11 @@ body {
   }
 
   private appendOutput(taskId: string, output: string): void {
-    output
-      .split(/\r?\n/)
-      .map((line) => line.trimEnd())
-      .filter(Boolean)
-      .forEach((line) => this.appendLog(taskId, line));
+    extractTaskOutputLogLinesText(output).forEach((line) => this.appendLog(taskId, line));
   }
 
   private appendLog(taskId: string, line: string): void {
-    const logs = this.taskLogs.get(taskId) ?? [];
-    logs.push(`[${new Date().toISOString()}] ${line}`);
-    if (logs.length > MAX_LOG_LINES) logs.splice(0, logs.length - MAX_LOG_LINES);
-    this.taskLogs.set(taskId, logs);
+    appendTaskLogLineText(this.taskLogs, taskId, line, MAX_LOG_LINES);
     if (taskId !== "manual") {
       this.queueTaskStatePersist(taskId);
     }
