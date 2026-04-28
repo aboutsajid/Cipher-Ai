@@ -44,6 +44,11 @@ import {
   inferCloudProvider
 } from "../../shared/modelCatalog";
 import { isIgnoredWorkspaceFolder, isSnapshotPreserveFolder } from "./workspaceFolderGuards";
+import {
+  listSnapshots as listStoredSnapshots,
+  listStoredSnapshotEntries,
+  type StoredSnapshotEntry
+} from "./snapshotStore";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -267,12 +272,6 @@ interface TaskStageRouteState {
   route: ModelRoute;
   routeIndex: number;
   attempt: number;
-}
-
-interface StoredSnapshotEntry {
-  directoryName: string;
-  directoryPath: string;
-  snapshot: WorkspaceSnapshot | null;
 }
 
 type AgentRoutingStage = "planner" | "generator" | "repair";
@@ -583,24 +582,7 @@ export class AgentTaskRunner {
   }
 
   async listSnapshots(): Promise<WorkspaceSnapshot[]> {
-    try {
-      const entries = await readdir(this.snapshotRoot, { withFileTypes: true });
-      const snapshots: WorkspaceSnapshot[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const metaPath = join(this.snapshotRoot, entry.name, "meta.json");
-        try {
-          const raw = await readFile(metaPath, "utf8");
-          const parsed = JSON.parse(raw) as WorkspaceSnapshot;
-          if (parsed?.id) snapshots.push(parsed);
-        } catch {
-          // Ignore malformed snapshots.
-        }
-      }
-      return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    } catch {
-      return [];
-    }
+    return listStoredSnapshots(this.snapshotRoot);
   }
 
   private collectReferencedSnapshotIds(): Set<string> {
@@ -620,38 +602,7 @@ export class AgentTaskRunner {
   }
 
   private async listStoredSnapshotEntries(): Promise<StoredSnapshotEntry[]> {
-    try {
-      const entries = await readdir(this.snapshotRoot, { withFileTypes: true });
-      const snapshots: StoredSnapshotEntry[] = [];
-
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-
-        const directoryPath = join(this.snapshotRoot, entry.name);
-        const metaPath = join(directoryPath, "meta.json");
-        let snapshot: WorkspaceSnapshot | null = null;
-
-        try {
-          const raw = await readFile(metaPath, "utf8");
-          const parsed = JSON.parse(raw) as WorkspaceSnapshot;
-          if (parsed?.id) {
-            snapshot = parsed;
-          }
-        } catch {
-          snapshot = null;
-        }
-
-        snapshots.push({
-          directoryName: entry.name,
-          directoryPath,
-          snapshot
-        });
-      }
-
-      return snapshots;
-    } catch {
-      return [];
-    }
+    return listStoredSnapshotEntries(this.snapshotRoot);
   }
 
   private async removeSnapshotDirectory(directoryPath: string): Promise<void> {
