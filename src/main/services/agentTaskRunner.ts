@@ -292,6 +292,7 @@ import {
   looksLikeCrudAppPrompt as looksLikeCrudAppPromptText,
   looksLikeDesktopPrompt as looksLikeDesktopPromptText
 } from "./heuristicPromptArtifactGuards";
+import { classifyArtifactType as classifyArtifactTypeText } from "./artifactTypeClassifier";
 import { inferArtifactTypeFromPackage as inferArtifactTypeFromPackageText } from "./packageArtifactType";
 import {
   getPackagingVerificationLabel as getPackagingVerificationLabelText,
@@ -1953,18 +1954,14 @@ export class AgentTaskRunner {
     packageManifest?: PackageManifest | null
   ): AgentArtifactType {
     const normalized = (prompt ?? "").trim().toLowerCase();
-    if (verification?.previewReady) return "web-app";
     const promptArtifact = this.inferArtifactTypeFromPrompt(normalized);
     const packageArtifact = this.inferArtifactTypeFromPackage(packageManifest);
-    if (promptArtifact === "desktop-app") return promptArtifact;
-    if (promptArtifact === "api-service" || promptArtifact === "script-tool" || promptArtifact === "library") return promptArtifact;
-    if (promptArtifact === "web-app") return promptArtifact;
-    if (packageArtifact === "desktop-app") return packageArtifact;
-    if (packageArtifact) return packageArtifact;
-    if (plan?.workspaceKind === "static" || plan?.workspaceKind === "react") return "web-app";
-    if (promptArtifact) return promptArtifact;
-    if (normalized.length > 0) return "workspace-change";
-    return "unknown";
+    return classifyArtifactTypeText(prompt, {
+      previewReady: Boolean(verification?.previewReady),
+      workspaceKind: plan?.workspaceKind ?? null,
+      promptArtifact,
+      packageArtifact
+    });
   }
 
   private inferArtifactTypeFromPrompt(normalizedPrompt: string): AgentArtifactType | null {

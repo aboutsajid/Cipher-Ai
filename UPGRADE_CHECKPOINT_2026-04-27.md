@@ -267,6 +267,12 @@
 57. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+58. `refactor(agent): extract artifact type classifier helper`
+   - Moved artifact type classification decision logic from `classifyArtifactType` in `src/main/services/agentTaskRunner.ts` into `src/main/services/artifactTypeClassifier.ts`.
+   - Kept behavior unchanged by preserving prompt/package/workspace precedence and delegating through a thin wrapper in `agentTaskRunner`.
+59. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
