@@ -321,6 +321,12 @@
 75. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+76. `refactor(agent): extract workspace-kind prompt resolver helper`
+   - Moved prompt/requested-path workspace-kind override logic from `resolveWorkspaceKindForPrompt` in `src/main/services/agentTaskRunner.ts` into `src/main/services/workspaceKindPromptResolver.ts`.
+   - Kept behavior unchanged by preserving desktop/static/react signal precedence and delegating prompt artifact inference through a callback from `agentTaskRunner`.
+77. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
