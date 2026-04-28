@@ -56,6 +56,7 @@
 31. `refactor(agent): extract model route task state helpers` (`8d327c7`)
 32. `refactor(agent): extract route telemetry summary helper` (`d44f5c5`)
 33. `refactor(logging): add async buffered logger redaction guardrails` (`815682c`)
+34. `refactor(agent): extract structured fix response parser` (`bedf67a`)
 
 ### Targeted Runtime Optimization
 1. `perf(router): load logs only on explicit router refresh` (`a6e0d8f`)
@@ -86,14 +87,14 @@
 ### P2 (Maintainability)
 1. Unsubscribe-safe preload listener wrappers: completed.
 2. Renderer listener teardown on unload: completed.
-3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle/model-route-telemetry-summary slices).
+3. Large-file modularization (`renderer/app.ts`, `agentTaskRunner.ts`): in progress (`agentTaskRunner` helper extraction advanced across snapshot/messaging/fs/lifecycle/fix-response-parser slices).
 4. Async buffered logging with redaction guardrails: completed.
 5. Orphan placeholder cleanup: pending (defer until file ownership scope is explicit).
 
 ## Confirmed Pending Scope (Apr 28, 2026)
 1. Modularization pass:
    - Split `src/renderer/app.ts` into smaller modules with no behavior change.
-   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, and route telemetry summary helper extracted).
+   - Continue splitting `src/main/services/agentTaskRunner.ts` into smaller units (workspace guards, snapshot helpers, task/lifecycle messages, fs retry helpers, verification guards, run guards, runtime probe parsers, verification labels, runtime verification selectors/messages, preferred run command resolver, verification script resolver, loose manifest parser, npm script request builder, model route selection reason builder, task attachment prompt helpers, task failure classification helpers, workspace path resolution helpers, task telemetry initialization helper, startup signal detection helpers, failure category guidance helper, model failure status helper, failure memory guidance helpers, model route failure message helpers, model route scoring helpers, model route stats helpers, model route task state helpers, route telemetry summary helper, and structured fix response parser extracted).
 2. Cleanup pass:
    - Remove orphan placeholders only after ownership/scope is explicitly confirmed.
 
@@ -101,6 +102,7 @@
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `bedf67a`
   - `815682c`
   - `d44f5c5`
   - `8d327c7`
