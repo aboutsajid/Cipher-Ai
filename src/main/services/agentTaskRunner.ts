@@ -111,6 +111,10 @@ import {
   shouldVerifyUiSmoke as shouldVerifyUiSmokeText,
   usesStartupVerification as usesStartupVerificationText
 } from "./runtimeVerificationSelectors";
+import {
+  buildRuntimeVerificationAfterRepairDetails as buildRuntimeVerificationAfterRepairDetailsText,
+  buildRuntimeVerificationDetails as buildRuntimeVerificationDetailsText
+} from "./runtimeVerificationMessages";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -2734,24 +2738,14 @@ export class AgentTaskRunner {
     scriptName: "start" | "dev",
     ok: boolean
   ): string {
-    if (this.usesStartupVerification(artifactType)) {
-      return ok
-        ? `${scriptName} responded during startup verification.`
-        : `${scriptName} still failed during startup verification.`;
-    }
-    return ok
-      ? `${scriptName} completed successfully during runtime verification.`
-      : `${scriptName} failed during runtime verification.`;
+    return buildRuntimeVerificationDetailsText(artifactType, scriptName, ok);
   }
 
   private buildRuntimeVerificationAfterRepairDetails(
     artifactType: AgentArtifactType,
     scriptName: "start" | "dev"
   ): string {
-    if (this.usesStartupVerification(artifactType)) {
-      return `${scriptName} responded after requirement repair.`;
-    }
-    return `${scriptName} completed successfully after requirement repair.`;
+    return buildRuntimeVerificationAfterRepairDetailsText(artifactType, scriptName);
   }
 
   private async rerunVerificationAfterContentRepair(
