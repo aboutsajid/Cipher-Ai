@@ -224,6 +224,12 @@
 43. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+44. `refactor(agent): extract prompt requirement heuristics`
+   - Moved prompt-requirement extraction and related summary/auth requirement guards from `src/main/services/agentTaskRunner.ts` into `src/main/services/heuristicPromptRequirements.ts`.
+   - Kept behavior unchanged by preserving existing requirement IDs/regex heuristics and delegating `extractPromptRequirements` through a thin wrapper in `agentTaskRunner`.
+45. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
