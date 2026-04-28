@@ -116,6 +116,10 @@ import {
   buildRuntimeVerificationDetails as buildRuntimeVerificationDetailsText
 } from "./runtimeVerificationMessages";
 import { resolvePreferredRunCommand as resolvePreferredRunCommandText } from "./runCommandResolver";
+import {
+  extractScripts as extractScriptsText,
+  resolveVerificationScripts as resolveVerificationScriptsText
+} from "./verificationScriptResolver";
 
 const MAX_LOG_LINES = 400;
 const TASK_STATE_PERSIST_DEBOUNCE_MS = 80;
@@ -14576,26 +14580,11 @@ body {
   }
 
   private extractScripts(pkg: { scripts?: PackageScripts } | null): PackageScripts {
-    const rawScripts = typeof pkg?.scripts === "object" && pkg?.scripts
-      ? pkg.scripts
-      : {};
-    const normalized: PackageScripts = {};
-    for (const [key, value] of Object.entries(rawScripts)) {
-      if (typeof value === "string" && value.trim()) {
-        normalized[key] = value.trim();
-      }
-    }
-    return normalized;
+    return extractScriptsText(pkg) as PackageScripts;
   }
 
   private resolveVerificationScripts(pkg: { scripts?: PackageScripts } | null, plan: TaskExecutionPlan): PackageScripts {
-    const scripts = this.extractScripts(pkg);
-    if (plan.workspaceKind !== "static") return scripts;
-    return {
-      ...scripts,
-      build: "python -c \"print('Static site ready')\"",
-      start: "python -m http.server 4173"
-    };
+    return resolveVerificationScriptsText(pkg, plan.workspaceKind) as PackageScripts;
   }
 
   private async ensureGeneratedAppPackageJson(
