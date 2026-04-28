@@ -79,3 +79,14 @@ export function rememberTaskStageRouteState<Route extends object>(options: {
   taskStageRoutes.set(taskId, taskRoutes);
   return true;
 }
+
+export function clearTaskRouteState<Route extends object>(
+  taskId: string,
+  taskModelFailureCounts: Map<string, Map<string, number>>,
+  taskModelBlacklist: Map<string, Set<string>>,
+  taskStageRoutes: Map<string, Map<string, TaskStageRouteState<Route>>>
+): void {
+  taskModelFailureCounts.delete(taskId);
+  taskModelBlacklist.delete(taskId);
+  taskStageRoutes.delete(taskId);
+}

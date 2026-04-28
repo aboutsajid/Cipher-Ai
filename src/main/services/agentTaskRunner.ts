@@ -165,6 +165,7 @@ import {
   normalizeModelRouteReliabilityStats as normalizeModelRouteReliabilityStatsText
 } from "./modelRouteStats";
 import {
+  clearTaskRouteState as clearTaskRouteStateText,
   isTaskModelBlacklisted as isTaskModelBlacklistedText,
   recordTaskModelFailureState as recordTaskModelFailureStateText,
   rememberTaskStageRouteState as rememberTaskStageRouteStateText
@@ -857,9 +858,7 @@ export class AgentTaskRunner {
 
     this.tasks.set(taskId, task);
     this.taskLogs.set(taskId, []);
-    this.taskModelFailureCounts.delete(taskId);
-    this.taskModelBlacklist.delete(taskId);
-    this.taskStageRoutes.delete(taskId);
+    clearTaskRouteStateText(taskId, this.taskModelFailureCounts, this.taskModelBlacklist, this.taskStageRoutes);
     this.activeTaskId = taskId;
     this.lastRestoreState = null;
     this.appendLog(taskId, `Agent task started. Rollback snapshot: ${snapshot.id}`);
@@ -1451,9 +1450,7 @@ export class AgentTaskRunner {
         this.activeTaskId = null;
       }
       this.activeProcesses.delete(task.id);
-      this.taskModelFailureCounts.delete(task.id);
-      this.taskModelBlacklist.delete(task.id);
-      this.taskStageRoutes.delete(task.id);
+      clearTaskRouteStateText(task.id, this.taskModelFailureCounts, this.taskModelBlacklist, this.taskStageRoutes);
       this.persistTaskState(task.id);
     }
   }

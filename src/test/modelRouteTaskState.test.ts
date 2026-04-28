@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  clearTaskRouteState,
   isTaskModelBlacklisted,
   recordTaskModelFailureState,
   rememberTaskStageRouteState
@@ -147,4 +148,31 @@ test("rememberTaskStageRouteState stores normalized stage keys and route snapsho
     taskStageRoutes
   });
   assert.equal(rejected, false);
+});
+
+test("clearTaskRouteState removes task-scoped failure and route tracking", () => {
+  const taskModelFailureCounts = new Map<string, Map<string, number>>([
+    ["task-1", new Map([["model-a", 2]])],
+    ["task-2", new Map([["model-b", 1]])]
+  ]);
+  const taskModelBlacklist = new Map<string, Set<string>>([
+    ["task-1", new Set(["model-a"])],
+    ["task-2", new Set(["model-b"])]
+  ]);
+  const taskStageRoutes = new Map<
+    string,
+    Map<string, { route: { model: string; baseUrl: string; skipAuth: boolean }; routeIndex: number; attempt: number }>
+  >([
+    ["task-1", new Map([["Build", { route: { model: "model-a", baseUrl: "https://example.test", skipAuth: false }, routeIndex: 0, attempt: 1 }]])],
+    ["task-2", new Map([["Plan", { route: { model: "model-b", baseUrl: "https://example.test", skipAuth: false }, routeIndex: 1, attempt: 2 }]])]
+  ]);
+
+  clearTaskRouteState("task-1", taskModelFailureCounts, taskModelBlacklist, taskStageRoutes);
+
+  assert.equal(taskModelFailureCounts.has("task-1"), false);
+  assert.equal(taskModelBlacklist.has("task-1"), false);
+  assert.equal(taskStageRoutes.has("task-1"), false);
+  assert.equal(taskModelFailureCounts.has("task-2"), true);
+  assert.equal(taskModelBlacklist.has("task-2"), true);
+  assert.equal(taskStageRoutes.has("task-2"), true);
 });
