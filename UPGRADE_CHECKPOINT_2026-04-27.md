@@ -569,6 +569,15 @@
 139. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+140. `refactor(renderer): extract agent task refresh helpers`
+   - Moved agent task refresh helpers (`summarizeAgentPrompt`, `refreshAgentTaskTargetStates`, `ensureAgentPolling`, `scheduleAgentTaskRefreshFromEvent`) from `src/renderer/app.ts` into `src/renderer/appAgentTaskRefreshUiUtils.ts`.
+   - Kept behavior unchanged by preserving agent prompt truncation, async target-path existence caching, poll fallback scheduling, and debounced event-driven task refresh semantics.
+   - Kept contract-sensitive desktop-launch queue assertions and router-panel `openPanel` contract snippets in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appAgentTaskRefreshUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentTaskRefreshUiUtils.ts`.
+141. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
