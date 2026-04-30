@@ -28,6 +28,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appAgentTaskActionsUiUtils.ts",
     "src/renderer/appAgentControlsUiUtils.ts",
     "src/renderer/appWindowSyncUiUtils.ts",
+    "src/renderer/appDesktopLaunchUiUtils.ts",
     "src/renderer/appRuntimeSetupUiUtils.ts",
     "src/renderer/appKeyboardShortcutsUiUtils.ts"
   ]

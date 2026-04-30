@@ -478,6 +478,15 @@
 117. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+118. `refactor(renderer): extract desktop launch helpers`
+   - Moved desktop-launch helpers (`quotePowerShellLiteral`, `toDisplayLabel`, `canPromptToLaunchDesktopApp`, `promptToLaunchDesktopApp`) from `src/renderer/app.ts` into `src/renderer/appDesktopLaunchUiUtils.ts`.
+   - Kept behavior unchanged by preserving desktop launch confirmation, PowerShell quoting, launch command invocation, and user-facing toast flows.
+   - Kept `completedTaskIsRecent` and `shouldQueueDesktopLaunchPrompt` in `src/renderer/app.ts` to preserve desktop-launch source-contract assertions.
+   - Kept classic renderer script loading by adding `appDesktopLaunchUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appDesktopLaunchUiUtils.ts`.
+119. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
