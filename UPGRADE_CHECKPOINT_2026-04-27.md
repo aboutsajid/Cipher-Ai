@@ -430,6 +430,14 @@
 105. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+106. `refactor(renderer): extract composer tools setup helper`
+   - Moved `setupComposerTools` from `src/renderer/app.ts` into `src/renderer/appComposerToolsUiUtils.ts`.
+   - Kept behavior unchanged by preserving attachment picker wiring, provider-menu toggles, header-tools menu keyboard/click handling, and chat-item menu close behavior.
+   - Kept classic renderer script loading by adding `appComposerToolsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appComposerToolsUiUtils.ts`.
+107. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
