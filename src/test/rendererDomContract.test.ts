@@ -21,6 +21,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appPreviewModalUiUtils.ts",
     "src/renderer/appScrollUiUtils.ts",
     "src/renderer/appImageStudioUiUtils.ts",
+    "src/renderer/appShellLayoutUiUtils.ts",
     "src/renderer/appPanelResizeUiUtils.ts",
     "src/renderer/appPanelBodyPreviewUiUtils.ts",
     "src/renderer/appComposerVoiceUiUtils.ts",

@@ -487,6 +487,14 @@
 119. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+120. `refactor(renderer): extract shell layout helpers`
+   - Moved shell-layout and onboarding helpers (`getInitialTheme`, `applyTheme`, `toggleTheme`, `getInitialUiExperience`, `applyUiExperience`, `toggleUiExperience`, sidebar width helpers, right-panel width helpers, and onboarding visibility helpers) from `src/renderer/app.ts` into `src/renderer/appShellLayoutUiUtils.ts`.
+   - Kept behavior unchanged by preserving theme toggle labels, UI experience transitions, provider state refresh, panel width persistence, and onboarding visibility criteria.
+   - Kept classic renderer script loading by adding `appShellLayoutUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appShellLayoutUiUtils.ts`.
+121. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
