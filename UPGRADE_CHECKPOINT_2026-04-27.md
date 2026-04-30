@@ -470,6 +470,14 @@
 115. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+116. `refactor(renderer): extract window sync helpers`
+   - Moved window sync helpers (`openFreshWorkspaceWindow`, `syncChatStoreAcrossWindows`, `syncSettingsAcrossWindows`, `syncRouterStateAcrossWindows`) from `src/renderer/app.ts` into `src/renderer/appWindowSyncUiUtils.ts`.
+   - Kept behavior unchanged by preserving existing new-window toast behavior and cross-window chat/settings/router synchronization flow.
+   - Kept classic renderer script loading by adding `appWindowSyncUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appWindowSyncUiUtils.ts`.
+117. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
