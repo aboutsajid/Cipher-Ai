@@ -391,6 +391,13 @@
 95. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+96. `refactor(renderer): extract scroll and auto-scroll helpers`
+   - Moved scroll-state helpers (`getMessagesBottomDistance`, `isNearBottom`, `ensureScrollBottomButton`, `updateScrollBottomButton`, `syncAutoScrollState`, `scrollToBottom`, `maybeAutoScroll`, `scheduleChunkAutoScroll`, `flushChunkAutoScroll`) from `src/renderer/app.ts` into `src/renderer/appScrollUiUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding `appScrollUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include the extracted scroll helper module.
+97. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
