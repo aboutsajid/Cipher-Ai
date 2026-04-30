@@ -503,6 +503,14 @@
 123. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+124. `refactor(renderer): extract snapshot restore helpers`
+   - Moved snapshot restore helpers (`getSnapshotKindLabel`, `getSnapshotRestoreActionLabel`, `getRestoreStateForTask`, `getRestoreStateBadgeLabel`, `getRestoreStateSummary`, `getRestoreStateDetail`, `buildSnapshotRestoreWarning`, `buildSnapshotRestoreSummary`, `formatSnapshotFileSample`, `openSnapshotRestoreModal`, `closeSnapshotRestoreModal`) from `src/renderer/app.ts` into `src/renderer/appSnapshotRestoreUiUtils.ts`.
+   - Kept behavior unchanged by preserving snapshot-kind labels, restore-state messaging, warning/detail copy, file samples, and the restore modal compare-section flow.
+   - Kept classic renderer script loading by adding `appSnapshotRestoreUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appSnapshotRestoreUiUtils.ts`.
+125. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
