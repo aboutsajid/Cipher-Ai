@@ -1,558 +1,4 @@
-interface AttachmentPayload {
-  name: string;
-  type: "text" | "image";
-  content: string;
-  mimeType?: string;
-  sourcePath?: string;
-  writableRoot?: string;
-}
-type ImageGenerationAspectRatio = "1:1" | "1:2" | "2:1" | "2:3" | "3:2" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
-interface GeneratedImageAsset {
-  id?: string;
-  dataUrl: string;
-  mimeType: string;
-}
-interface GeneratedImageHistoryItem {
-  id: string;
-  generationId: string;
-  prompt: string;
-  model: string;
-  aspectRatio: ImageGenerationAspectRatio;
-  text: string;
-  mimeType: string;
-  dataUrl: string;
-  createdAt: string;
-  updatedAt: string;
-  saveCount: number;
-  lastSavedAt?: string;
-  lastSavedPath?: string;
-}
-interface ImageHistoryListRequest {
-  offset?: number;
-  limit?: number;
-}
-interface GeneratedImageHistoryPage {
-  items: GeneratedImageHistoryItem[];
-  hasMore: boolean;
-  nextOffset: number;
-  total: number;
-}
-interface ImageGenerationRequest {
-  prompt: string;
-  provider?: ImageProviderMode;
-  model?: string;
-  aspectRatio?: ImageGenerationAspectRatio;
-}
-interface ImageGenerationResult {
-  provider: ImageProviderMode;
-  model: string;
-  prompt: string;
-  aspectRatio: ImageGenerationAspectRatio;
-  text: string;
-  images: GeneratedImageAsset[];
-}
-interface ImageSaveResult {
-  ok: boolean;
-  message: string;
-  path?: string;
-}
-interface ImageHistoryMutationResult {
-  ok: boolean;
-  message: string;
-}
-interface MessageMetadata {
-  attachmentNames?: string[];
-  compareGroup?: string;
-  compareSlot?: "A" | "B";
-  generatedImageAssetIds?: string[];
-  systemNotice?: boolean;
-}
-interface Message { id: string; role: string; content: string; createdAt: string; model?: string; error?: string; metadata?: MessageMetadata; }
-type ChatProvider = "openrouter" | "nvidia" | "ollama" | "claude";
-interface ChatContext {
-  provider: ChatProvider;
-  selectedModel?: string;
-  compareModel?: string;
-  compareEnabled?: boolean;
-}
-interface Chat { id: string; title: string; messages: Message[]; createdAt: string; updatedAt: string; systemPrompt?: string; context?: ChatContext; }
-interface ChatSummary { id: string; title: string; messageCount: number; updatedAt: string; }
-interface PromptTemplate { name: string; content: string; }
-interface McpServerConfig { name: string; command: string; args: string[]; }
-interface McpServerRuntime extends McpServerConfig { running: boolean; pid?: number; tools: string[]; logs: string[]; }
-interface McpStatus { servers: McpServerRuntime[]; tools: string[]; }
-interface ClaudeOutputPayload { text: string; stream: "stdout" | "stderr" | "system"; }
-interface ClaudeSessionStatus { running: boolean; pid?: number; model: string; }
-interface ClaudeSessionResult extends ClaudeSessionStatus { ok: boolean; message: string; }
-interface ClaudeManagedEdit { path: string; content: string; }
-interface ClaudeManagedEditBaseline { path: string; content: string; }
-interface ClaudeManagedEditPermissions { allowedPaths: string[]; allowedRoots: string[]; }
-interface ManagedWriteVerificationFinding { severity: "error" | "warn"; message: string; path?: string; }
-interface ManagedWriteVerificationReport {
-  ok: boolean;
-  status: "passed" | "warning" | "blocked" | "skipped";
-  summary: string;
-  findings: ManagedWriteVerificationFinding[];
-  reviewerModel?: string;
-  rawResponse?: string;
-}
-interface ManagedWriteRepairResult {
-  ok: boolean;
-  summary: string;
-  edits: ClaudeManagedEdit[];
-  reviewerModel?: string;
-  rawResponse?: string;
-  error?: string;
-}
-interface ClaudeApplyEditsResult {
-  ok: boolean;
-  savedFiles: string[];
-  backupFiles: Array<{ path: string; backupPath: string }>;
-  unchangedFiles: string[];
-  failedFiles: Array<{ path: string; reason: string }>;
-  message: string;
-}
-interface AgentTaskStep {
-  id: string;
-  title: string;
-  status: "running" | "completed" | "failed" | "stopped";
-  startedAt: string;
-  finishedAt?: string;
-  summary?: string;
-}
-type AgentTaskRestartMode = "retry" | "retry-clean" | "continue-fix";
-interface AgentVerificationCheck {
-  id: string;
-  label: string;
-  status: "passed" | "failed" | "skipped";
-  details: string;
-}
-interface AgentVerificationReport {
-  summary: string;
-  checks: AgentVerificationCheck[];
-  previewReady: boolean;
-}
-interface AgentExecutionSpecScriptGroup {
-  label: string;
-  options: string[];
-}
-interface AgentExecutionSpec {
-  summary: string;
-  starterProfile: string;
-  domainFocus?: string;
-  deliverables: string[];
-  acceptanceCriteria: string[];
-  qualityGates: string[];
-  requiredFiles: string[];
-  requiredScriptGroups: AgentExecutionSpecScriptGroup[];
-  expectsReadme: boolean;
-}
-interface AgentTaskModelAttempt {
-  stage: string;
-  model: string;
-  routeIndex: number;
-  attempt: number;
-  outcome: "success" | "transient-error" | "error" | "semantic-error";
-  usedFallback: boolean;
-  timestamp: string;
-  error?: string;
-}
-interface AgentTaskTelemetry {
-  selectedModel?: string;
-  fallbackModel?: string;
-  fallbackUsed: boolean;
-  failureStage?: string;
-  failureCategory?:
-    | "missing-file"
-    | "malformed-json"
-    | "unsupported-path"
-    | "wrong-scaffold"
-    | "asset-missing"
-    | "build-error"
-    | "runtime-error"
-    | "preview-error"
-    | "lint-error"
-    | "test-error"
-    | "verification-error"
-    | "unknown";
-  finalVerificationResult?: "passed" | "failed" | "skipped" | "partial";
-  verificationSummary?: string;
-  lastStage?: string;
-  failureMemoryHints?: string[];
-  routeDiagnostics?: AgentTaskRouteTelemetrySummary;
-  modelAttempts: AgentTaskModelAttempt[];
-}
-interface AgentModelRouteDiagnostics {
-  routeKey: string;
-  model: string;
-  baseUrl: string;
-  provider: "local" | "remote";
-  score: number;
-  scoreFactors: AgentModelRouteScoreFactor[];
-  successes: number;
-  failures: number;
-  transientFailures: number;
-  semanticFailures: number;
-  lastUsedAt?: string;
-}
-interface AgentModelRouteScoreFactor {
-  label: string;
-  delta: number;
-}
-interface AgentTaskRouteFailureCount {
-  model: string;
-  count: number;
-  blacklisted: boolean;
-  hardFailuresUntilBlacklist: number;
-  transientFailuresUntilBlacklist: number;
-}
-interface AgentTaskStageRouteDiagnostics {
-  stage: string;
-  model: string;
-  baseUrl: string;
-  provider: "local" | "remote";
-  routeIndex: number;
-  attempt: number;
-  score: number;
-  scoreFactors: AgentModelRouteScoreFactor[];
-  failureCount: number;
-  blacklisted: boolean;
-  hardFailuresUntilBlacklist: number;
-  transientFailuresUntilBlacklist: number;
-  visionRequested: boolean;
-  visionCapable: boolean;
-  selectionReason: string;
-}
-interface AgentTaskRouteDiagnostics {
-  taskId: string;
-  blacklistedModels: string[];
-  failureCounts: AgentTaskRouteFailureCount[];
-  visionRequested: boolean;
-  activeStageRoutes: AgentTaskStageRouteDiagnostics[];
-}
-interface AgentTaskRouteTelemetrySummary {
-  blacklistedModels: string[];
-  failureCounts: AgentTaskRouteFailureCount[];
-  visionRequested: boolean;
-  activeStageRoutes: AgentTaskStageRouteDiagnostics[];
-}
-interface AgentRouteDiagnostics {
-  routes: AgentModelRouteDiagnostics[];
-  task?: AgentTaskRouteDiagnostics;
-}
-interface AgentTaskRequest {
-  prompt: string;
-  attachments?: AttachmentPayload[];
-  targetPath?: string;
-}
-interface AgentTask {
-  id: string;
-  prompt: string;
-  attachments?: AttachmentPayload[];
-  status: "running" | "completed" | "failed" | "stopped";
-  createdAt: string;
-  updatedAt: string;
-  summary: string;
-  steps: AgentTaskStep[];
-  rollbackSnapshotId?: string;
-  completionSnapshotId?: string;
-  targetPath?: string;
-  artifactType?: AgentArtifactType;
-  output?: AgentTaskOutput;
-  verification?: AgentVerificationReport;
-  executionSpec?: AgentExecutionSpec;
-  telemetry?: AgentTaskTelemetry;
-}
-interface AgentTaskChangedPayload {
-  taskId?: string;
-  status?: AgentTask["status"];
-  updatedAt?: string;
-  reason: "task" | "log" | "restore";
-}
-type AgentArtifactType = "web-app" | "api-service" | "script-tool" | "library" | "desktop-app" | "workspace-change" | "unknown";
-type AgentOutputPrimaryAction =
-  | "preview-web"
-  | "run-web-app"
-  | "run-service"
-  | "run-tool"
-  | "run-desktop"
-  | "inspect-package"
-  | "inspect-workspace"
-  | "preview"
-  | "run-command"
-  | "open-folder"
-  | "inspect";
-interface AgentTaskOutput {
-  primaryAction: AgentOutputPrimaryAction;
-  packageName?: string;
-  workingDirectory?: string;
-  runCommand?: string;
-  usageTitle?: string;
-  usageDetail?: string;
-}
-interface WorkspaceSnapshot {
-  id: string;
-  createdAt: string;
-  label: string;
-  workspaceRoot: string;
-  fileCount: number;
-  taskId?: string;
-  kind?: "before-task" | "after-task" | "manual";
-  targetPathHint?: string;
-  topLevelEntries?: string[];
-  targetEntries?: string[];
-}
-interface AgentSnapshotRestoreResult {
-  ok: boolean;
-  message: string;
-  snapshotId?: string;
-  snapshotLabel?: string;
-  snapshotKind?: WorkspaceSnapshot["kind"];
-  taskId?: string;
-  targetPathHint?: string;
-}
-interface TerminalCommandResult {
-  ok: boolean;
-  code: number | null;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-  combinedOutput: string;
-  durationMs: number;
-  timedOut: boolean;
-  commandLine: string;
-  cwd: string;
-}
-interface WorkspaceFileEntry {
-  path: string;
-  type: "file" | "directory";
-  size?: number;
-}
-interface WorkspaceFileReadResult {
-  path: string;
-  content: string;
-  size: number;
-}
-interface WorkspaceFileSearchResult {
-  path: string;
-  line: number;
-  preview: string;
-}
-interface ClaudeSaveGuard {
-  requested: boolean;
-  expectedPaths: string[];
-}
-interface ManagedSavePreviewState {
-  msgId: string;
-  parsed: { summary: string; edits: ClaudeManagedEdit[] };
-  permissions: ClaudeManagedEditPermissions;
-  baselines: ClaudeManagedEditBaseline[];
-  verification: ManagedWriteVerificationReport | null;
-}
-interface ChatStats {
-  totalChats: number;
-  totalMessages: number;
-  totalEstimatedTokens: number;
-  mostUsedModel: string;
-  mostUsedModelCount: number;
-  averageMessagesPerChat: number;
-}
-interface Settings {
-  apiKey: string;
-  baseUrl: string;
-  cloudProvider?: "openrouter" | "nvidia";
-  imageProvider?: ImageProviderMode;
-  defaultModel: string;
-  routerPort: number;
-  models: string[];
-  customTemplates: PromptTemplate[];
-  ollamaEnabled: boolean;
-  ollamaBaseUrl: string;
-  ollamaModels: string[];
-  comfyuiBaseUrl?: string;
-  localVoiceEnabled: boolean;
-  localVoiceModel: string;
-  claudeChatFilesystem?: {
-    roots: string[];
-    allowWrite: boolean;
-    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
-    rootConfigs?: Array<{
-      path: string;
-      label?: string;
-      allowWrite?: boolean;
-      overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
-    }>;
-    temporaryRoots?: string[];
-    budgets?: {
-      maxFilesPerTurn?: number;
-      maxBytesPerTurn?: number;
-      maxToolCallsPerTurn?: number;
-    };
-    auditEnabled?: boolean;
-    requireWritePlan?: boolean;
-  };
-  mcpServers: McpServerConfig[];
-  routing: { default: string; think: string; longContext: string; };
-}
-interface RouterStatus { running: boolean; pid?: number; port: number; }
-interface TextPromptOptions {
-  title: string;
-  initialValue?: string;
-  placeholder?: string;
-  confirmLabel?: string;
-  multiline?: boolean;
-}
-
-interface ModeTemplate {
-  name: string;
-  content: string;
-}
-
-interface Window {
-  api: {
-    app: {
-      workspacePath: () => Promise<string>;
-      info: () => Promise<{ name: string; version: string }>;
-      newWindow: () => Promise<{ ok: boolean; message: string }>;
-      openExternal: (targetUrl: string) => Promise<{ ok: boolean; message: string }>;
-      openPreview: (targetPath: string, preferredUrl?: string) => Promise<{ ok: boolean; message: string; url?: string }>;
-      openPreviewWindow: (targetUrl: string, title?: string) => Promise<{ ok: boolean; message: string }>;
-    };
-    chat: {
-      list: () => Promise<ChatSummary[]>;
-      get: (id: string) => Promise<Chat | null>;
-      create: (context?: ChatContext) => Promise<Chat>;
-      delete: (id: string) => Promise<boolean>;
-      rename: (id: string, title: string) => Promise<boolean>;
-      export: (id: string) => Promise<{ ok: boolean; message: string }>;
-      import: () => Promise<{ ok: boolean; message: string; chat?: Chat }>;
-      appendMessage: (chatId: string, message: Message) => Promise<boolean>;
-      updateMessage: (chatId: string, messageId: string, patch: Partial<Message>) => Promise<boolean>;
-      setContext: (id: string, context: ChatContext) => Promise<boolean>;
-      setSystemPrompt: (id: string, systemPrompt: string) => Promise<boolean>;
-      summarize: (messages: Array<{ role: string; content: string }>) => Promise<string>;
-      generateTitle: (chatId: string, firstUserMessage: string) => Promise<string>;
-      transcribeAudio: (audioBytes: Uint8Array, mimeType?: string) => Promise<string>;
-      send: (
-        chatId: string,
-        content: string,
-        model: string,
-        options?: { attachments?: AttachmentPayload[]; compareModel?: string; context?: ChatContext; enabledTools?: string[]; }
-      ) => Promise<void>;
-      stop: (chatId: string) => Promise<boolean>;
-      onMessage: (cb: (chatId: string, msg: Message) => void) => () => void;
-      onChunk: (cb: (chatId: string, msgId: string, chunk: string) => void) => () => void;
-      onDone: (cb: (chatId: string, msgId: string) => void) => () => void;
-      onError: (cb: (chatId: string, msgId: string, err: string) => void) => () => void;
-      onStoreChanged: (cb: (payload?: { chatId?: string; reason?: string }) => void) => () => void;
-    };
-    images: {
-      generate: (request: ImageGenerationRequest) => Promise<ImageGenerationResult>;
-      listHistory: () => Promise<GeneratedImageHistoryItem[]>;
-      listHistoryPage: (request?: ImageHistoryListRequest) => Promise<GeneratedImageHistoryPage>;
-      save: (dataUrl: string, suggestedName?: string, historyId?: string) => Promise<ImageSaveResult>;
-      deleteHistory: (historyId: string) => Promise<ImageHistoryMutationResult>;
-    };
-    attachments: {
-      pick: () => Promise<AttachmentPayload[]>;
-      pickWritableRoots: () => Promise<AttachmentPayload[]>;
-    };
-    templates: {
-      list: () => Promise<PromptTemplate[]>;
-      save: (name: string, content: string) => Promise<PromptTemplate[]>;
-      delete: (name: string) => Promise<PromptTemplate[]>;
-    };
-    ollama: {
-      check: () => Promise<{ ok: boolean; message?: string }>;
-      listModels: (baseUrl?: string) => Promise<string[]>;
-    };
-    mcp: {
-      list: () => Promise<McpServerConfig[]>;
-      add: (server: McpServerConfig) => Promise<McpServerConfig[]>;
-      remove: (name: string) => Promise<McpServerConfig[]>;
-      start: (name: string) => Promise<{ ok: boolean; message: string; servers: McpServerRuntime[]; tools: string[] }>;
-      stop: (name: string) => Promise<{ ok: boolean; message: string; servers: McpServerRuntime[]; tools: string[] }>;
-      status: () => Promise<McpStatus>;
-      onChanged: (cb: () => void) => () => void;
-    };
-    claude: {
-      status: () => Promise<ClaudeSessionStatus>;
-      start: () => Promise<ClaudeSessionResult>;
-      send: (
-        prompt: string,
-        options?: {
-          chatId?: string;
-          attachments?: AttachmentPayload[];
-          enabledTools?: string[];
-          includeFullTextAttachments?: boolean;
-          filesystemAccess?: { roots: string[]; allowWrite: boolean };
-        }
-      ) => Promise<ClaudeSessionResult>;
-      inspectEdits: (
-        edits: ClaudeManagedEdit[],
-        permissions: ClaudeManagedEditPermissions,
-        baselineContents?: ClaudeManagedEditBaseline[]
-      ) => Promise<ClaudeApplyEditsResult>;
-      applyEdits: (
-        edits: ClaudeManagedEdit[],
-        permissions: ClaudeManagedEditPermissions,
-        baselineContents?: ClaudeManagedEditBaseline[]
-      ) => Promise<ClaudeApplyEditsResult>;
-      verifyManagedEdits: (edits: ClaudeManagedEdit[]) => Promise<ManagedWriteVerificationReport>;
-      repairManagedEdits: (edits: ClaudeManagedEdit[], verification: ManagedWriteVerificationReport) => Promise<ManagedWriteRepairResult>;
-      stop: () => Promise<ClaudeSessionResult>;
-      onOutput: (cb: (payload: ClaudeOutputPayload) => void) => () => void;
-      onError: (cb: (message: string) => void) => () => void;
-      onExit: (cb: (payload: { code: number | null; signal: string | null }) => void) => () => void;
-    };
-    agent: {
-      listTasks: () => Promise<AgentTask[]>;
-      getTask: (taskId: string) => Promise<AgentTask | null>;
-      getLogs: (taskId: string) => Promise<string[]>;
-      getRouteDiagnostics: (taskId?: string) => Promise<AgentRouteDiagnostics>;
-      startTask: (request: string | AgentTaskRequest) => Promise<AgentTask>;
-      restartTask: (taskId: string, mode: AgentTaskRestartMode) => Promise<AgentTask>;
-      stopTask: (taskId: string) => Promise<boolean>;
-      listSnapshots: () => Promise<WorkspaceSnapshot[]>;
-      getRestoreState: () => Promise<AgentSnapshotRestoreResult | null>;
-      restoreSnapshot: (snapshotId: string) => Promise<AgentSnapshotRestoreResult>;
-      onChanged: (cb: (payload?: AgentTaskChangedPayload) => void) => () => void;
-    };
-    terminal: {
-      run: (request: { command: string; args?: string[]; cwd?: string; timeoutMs?: number }) => Promise<TerminalCommandResult>;
-    };
-    workspace: {
-      listFiles: (targetPath?: string, depth?: number) => Promise<WorkspaceFileEntry[]>;
-      readFile: (targetPath: string) => Promise<WorkspaceFileReadResult>;
-      writeFile: (targetPath: string, content: string) => Promise<{ ok: boolean; path: string; size: number }>;
-      search: (pattern: string, targetPath?: string) => Promise<WorkspaceFileSearchResult[]>;
-      pathExists: (targetPath: string) => Promise<boolean>;
-      openPath: (targetPath: string) => Promise<{ ok: boolean; message: string }>;
-    };
-    settings: {
-      get: () => Promise<Settings>;
-      save: (partial: Partial<Settings>) => Promise<Settings>;
-      onChanged: (cb: () => void) => () => void;
-    };
-    stats: {
-      get: () => Promise<ChatStats>;
-    };
-    clipboard: {
-      writeText: (text: string) => Promise<boolean>;
-    };
-    router: {
-      status: () => Promise<RouterStatus>;
-      logs: () => Promise<string[]>;
-      start: () => Promise<{ ok: boolean; message: string }>;
-      stop: () => Promise<{ ok: boolean; message: string }>;
-      test: () => Promise<{ ok: boolean; message: string }>;
-      onLog: (cb: (line: string) => void) => () => void;
-      onStateChanged: (cb: () => void) => () => void;
-    };
-  };
-}
-
-// â”€â”€ State â”€â”€
+﻿// Ã¢â€â‚¬Ã¢â€â‚¬ State Ã¢â€â‚¬Ã¢â€â‚¬
 let currentChatId: string | null = null;
 let activeChatContext: ChatContext | null = null;
 let pendingRenameChatId: string | null = null;
@@ -785,7 +231,7 @@ interface VirtualChatItem {
   slotB?: Message;
 }
 
-// â”€â”€ Helpers â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Helpers Ã¢â€â‚¬Ã¢â€â‚¬
 function $(id: string): HTMLElement {
   const element = document.getElementById(id);
   if (!element) {
@@ -1044,17 +490,6 @@ function isClaudeRateLimitError(message: string): boolean {
   return /api error:\s*429|rate_limit_error|rate limit|session usage limit/.test(normalized);
 }
 
-function normalizePathForComparison(input: string): string {
-  return String(input ?? "").trim().replace(/\//g, "\\").replace(/[\\]+$/, "");
-}
-
-function isSameOrInsidePath(candidate: string, root: string): boolean {
-  const normalizedCandidate = normalizePathForComparison(candidate).toLowerCase();
-  const normalizedRoot = normalizePathForComparison(root).toLowerCase();
-  if (!normalizedCandidate || !normalizedRoot) return false;
-  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}\\`);
-}
-
 function getActiveClaudeChatFilesystemSettings(): Settings["claudeChatFilesystem"] | undefined {
   if (!settings?.claudeChatFilesystem) return undefined;
   return {
@@ -1101,31 +536,6 @@ function getConfiguredClaudeWritableRootDrafts(): ClaudeChatFilesystemRootDraft[
 
 function getConfiguredClaudeWritableRoots(): string[] {
   return getConfiguredClaudeWritableRootDrafts().map((root) => root.path);
-}
-
-function getParentPath(input: string): string {
-  const normalized = String(input ?? "").trim().replace(/[\\/]+$/, "");
-  if (!normalized) return "";
-  const match = normalized.match(/^(.*)[\\/][^\\/]+$/);
-  return (match?.[1] ?? normalized).trim();
-}
-
-function findCommonPath(paths: string[]): string {
-  const normalized = paths
-    .map((path) => String(path ?? "").trim().replace(/\//g, "\\").replace(/[\\]+$/, ""))
-    .filter(Boolean);
-  if (normalized.length === 0) return "";
-  if (normalized.length === 1) return normalized[0];
-
-  const segmented = normalized.map((path) => path.split("\\").filter((segment, index) => index === 0 || segment.length > 0));
-  const shared: string[] = [];
-  const maxLength = Math.min(...segmented.map((parts) => parts.length));
-  for (let index = 0; index < maxLength; index += 1) {
-    const candidate = segmented[0][index];
-    if (!segmented.every((parts) => parts[index]?.toLowerCase() === candidate?.toLowerCase())) break;
-    shared.push(candidate);
-  }
-  return shared.join("\\");
 }
 
 function parseClaudeFilesystemEventLine(line: string, createdAt: string): ClaudeFilesystemEvent | null {
@@ -1300,21 +710,6 @@ function maybeShowClaudeRateLimitResumeGuidance(message: string): void {
 
 function hasClaudeRateLimitNotice(messages: Message[] = renderedMessages): boolean {
   return messages.some((message) => isClaudeRateLimitError(message.content));
-}
-
-function getPathDisplayName(path: string): string {
-  const normalized = normalizePathForComparison(path);
-  return normalized.split("\\").filter(Boolean).pop() ?? normalized;
-}
-
-function formatClaudeTimelinePath(path: string, target: string): string {
-  const normalizedPath = normalizePathForComparison(path);
-  const normalizedTarget = normalizePathForComparison(target);
-  if (normalizedTarget && isSameOrInsidePath(normalizedPath, normalizedTarget)) {
-    const relative = normalizedPath.slice(normalizedTarget.length).replace(/^[\\]+/, "");
-    return relative || getPathDisplayName(normalizedTarget);
-  }
-  return normalizedPath;
 }
 
 function refreshClaudeSafetyPanel(): void {
@@ -2403,7 +1798,7 @@ function refreshComposerContextUi(): void {
   if (shortcutHint instanceof HTMLElement) {
     shortcutHint.textContent = currentInteractionMode === "agent"
       ? "Enter to start agent task"
-      : "Shift+Enter for new line · Enter to send";
+      : "Shift+Enter for new line Â· Enter to send";
   }
 }
 
@@ -2485,7 +1880,7 @@ function applyInteractionMode(mode: InteractionMode): void {
   if (shortcutHint instanceof HTMLElement) {
     shortcutHint.textContent = isAgentMode
       ? "Enter to start agent task"
-      : "Shift+Enter for new line · Enter to send";
+      : "Shift+Enter for new line Â· Enter to send";
   }
   if (input instanceof HTMLTextAreaElement) {
     input.placeholder = isAgentMode
@@ -2720,19 +2115,7 @@ function normalizeRenderedMessageOrder(): void {
   renderedMessages.sort(compareMessagesForRender);
 }
 
-function formatUiTime(value: string): string {
-  const parsed = Date.parse(value ?? "");
-  if (!Number.isFinite(parsed)) return "";
-  return new Date(parsed).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function compactModelName(model: string): string {
-  const normalized = model.startsWith("ollama/") ? model.slice("ollama/".length) : model;
-  const short = normalized.split("/").pop() ?? normalized;
-  return short.replace(/-instruct$/i, "");
-}
-
-// â”€â”€ Model Select â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Model Select Ã¢â€â‚¬Ã¢â€â‚¬
 function getEffectiveModels(source: Settings | null): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -2916,7 +2299,7 @@ function isRouteModelActive(source: Settings | null, model: string): boolean {
 
 function formatRouteModelLabel(model: string): string {
   const label = compactModelName(model);
-  return `${label} · ${model.startsWith("ollama/") ? "local" : "cloud"}`;
+  return `${label} Â· ${model.startsWith("ollama/") ? "local" : "cloud"}`;
 }
 
 function renderModelCapabilityBadges(model: string): string {
@@ -3949,58 +3332,6 @@ async function prepareOllamaProviderSelection(): Promise<void> {
   showToast(`Ollama ready. Local models auto-load ho gaye: ${preferredModel}`, 2600);
 }
 
-function getEditableSourcePaths(items: AttachmentPayload[]): string[] {
-  return items
-    .filter((attachment) => attachment.type === "text")
-    .map((attachment) => (attachment.sourcePath ?? "").trim())
-    .filter(Boolean);
-}
-
-function getWritableRootPaths(items: AttachmentPayload[]): string[] {
-  return items
-    .map((attachment) => (attachment.writableRoot ?? "").trim())
-    .filter(Boolean);
-}
-
-function getClaudeManagedEditPermissions(
-  items: AttachmentPayload[],
-): ClaudeManagedEditPermissions {
-  const allowedPaths = getEditableSourcePaths(items);
-  const allowedRoots = getWritableRootPaths(items);
-
-  return { allowedPaths, allowedRoots };
-}
-
-function buildClaudeManagedEditBaselines(items: AttachmentPayload[]): ClaudeManagedEditBaseline[] {
-  return items
-    .filter((attachment) => attachment.type === "text")
-    .map((attachment) => {
-      const path = (attachment.sourcePath ?? "").trim();
-      return path ? { path, content: attachment.content ?? "" } : null;
-    })
-    .filter((item): item is ClaudeManagedEditBaseline => Boolean(item));
-}
-
-function hasManagedSaveTargets(items: AttachmentPayload[]): boolean {
-  const permissions = getClaudeManagedEditPermissions(items);
-  return permissions.allowedPaths.length > 0 || permissions.allowedRoots.length > 0;
-}
-
-function hasFilesystemToolConfigured(): boolean {
-  return mcpStatus.servers.some((server) => {
-    const haystack = `${server.name} ${server.tools.join(" ")}`.toLowerCase();
-    return server.running && (haystack.includes("file") || haystack.includes("filesystem") || haystack.includes("fs"));
-  });
-}
-
-function hasFilesystemToolEnabled(): boolean {
-  if (enabledMcpTools.size === 0) return false;
-  return [...enabledMcpTools].some((tool) => {
-    const normalized = tool.toLowerCase();
-    return normalized.includes("file") || normalized.includes("filesystem") || normalized.includes("fs");
-  });
-}
-
 function isVagueEditRequest(prompt: string): boolean {
   const normalized = (prompt ?? "").trim().toLowerCase();
   if (!normalized) return true;
@@ -4386,7 +3717,7 @@ function renderComposerAttachments(): void {
     name.textContent = attachment.name;
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.textContent = "✕";
+    remove.textContent = "âœ•";
     remove.onclick = () => {
       activeAttachments = activeAttachments.filter((item) => !(item.name === attachment.name && item.content === attachment.content));
       renderComposerAttachments();
@@ -5016,7 +4347,7 @@ async function refreshOllamaModels(): Promise<void> {
   }
 }
 
-// â”€â”€ Chat List â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Chat List Ã¢â€â‚¬Ã¢â€â‚¬
 function updateChatSearchClearButton(): void {
   const clearBtn = $("chat-search-clear-btn");
   clearBtn.classList.toggle("visible", chatSearchQuery.trim().length > 0);
@@ -5232,7 +4563,7 @@ function updateChatHeaderTitle(title: string | null): void {
   document.querySelector(".chat-title-stack")?.classList.toggle("is-empty", value.length === 0);
 }
 
-// â”€â”€ Load Chat â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Load Chat Ã¢â€â‚¬Ã¢â€â‚¬
 async function loadChat(id: string) {
   currentChatId = id;
   const chat = await window.api.chat.get(id);
@@ -5846,10 +5177,6 @@ interface ParsedAgentMessage {
   previewUrl?: string;
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-9;]*m/g, "");
-}
-
 function detectAgentPreviewUrl(logs: string[]): string | undefined {
   for (const rawLine of logs) {
     const line = stripAnsi(rawLine);
@@ -6408,68 +5735,10 @@ async function regenerateAssistantMessage(msgId: string): Promise<void> {
   await queueMessageForResend(lastUserContent);
 }
 
-function escHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function sanitizeDownloadName(value: string): string {
-  const compact = (value ?? "").trim().replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-");
-  return compact.replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "cipher-generated-image";
-}
-
-function renderMarkdown(text: string): string {
-  if (!text) return "";
-
-  const codeBlocks: string[] = [];
-  const imageBlocks: string[] = [];
-  const placeholderPrefix = "__CODE_BLOCK_";
-  const imagePlaceholderPrefix = "__IMAGE_BLOCK_";
-
-  const withCodePlaceholders = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
-    const normalizedLang = (lang ?? "").trim().toLowerCase();
-    const langAttr = normalizedLang ? ` class="language-${escHtml(normalizedLang)}"` : "";
-    const runnable = normalizedLang === "html" || normalizedLang === "javascript" || normalizedLang === "js";
-    const runBtn = runnable ? '<button class="run-btn" type="button">Run</button>' : "";
-    codeBlocks.push(`<div class="code-block" data-lang="${escHtml(normalizedLang)}"><div class="code-actions"><button class="copy-btn" type="button">Copy</button>${runBtn}</div><pre><code${langAttr}>${escHtml(code.trim())}</code></pre></div>`);
-    return `${placeholderPrefix}${codeBlocks.length - 1}__`;
-  });
-
-  const withPlaceholders = withCodePlaceholders.replace(/!\[([^\]]*)\]\((data:image\/[^)]+)\)/g, (_m, alt, url) => {
-    const label = (alt ?? "").trim() || "Generated image";
-    const encodedUrl = escHtml(url);
-    const suggestedName = sanitizeDownloadName(label);
-    imageBlocks.push(
-      `<figure class="message-image-card"><img class="message-image" src="${encodedUrl}" alt="${escHtml(label)}" loading="lazy" /><figcaption><span>${escHtml(label)}</span><button class="message-image-save-btn" type="button" data-image-name="${escHtml(suggestedName)}">Save image</button></figcaption></figure>`
-    );
-    return `${imagePlaceholderPrefix}${imageBlocks.length - 1}__`;
-  });
-
-  const escaped = escHtml(withPlaceholders)
-    .replace(/`([^`]+)`/g, (_m, c) => `<code>${c}</code>`)
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
-    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
-    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-    .replace(/\n/g, "<br>");
-
-  return escaped
-    .replace(/__CODE_BLOCK_(\d+)__/g, (_m, index) => codeBlocks[Number(index)] ?? "")
-    .replace(/__IMAGE_BLOCK_(\d+)__/g, (_m, index) => imageBlocks[Number(index)] ?? "");
-}
-
 function applyRawMode(enabled: boolean): void {
   rawModeEnabled = enabled;
   $("raw-toggle-btn").classList.toggle("active", enabled);
   rerenderAllMessageBodies(!isStreaming);
-}
-
-function formatConsoleValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 function renderCodeOutput(block: HTMLElement, output: string, isError = false): void {
@@ -6503,7 +5772,7 @@ function openImagePreview(item: GeneratedImageHistoryItem): void {
   const prompt = item.prompt.trim() || "Generated image preview";
   if (title instanceof HTMLElement) title.textContent = prompt;
   if (meta instanceof HTMLElement) {
-    meta.textContent = `${compactModelName(item.model)} • ${item.aspectRatio} • ${formatImageHistoryTimestamp(item.createdAt)}`;
+    meta.textContent = `${compactModelName(item.model)} â€¢ ${item.aspectRatio} â€¢ ${formatImageHistoryTimestamp(item.createdAt)}`;
   }
   image.src = item.dataUrl;
   image.alt = prompt;
@@ -6681,7 +5950,7 @@ function ensureScrollBottomButton(): HTMLButtonElement | null {
   btn.type = "button";
   btn.style.display = "none";
   btn.title = "Jump to latest message";
-  btn.textContent = "Latest ↓";
+  btn.textContent = "Latest â†“";
   messages.appendChild(btn);
   btn.onclick = () => {
     scrollToBottom(true);
@@ -6788,7 +6057,7 @@ async function createNewChat(showEmptyState = true, context = activeChatContext 
   return chat.id;
 }
 
-// â”€â”€ Send Message â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Send Message Ã¢â€â‚¬Ã¢â€â‚¬
 function isImageCapableModel(model: string): boolean {
   return /image|flux|riverflow|sourceful|vision/.test((model ?? "").trim().toLowerCase());
 }
@@ -7148,13 +6417,13 @@ function renderImageHistoryListInto(listId: string, emptyId: string): void {
 
     const details = document.createElement("div");
     details.className = "image-history-details image-history-meta-line";
-    details.textContent = `${compactModelName(item.model)} • ${item.aspectRatio} • ${formatImageHistoryTimestamp(item.createdAt)}`;
+    details.textContent = `${compactModelName(item.model)} â€¢ ${item.aspectRatio} â€¢ ${formatImageHistoryTimestamp(item.createdAt)}`;
     info.appendChild(details);
 
     const saved = document.createElement("div");
     saved.className = "image-history-details image-history-status-line";
     saved.textContent = item.saveCount > 0
-      ? `Saved ${item.saveCount} time${item.saveCount === 1 ? "" : "s"} • ${formatImageHistoryTimestamp(item.lastSavedAt)}`
+      ? `Saved ${item.saveCount} time${item.saveCount === 1 ? "" : "s"} â€¢ ${formatImageHistoryTimestamp(item.lastSavedAt)}`
       : "Not saved outside Cipher yet";
     info.appendChild(saved);
 
@@ -7552,7 +6821,7 @@ async function sendMessage() {
   await sendChatPromptWithAttachments(rawContent, [...activeAttachments]);
 }
 
-// â”€â”€ IPC Events â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ IPC Events Ã¢â€â‚¬Ã¢â€â‚¬
 async function openFreshWorkspaceWindow(): Promise<void> {
   try {
     const result = await window.api.app.newWindow();
@@ -7801,7 +7070,7 @@ function setupIpcListeners() {
   }));
 }
 
-// â”€â”€ Settings Panel â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Settings Panel Ã¢â€â‚¬Ã¢â€â‚¬
 async function loadSettings() {
   const loaded = await window.api.settings.get();
   temporaryClaudeChatFilesystemRoots = normalizeClaudeChatFilesystemRoots(loaded.claudeChatFilesystem?.temporaryRoots ?? []);
@@ -7914,7 +7183,7 @@ async function saveSettings() {
   showToast("Settings saved");
 }
 
-// â”€â”€ Router Panel â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Router Panel Ã¢â€â‚¬Ã¢â€â‚¬
 async function refreshRouterStatus(options?: { includeLogs?: boolean }) {
   const status = await window.api.router.status();
   const dot = $("router-dot");
@@ -9189,7 +8458,7 @@ function renderAgentRouteDiagnostics(diagnostics: AgentRouteDiagnostics | null, 
           ${taskState.visionRequested ? '<span class="agent-history-badge ok">Vision input</span>' : ""}
         </div>
         ${taskState.blacklistedModels.length > 0 ? `<div class="agent-route-health-stats">${taskState.blacklistedModels.map((model) => `<span class="agent-history-badge err">${escHtml(`Blocked: ${model}`)}</span>`).join("")}</div>` : ""}
-        ${taskState.failureCounts.length > 0 ? `<div class="agent-route-health-stats">${taskState.failureCounts.map((entry) => `<span class="agent-history-badge ${entry.blacklisted ? "err" : ""}">${escHtml(`${entry.model}: ${entry.count} failure${entry.count === 1 ? "" : "s"} • ${formatBlacklistProgress(entry)}`)}</span>`).join("")}</div>` : ""}
+        ${taskState.failureCounts.length > 0 ? `<div class="agent-route-health-stats">${taskState.failureCounts.map((entry) => `<span class="agent-history-badge ${entry.blacklisted ? "err" : ""}">${escHtml(`${entry.model}: ${entry.count} failure${entry.count === 1 ? "" : "s"} â€¢ ${formatBlacklistProgress(entry)}`)}</span>`).join("")}</div>` : ""}
         ${taskState.activeStageRoutes.length > 0 ? `<div class="agent-route-health-stage-list">${taskState.activeStageRoutes.map((entry) => `
           <div class="agent-route-health-stage">
             <span class="agent-history-badge ok">${escHtml(entry.stage)}</span>
@@ -10070,7 +9339,7 @@ function setupAgentControls(): void {
   });
 }
 
-// â”€â”€ Panel Toggle â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Panel Toggle Ã¢â€â‚¬Ã¢â€â‚¬
 let rightPanelTab = "settings";
 
 function setPanelBody(tab: string): void {
@@ -10169,7 +9438,7 @@ function togglePanel(tab: string) {
   }
 }
 
-// â”€â”€ Rename â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Rename Ã¢â€â‚¬Ã¢â€â‚¬
 function setupRightPanelResizeControls(): void {
   const handle = document.getElementById("panel-resize-handle");
   const smallerBtn = document.getElementById("panel-width-smaller-btn");
@@ -10368,7 +9637,7 @@ async function confirmRename() {
   await loadChatList();
 }
 
-// â”€â”€ Composer auto-resize â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Composer auto-resize Ã¢â€â‚¬Ã¢â€â‚¬
 function imageExtensionFromMime(mimeType: string): string {
   const lower = mimeType.toLowerCase();
   if (lower.includes("png")) return "png";
@@ -11264,7 +10533,7 @@ function setupKeyboardShortcuts() {
   });
 }
 
-// â”€â”€ Init â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬
 async function init() {
   $("theme-toggle-btn").onclick = toggleTheme;
   applySidebarWidth(getInitialSidebarWidth(), false);

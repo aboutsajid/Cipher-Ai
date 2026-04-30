@@ -345,6 +345,13 @@
 83. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+84. `refactor(renderer): extract managed-write permission helper cluster`
+   - Moved Claude managed-write attachment/path/root permission and filesystem-tool guard helpers (`getEditableSourcePaths`, `getWritableRootPaths`, `getClaudeManagedEditPermissions`, `buildClaudeManagedEditBaselines`, `hasManagedSaveTargets`, `hasFilesystemToolConfigured`, `hasFilesystemToolEnabled`) from `src/renderer/app.ts` into `src/renderer/appManagedWriteUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding `appManagedWriteUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer runtime source-introspection coverage to include `dist/renderer/appManagedWriteUtils.js`.
+85. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (current local total after this extraction run).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

@@ -7,6 +7,17 @@ function readProjectFile(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
 
+function readRendererRuntimeSource(): string {
+  return [
+    "dist/renderer/appPathUtils.js",
+    "dist/renderer/appTextUtils.js",
+    "dist/renderer/appManagedWriteUtils.js",
+    "dist/renderer/app.js"
+  ]
+    .map((path) => readProjectFile(path))
+    .join("\n");
+}
+
 function extractFunctionSource(source: string, functionName: string): string {
   const marker = `function ${functionName}`;
   const start = source.indexOf(marker);
@@ -31,14 +42,14 @@ function extractFunctionSource(source: string, functionName: string): string {
 }
 
 function loadClaudeResumePromptBuilder(): (projectPath: string) => string {
-  const rendererSource = readProjectFile("dist/renderer/app.js");
+  const rendererSource = readRendererRuntimeSource();
   const functionSource = extractFunctionSource(rendererSource, "buildClaudeRateLimitResumePrompt");
   const factory = new Function(`${functionSource}; return buildClaudeRateLimitResumePrompt;`) as () => (projectPath: string) => string;
   return factory();
 }
 
 function loadRendererFunction<T>(functionNames: string[], returnName: string): T {
-  const rendererSource = readProjectFile("dist/renderer/app.js");
+  const rendererSource = readRendererRuntimeSource();
   const functionSources = functionNames
     .map((functionName) => extractFunctionSource(rendererSource, functionName))
     .join("\n");
