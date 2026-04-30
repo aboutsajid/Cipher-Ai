@@ -398,6 +398,14 @@
 97. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+98. `refactor(renderer): extract image studio/history helpers`
+   - Moved image provider/model/aspect sync helpers and image history/gallery rendering helpers from `src/renderer/app.ts` into `src/renderer/appImageStudioUiUtils.ts`.
+   - Kept behavior unchanged by preserving `submitImageGeneration` in `src/renderer/app.ts` for elapsed-timer source-contract coverage while extracting the surrounding image-studio flow helpers.
+   - Kept classic renderer script loading by adding `appImageStudioUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appImageStudioUiUtils.ts`.
+99. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
