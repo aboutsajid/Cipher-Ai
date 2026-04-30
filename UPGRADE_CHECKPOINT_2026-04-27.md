@@ -446,6 +446,14 @@
 109. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+110. `refactor(renderer): extract agent controls setup helper`
+   - Moved `setupAgentControls` from `src/renderer/app.ts` into `src/renderer/appAgentControlsUiUtils.ts`.
+   - Kept behavior unchanged by preserving agent prompt/start/stop/restore handlers, route-health actions, history/snapshot click handlers, and task selection sync behavior.
+   - Kept classic renderer script loading by adding `appAgentControlsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentControlsUiUtils.ts`.
+111. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

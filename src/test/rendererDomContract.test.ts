@@ -24,6 +24,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appPanelResizeUiUtils.ts",
     "src/renderer/appComposerVoiceUiUtils.ts",
     "src/renderer/appComposerToolsUiUtils.ts",
+    "src/renderer/appAgentControlsUiUtils.ts",
     "src/renderer/appRuntimeSetupUiUtils.ts",
     "src/renderer/appKeyboardShortcutsUiUtils.ts"
   ]
