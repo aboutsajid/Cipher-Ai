@@ -725,6 +725,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 173. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+174. `refactor(renderer): extract local-agent setup and target helpers`
+   - Moved the local-agent setup/target helper cluster (`setLocalAgentStatus` through `ensureFilesystemToolReadyForEditSave`) from `src/renderer/app.ts` into `src/renderer/appLocalAgentSetupUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and loading `appLocalAgentSetupUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appLocalAgentSetupUiUtils.ts`.
+175. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
