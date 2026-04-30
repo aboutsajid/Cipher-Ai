@@ -376,6 +376,13 @@
 91. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+92. `refactor(renderer): extract guided empty-state helpers`
+   - Moved guided empty-state and onboarding action helpers (`createEmptyStateElement`, `handleGuidedUiAction`, `setupGuidedUiControls`) from `src/renderer/app.ts` into `src/renderer/appGuidedEmptyStateUiUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding `appGuidedEmptyStateUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include the extracted guided-empty-state helper module.
+93. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
