@@ -596,6 +596,15 @@
 145. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+146. `refactor(renderer): extract message resend helpers`
+   - Moved chat resend/edit helpers (`queueMessageForResend`, `editUserMessage`, `regenerateAssistantMessage`) from `src/renderer/app.ts` into `src/renderer/appMessageResendUiUtils.ts`.
+   - Kept behavior unchanged by preserving streaming guards, attachment guardrails, modal edit flow, resend composer repopulation, and assistant-regeneration fallback to the nearest prior user message.
+   - Kept contract-sensitive router/desktop-launch assertions in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appMessageResendUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appMessageResendUiUtils.ts`.
+147. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
