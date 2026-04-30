@@ -28,6 +28,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appComposerToolsUiUtils.ts",
     "src/renderer/appAgentArtifactUiUtils.ts",
     "src/renderer/appSnapshotRestoreUiUtils.ts",
+    "src/renderer/appAgentRouteSummaryUiUtils.ts",
     "src/renderer/appAgentTaskActionsUiUtils.ts",
     "src/renderer/appAgentControlsUiUtils.ts",
     "src/renderer/appWindowSyncUiUtils.ts",

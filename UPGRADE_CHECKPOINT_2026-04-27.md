@@ -511,6 +511,14 @@
 125. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+126. `refactor(renderer): extract agent route summary helpers`
+   - Moved agent route-exhaustion summary helpers (`compactAgentProviderFailureMessage`, `parseExhaustedAgentModelRoutes`, `summarizeExhaustedAgentModelRoutes`, `summarizeAgentTaskSummary`, `buildExhaustedRouteText`) from `src/renderer/app.ts` into `src/renderer/appAgentRouteSummaryUiUtils.ts`.
+   - Kept behavior unchanged by preserving normalization, route parsing, concise status summary formatting, and model-fallback detail text generation.
+   - Kept classic renderer script loading by adding `appAgentRouteSummaryUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentRouteSummaryUiUtils.ts`.
+127. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
