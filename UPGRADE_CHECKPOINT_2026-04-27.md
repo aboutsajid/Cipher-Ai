@@ -535,6 +535,14 @@
 131. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+132. `refactor(renderer): extract agent route health helpers`
+   - Moved route-health/status helpers (`setAgentStatus`, task/route timestamp formatters, route diagnostics mapping/state helpers, model-health summarizers, and `renderSettingsModelHealth`) from `src/renderer/app.ts` into `src/renderer/appAgentRouteHealthUiUtils.ts`.
+   - Kept behavior unchanged by preserving settings health-card rendering, model score/failure badges, active blacklist visibility, and route diagnostic helper logic.
+   - Kept classic renderer script loading by adding `appAgentRouteHealthUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentRouteHealthUiUtils.ts`.
+133. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
