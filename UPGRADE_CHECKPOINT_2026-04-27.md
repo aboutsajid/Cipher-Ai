@@ -623,6 +623,15 @@
 151. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+152. `refactor(renderer): extract chat lifecycle helpers`
+   - Moved chat lifecycle helpers (`updateChatHeaderTitle`, `createNewChat`) from `src/renderer/app.ts` into `src/renderer/appChatLifecycleUiUtils.ts`.
+   - Kept behavior unchanged by preserving chat-title stack updates, new-chat context initialization, prompt panel reset, virtual-message reset flow, attachment reset, and chat list refresh after chat creation.
+   - Kept contract-sensitive router/desktop-launch assertions in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appChatLifecycleUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appChatLifecycleUiUtils.ts`.
+153. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
