@@ -22,7 +22,8 @@ function readRendererBindingSource(): string {
     "src/renderer/appScrollUiUtils.ts",
     "src/renderer/appImageStudioUiUtils.ts",
     "src/renderer/appPanelResizeUiUtils.ts",
-    "src/renderer/appRuntimeSetupUiUtils.ts"
+    "src/renderer/appRuntimeSetupUiUtils.ts",
+    "src/renderer/appKeyboardShortcutsUiUtils.ts"
   ]
     .map((path) => readProjectFile(path))
     .join("\n");

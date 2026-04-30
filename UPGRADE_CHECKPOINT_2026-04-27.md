@@ -422,6 +422,14 @@
 103. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+104. `refactor(renderer): extract keyboard shortcuts helper`
+   - Moved `setupKeyboardShortcuts` from `src/renderer/app.ts` into `src/renderer/appKeyboardShortcutsUiUtils.ts`.
+   - Kept behavior unchanged by preserving keyboard command handling (new chat/window, router/settings/model focus, selected-text paste shortcut, and Escape-driven modal/panel dismiss flow).
+   - Kept classic renderer script loading by adding `appKeyboardShortcutsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appKeyboardShortcutsUiUtils.ts`.
+105. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
