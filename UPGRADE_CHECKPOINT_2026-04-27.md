@@ -543,6 +543,14 @@
 133. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+134. `refactor(renderer): extract agent snapshots helpers`
+   - Moved agent snapshot rendering/refresh helpers (`syncActiveAgentTaskSelectionUi`, `renderAgentSnapshots`, `refreshAgentSnapshots`) from `src/renderer/app.ts` into `src/renderer/appAgentSnapshotsUiUtils.ts`.
+   - Kept behavior unchanged by preserving active-task selection sync, snapshot card rendering, restore/view-task actions, restore-state refresh, and snapshot list fetching.
+   - Kept classic renderer script loading by adding `appAgentSnapshotsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentSnapshotsUiUtils.ts`.
+135. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
