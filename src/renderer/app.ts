@@ -1,7 +1,6 @@
 ﻿// Ã¢â€â‚¬Ã¢â€â‚¬ State Ã¢â€â‚¬Ã¢â€â‚¬
 let currentChatId: string | null = null;
 let activeChatContext: ChatContext | null = null;
-let pendingRenameChatId: string | null = null;
 let activeChatActionMenuId: string | null = null;
 let chatProviderMenuOpen = false;
 let isStreaming = false;
@@ -3678,86 +3677,6 @@ async function sendChatPromptWithAttachments(
   }
 }
 
-function refreshCompareUi(): void {
-  const compareBtn = $("compare-toggle-btn");
-  const comparePill = $("compare-model-pill");
-  compareBtn.style.display = "none";
-  comparePill.style.display = compareModeEnabled ? "inline-flex" : "none";
-  compareBtn.classList.toggle("active", compareModeEnabled);
-}
-
-function mergeAttachments(nextItems: AttachmentPayload[]): AttachmentPayload[] {
-  const merged: AttachmentPayload[] = [];
-  const seen = new Set<string>();
-  for (const attachment of [...activeAttachments, ...nextItems]) {
-    const key = `${attachment.type}:${attachment.name}:${attachment.content.slice(0, 120)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(attachment);
-  }
-  return merged;
-}
-
-function renderComposerAttachments(): void {
-  const holder = $("composer-attachments");
-  holder.innerHTML = "";
-
-  if (activeAttachments.length === 0) {
-    holder.style.display = "none";
-    updateAttachButtonState();
-    updateDirectSaveUi();
-    return;
-  }
-
-  for (const attachment of activeAttachments) {
-    const pill = document.createElement("div");
-    pill.className = "attachment-pill";
-    pill.title = attachment.name;
-    const name = document.createElement("span");
-    name.textContent = attachment.name;
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "âœ•";
-    remove.onclick = () => {
-      activeAttachments = activeAttachments.filter((item) => !(item.name === attachment.name && item.content === attachment.content));
-      renderComposerAttachments();
-    };
-    pill.appendChild(name);
-    pill.appendChild(remove);
-    holder.appendChild(pill);
-  }
-
-  holder.style.display = "flex";
-  updateAttachButtonState();
-  updateDirectSaveUi();
-}
-
-function updateAttachButtonState(): void {
-  const btn = $("attach-btn") as HTMLButtonElement;
-  const count = activeAttachments.length;
-  const label = count > 0
-    ? `Attached ${count} item${count === 1 ? "" : "s"} (click to add more files/folders)`
-    : "Attach files or folders";
-  btn.title = label;
-  btn.setAttribute("aria-label", label);
-  btn.classList.toggle("has-items", count > 0);
-}
-
-function renderMessageAttachmentNames(body: HTMLElement, msg: Message): void {
-  const names = msg.metadata?.attachmentNames ?? [];
-  if (names.length === 0) return;
-
-  const wrap = document.createElement("div");
-  wrap.className = "msg-attachments";
-  for (const name of names) {
-    const pill = document.createElement("span");
-    pill.className = "msg-attachment-pill";
-    pill.textContent = name;
-    wrap.appendChild(pill);
-  }
-  body.appendChild(wrap);
-}
-
 function showHeaderToolsMenu(show: boolean): void {
   const dropdown = $("header-tools-menu");
   const btn = $("header-tools-menu-btn");
@@ -3803,15 +3722,6 @@ function focusHeaderToolsMenuItem(target: "first" | "last" | number): void {
     return;
   }
   items[Math.max(0, Math.min(items.length - 1, target))]?.focus();
-}
-
-function updateHeaderBuildLabel(name: string, version: string): void {
-  const buildLabel = document.getElementById("header-build-value");
-  if (!(buildLabel instanceof HTMLElement)) return;
-  const trimmedName = (name ?? "").trim() || "Cipher Workspace";
-  const trimmedVersion = (version ?? "").trim();
-  buildLabel.textContent = trimmedVersion ? `v${trimmedVersion}` : trimmedName;
-  buildLabel.title = trimmedVersion ? `${trimmedName} v${trimmedVersion}` : trimmedName;
 }
 
 function normalizeClaudeChatFilesystemRoots(value: string | string[]): string[] {
@@ -4190,18 +4100,6 @@ async function refreshOllamaModels(): Promise<void> {
   }
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Chat List Ã¢â€â‚¬Ã¢â€â‚¬
-function updateChatSearchClearButton(): void {
-  const clearBtn = $("chat-search-clear-btn");
-  clearBtn.classList.toggle("visible", chatSearchQuery.trim().length > 0);
-}
-
-function getFilteredChats(chats: ChatSummary[]): ChatSummary[] {
-  const query = chatSearchQuery.trim().toLowerCase();
-  if (!query) return chats;
-  return chats.filter((chat) => (chat.title ?? "").toLowerCase().includes(query));
-}
-
 function renderChatList(chats: ChatSummary[]): void {
   const list = $("chat-list");
   list.innerHTML = "";
@@ -4311,27 +4209,6 @@ function renderChatList(chats: ChatSummary[]): void {
     };
     list.appendChild(item);
   }
-}
-
-function setupChatListSearch(): void {
-  const input = $("chat-search-input") as HTMLInputElement;
-  const clearBtn = $("chat-search-clear-btn");
-
-  input.addEventListener("input", () => {
-    chatSearchQuery = input.value;
-    updateChatSearchClearButton();
-    renderChatList(cachedChatSummaries);
-  });
-
-  clearBtn.addEventListener("click", () => {
-    input.value = "";
-    chatSearchQuery = "";
-    updateChatSearchClearButton();
-    renderChatList(cachedChatSummaries);
-    input.focus();
-  });
-
-  updateChatSearchClearButton();
 }
 
 async function loadChatList() {
@@ -9442,42 +9319,6 @@ function setupSidebarResizeControls(): void {
   if (resetBtn instanceof HTMLButtonElement) {
     resetBtn.addEventListener("click", resetSidebarWidth);
   }
-}
-
-function openRenameModalForChat(chatId: string, title: string): void {
-  pendingRenameChatId = chatId;
-  const modal = $("rename-modal");
-  modal.style.display = "flex";
-  ($("rename-input") as HTMLInputElement).value = title;
-  ($("rename-input") as HTMLInputElement).focus();
-}
-
-function openRenameModal() {
-  if (!currentChatId) return;
-  openRenameModalForChat(currentChatId, $("chat-title-display").textContent ?? "");
-}
-
-function closeRenameModal(): void {
-  pendingRenameChatId = null;
-  $("rename-modal").style.display = "none";
-}
-
-async function exportChatById(chatId: string): Promise<void> {
-  const res = await window.api.chat.export(chatId);
-  showToast(res.message, res.ok ? 2200 : 3200);
-}
-
-async function confirmRename() {
-  const chatId = pendingRenameChatId ?? currentChatId;
-  if (!chatId) return;
-  const title = ($("rename-input") as HTMLInputElement).value.trim();
-  if (!title) return;
-  await window.api.chat.rename(chatId, title);
-  if (currentChatId === chatId) {
-      updateChatHeaderTitle(title);
-  }
-  closeRenameModal();
-  await loadChatList();
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Composer auto-resize Ã¢â€â‚¬Ã¢â€â‚¬

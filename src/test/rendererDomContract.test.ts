@@ -7,6 +7,18 @@ function readProjectFile(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
 
+function readRendererBindingSource(): string {
+  return [
+    "src/renderer/app.ts",
+    "src/renderer/appComposerAttachmentUiUtils.ts",
+    "src/renderer/appMessageMetaUiUtils.ts",
+    "src/renderer/appChatListSearchUiUtils.ts",
+    "src/renderer/appChatRenameActionsUtils.ts"
+  ]
+    .map((path) => readProjectFile(path))
+    .join("\n");
+}
+
 function collectRendererIdReferences(source: string): string[] {
   const ids = new Set<string>();
 
@@ -26,7 +38,7 @@ function collectHtmlIds(html: string): Set<string> {
 }
 
 test("renderer index html provides every id referenced by renderer app bindings", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = readRendererBindingSource();
   const rendererHtml = readProjectFile("src/renderer/index.html");
 
   const referencedIds = collectRendererIdReferences(rendererSource);

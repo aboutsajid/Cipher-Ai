@@ -358,6 +358,16 @@
 87. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+88. `refactor(renderer): extract chat UI helper clusters`
+   - Moved composer attachment helpers (`mergeAttachments`, `renderComposerAttachments`, `updateAttachButtonState`) from `src/renderer/app.ts` into `src/renderer/appComposerAttachmentUiUtils.ts`.
+   - Moved message/meta helpers (`refreshCompareUi`, `renderMessageAttachmentNames`, `updateHeaderBuildLabel`) from `src/renderer/app.ts` into `src/renderer/appMessageMetaUiUtils.ts`.
+   - Moved chat-list search helpers (`updateChatSearchClearButton`, `getFilteredChats`, `setupChatListSearch`) from `src/renderer/app.ts` into `src/renderer/appChatListSearchUiUtils.ts`.
+   - Moved chat rename/export helpers (`openRenameModalForChat`, `openRenameModal`, `closeRenameModal`, `exportChatById`, `confirmRename`) and associated rename state into `src/renderer/appChatRenameActionsUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding the new helper scripts before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include the extracted helper modules.
+89. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
