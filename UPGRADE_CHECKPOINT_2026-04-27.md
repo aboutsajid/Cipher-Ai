@@ -383,6 +383,14 @@
 93. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+94. `refactor(renderer): extract draft-chat and preview-modal helpers`
+   - Moved draft-chat/reset helpers (`clearRenderedMessages`, `hideSummaryOverlay`, `showSummaryOverlay`, `clearMessages`, `openDraftChat`) from `src/renderer/app.ts` into `src/renderer/appChatDraftUiUtils.ts`.
+   - Moved preview/stats modal helpers (`openCodePreview`, `openImagePreview`, `closePreviewWorkspace`, `closeCodePreview`, `closeImagePreviewModal`, `closeStatsModal`, `openStatsModal`) from `src/renderer/app.ts` into `src/renderer/appPreviewModalUiUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding both helper scripts before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include the newly extracted helper modules.
+95. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

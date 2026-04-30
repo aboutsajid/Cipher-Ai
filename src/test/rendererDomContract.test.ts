@@ -16,7 +16,9 @@ function readRendererBindingSource(): string {
     "src/renderer/appChatRenameActionsUtils.ts",
     "src/renderer/appHeaderMenusUiUtils.ts",
     "src/renderer/appClipboardImageUtils.ts",
-    "src/renderer/appGuidedEmptyStateUiUtils.ts"
+    "src/renderer/appGuidedEmptyStateUiUtils.ts",
+    "src/renderer/appChatDraftUiUtils.ts",
+    "src/renderer/appPreviewModalUiUtils.ts"
   ]
     .map((path) => readProjectFile(path))
     .join("\n");
