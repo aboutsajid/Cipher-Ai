@@ -551,6 +551,15 @@
 135. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+136. `refactor(renderer): extract agent task chat helpers`
+   - Moved agent task chat/update helpers (`getAgentApprovalWarning`, `buildAgentChatContent`, `buildAgentActivityLabel`, `buildAgentLatestUpdateLabel`, `ensureChatForAgentOutput`, `appendAgentTaskToChat`, `updateAgentTaskInChat`) from `src/renderer/app.ts` into `src/renderer/appAgentTaskChatUiUtils.ts`.
+   - Kept behavior unchanged by preserving pre-start warning copy, agent activity/status summaries, verification and step transcript formatting, recent log embedding, and agent-to-chat append/update flows.
+   - Kept desktop-launch queue assertions (`completedTaskIsRecent`, `shouldQueueDesktopLaunchPrompt`) in `src/renderer/app.ts` to preserve contract-sensitive behavior.
+   - Kept classic renderer script loading by adding `appAgentTaskChatUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentTaskChatUiUtils.ts`.
+137. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
