@@ -519,6 +519,14 @@
 127. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+128. `refactor(renderer): extract agent task result helpers`
+   - Moved agent task result/history helpers (`isTaskTargetMissing`, snapshot lookup/render helpers, task primary/restart action builders, verification/result-overview builders, and parsed-result overview rendering) from `src/renderer/app.ts` into `src/renderer/appAgentTaskResultsUiUtils.ts`.
+   - Kept behavior unchanged by preserving snapshot restore badges/actions, target-missing states, result overview summaries, verification badges, restart CTA wiring, and parsed agent card overview formatting.
+   - Kept classic renderer script loading by adding `appAgentTaskResultsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentTaskResultsUiUtils.ts`.
+129. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
