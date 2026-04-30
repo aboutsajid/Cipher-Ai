@@ -762,6 +762,15 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 183. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+184. `refactor(renderer): extract chat loading helper`
+   - Moved `loadChat` from `src/renderer/app.ts` into `src/renderer/appChatLoadUiUtils.ts`.
+   - Kept behavior unchanged by preserving chat-context fallback handling, message reset/order refresh flow, system-prompt panel reset, and post-load chat-list refresh.
+   - Added `appChatLoadUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appChatLoadUiUtils.ts`.
+   - Updated `src/test/newWindowWorkflow.test.ts` source introspection assertions that check `loadChat` internals to read the extracted helper file.
+185. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

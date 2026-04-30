@@ -78,7 +78,10 @@ test("renderer only enables Claude managed write mode when prompts include expli
 });
 
 test("renderer preserves Claude system notices and applies sparse-chat density state", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appChatLoadUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /role: "system"/);
   assert.match(rendererSource, /metadata:\s*\{\s*systemNotice: true\s*\}/);
@@ -88,7 +91,10 @@ test("renderer preserves Claude system notices and applies sparse-chat density s
 });
 
 test("renderer keeps chat loading resilient when restoring provider context fails", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appChatLoadUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /const storedContext = getStoredChatContext\(chat\);/);
   assert.match(rendererSource, /try \{\s*applyChatContextToUi\(storedContext\);\s*\} catch \(err\) \{/);
