@@ -438,6 +438,14 @@
 107. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+108. `refactor(renderer): extract composer and voice setup helpers`
+   - Moved composer/voice helper cluster (`addClipboardImages`, `setupComposer`, `encodePcm16Wav`, `setupVoiceInput`) from `src/renderer/app.ts` into `src/renderer/appComposerVoiceUiUtils.ts`.
+   - Kept behavior unchanged by preserving composer auto-resize/input/paste handling and full MediaRecorder/PCM fallback voice-transcription flow.
+   - Kept classic renderer script loading by adding `appComposerVoiceUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appComposerVoiceUiUtils.ts`.
+109. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
