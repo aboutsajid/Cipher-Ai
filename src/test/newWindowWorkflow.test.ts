@@ -91,7 +91,10 @@ test("renderer keeps chat loading resilient when restoring provider context fail
 });
 
 test("renderer falls back to saved Ollama models when refresh fails during provider switching", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appChatContextProviderUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /try \{\s*models = await window\.api\.ollama\.listModels\(baseUrl\);\s*\} catch \(err\) \{/);
   assert.match(rendererSource, /models = \(base\.ollamaModels \?\? \[\]\)\.map\(\(model\) => model\.trim\(\)\)\.filter\(Boolean\);/);

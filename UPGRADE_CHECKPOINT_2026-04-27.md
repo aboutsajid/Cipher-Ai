@@ -732,6 +732,14 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 175. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+176. `refactor(renderer): extract chat-context and provider-selection helpers`
+   - Moved chat/provider context and selection helpers (`populateModels` through `prepareOllamaProviderSelection`) from `src/renderer/app.ts` into `src/renderer/appChatContextProviderUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and loading `appChatContextProviderUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appChatContextProviderUiUtils.ts`.
+   - Updated `src/test/newWindowWorkflow.test.ts` source introspection for the Ollama refresh fallback assertion to read both `app.ts` and `appChatContextProviderUiUtils.ts` after extraction.
+177. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
