@@ -614,6 +614,15 @@
 149. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+150. `refactor(renderer): extract chat summary helpers`
+   - Moved chat summarization/title helpers (`summarizeCurrentChat`, `maybeGenerateTitle`) from `src/renderer/app.ts` into `src/renderer/appChatSummaryUiUtils.ts`.
+   - Kept behavior unchanged by preserving summary preconditions, summarizer call flow, generated-title guards, header update behavior, and chat-list refresh after title generation.
+   - Kept contract-sensitive router/desktop-launch assertions in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appChatSummaryUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appChatSummaryUiUtils.ts`.
+151. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
