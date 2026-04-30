@@ -454,6 +454,14 @@
 111. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+112. `refactor(renderer): extract panel body and managed preview helpers`
+   - Moved panel-body/preview helpers (`setPanelBody`, `refreshPreviewFrame`, `openManagedPreview`) from `src/renderer/app.ts` into `src/renderer/appPanelBodyPreviewUiUtils.ts`.
+   - Kept behavior unchanged by preserving `openPanel` in `src/renderer/app.ts` (including router log-refresh trigger) while extracting the reusable panel-body/preview helper cluster.
+   - Kept classic renderer script loading by adding `appPanelBodyPreviewUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appPanelBodyPreviewUiUtils.ts`.
+113. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
