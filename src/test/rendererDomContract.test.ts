@@ -20,6 +20,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appGuidedEmptyStateUiUtils.ts",
     "src/renderer/appChatDraftUiUtils.ts",
     "src/renderer/appPreviewModalUiUtils.ts",
+    "src/renderer/appPreviewExecutionUiUtils.ts",
     "src/renderer/appScrollUiUtils.ts",
     "src/renderer/appImageStudioUiUtils.ts",
     "src/renderer/appShellLayoutUiUtils.ts",

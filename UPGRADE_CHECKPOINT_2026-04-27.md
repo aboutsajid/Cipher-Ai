@@ -605,6 +605,15 @@
 147. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+148. `refactor(renderer): extract preview execution helpers`
+   - Moved preview execution helpers (`renderCodeOutput`, `openDetachedPreview`, `runJavaScriptPreview`) from `src/renderer/app.ts` into `src/renderer/appPreviewExecutionUiUtils.ts`.
+   - Kept behavior unchanged by preserving inline code-output panel rendering, detached-preview window launch flow, console capture/replay for script previews, and script error formatting.
+   - Kept contract-sensitive router/desktop-launch assertions in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appPreviewExecutionUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appPreviewExecutionUiUtils.ts`.
+149. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
