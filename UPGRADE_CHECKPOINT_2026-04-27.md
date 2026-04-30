@@ -352,6 +352,12 @@
 85. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (current local total after this extraction run).
+86. `refactor(renderer): extract MCP and Ollama panel helpers`
+   - Moved MCP/Ollama UI helper functions (`parseArgsInput`, `getEnabledToolNames`, `renderMcpTools`, `renderMcpServers`, `refreshMcpStatus`, `renderOllamaModels`, `toggleOllamaSettingsVisibility`) from `src/renderer/app.ts` into `src/renderer/appMcpOllamaUiUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding `appMcpOllamaUiUtils.js` before `app.js` in `src/renderer/index.html`.
+87. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
