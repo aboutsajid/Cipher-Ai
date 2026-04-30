@@ -712,6 +712,19 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 169. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+170. `chore(renderer): track extracted utility modules for clean-checkout reproducibility`
+   - Added previously extracted renderer utility files to source control: `appTypes`, `appTextUtils`, `appPathUtils`, `appChatListRenderUiUtils`, `appSendUiUtils`, `appPanelToggleUiUtils`, `appRouterStatusUiUtils`, and `appSettingsUiUtils`.
+   - Kept behavior unchanged; this closes a tracking gap where `app.ts`/`index.html` already depended on these files but they were not yet committed.
+171. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
+172. `refactor(renderer): extract model/provider routing helpers`
+   - Moved model-route and provider-mode helper cluster (`getEffectiveModels` through `autoSwitchToOllamaIfNeeded`) from `src/renderer/app.ts` into `src/renderer/appModelProviderRoutingUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and loading `appModelProviderRoutingUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appModelProviderRoutingUiUtils.ts`.
+173. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

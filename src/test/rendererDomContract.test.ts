@@ -35,6 +35,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appFeedbackUiUtils.ts",
     "src/renderer/appMessageOrderUiUtils.ts",
     "src/renderer/appProviderSettingsUiUtils.ts",
+    "src/renderer/appModelProviderRoutingUiUtils.ts",
     "src/renderer/appComposerVoiceUiUtils.ts",
     "src/renderer/appComposerToolsUiUtils.ts",
     "src/renderer/appAgentArtifactUiUtils.ts",
