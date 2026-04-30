@@ -406,6 +406,14 @@
 99. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+100. `refactor(renderer): extract panel resize setup helpers`
+   - Moved panel/side-bar resize setup helpers (`setupRightPanelResizeControls`, `setupSidebarResizeControls`) from `src/renderer/app.ts` into `src/renderer/appPanelResizeUiUtils.ts`.
+   - Kept behavior unchanged by preserving existing width persistence, pointer drag handling, keyboard resize shortcuts, and button controls.
+   - Kept classic renderer script loading by adding `appPanelResizeUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appPanelResizeUiUtils.ts`.
+101. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

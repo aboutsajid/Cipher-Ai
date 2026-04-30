@@ -20,7 +20,8 @@ function readRendererBindingSource(): string {
     "src/renderer/appChatDraftUiUtils.ts",
     "src/renderer/appPreviewModalUiUtils.ts",
     "src/renderer/appScrollUiUtils.ts",
-    "src/renderer/appImageStudioUiUtils.ts"
+    "src/renderer/appImageStudioUiUtils.ts",
+    "src/renderer/appPanelResizeUiUtils.ts"
   ]
     .map((path) => readProjectFile(path))
     .join("\n");
