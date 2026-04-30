@@ -578,6 +578,15 @@
 141. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+142. `refactor(renderer): extract agent route diagnostics helpers`
+   - Moved route diagnostics panel helpers (`renderAgentRouteDiagnostics`, `refreshAgentRouteDiagnostics`) from `src/renderer/app.ts` into `src/renderer/appAgentRouteDiagnosticsUiUtils.ts`.
+   - Kept behavior unchanged by preserving active-task route-state cards, route-score/failure badges, blacklist progress messaging, global reliability rendering, and route-health error fallback handling.
+   - Kept contract-sensitive router-panel and desktop-launch assertions in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appAgentRouteDiagnosticsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentRouteDiagnosticsUiUtils.ts`.
+143. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
