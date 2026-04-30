@@ -368,6 +368,14 @@
 89. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+90. `refactor(renderer): extract menu and clipboard image helpers`
+   - Moved header/chat menu helpers (`showHeaderToolsMenu`, `closeChatItemMenus`, `showChatItemMenu`, `getHeaderToolsMenuItems`, `focusHeaderToolsMenuItem`, `showChatProviderMenu`, `refreshChatProviderMenuUi`) from `src/renderer/app.ts` into `src/renderer/appHeaderMenusUiUtils.ts`.
+   - Moved clipboard image conversion helpers (`imageExtensionFromMime`, `fileToDataUrl`) from `src/renderer/app.ts` into `src/renderer/appClipboardImageUtils.ts`.
+   - Kept behavior unchanged by preserving classic renderer script loading and adding helper scripts before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include the newly extracted helper modules.
+91. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
