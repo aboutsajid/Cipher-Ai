@@ -755,6 +755,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 181. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+182. `refactor(renderer): extract app-info and prompt-modal helpers`
+   - Moved `loadAppInfo` from `src/renderer/app.ts` into `src/renderer/appRuntimeSetupUiUtils.ts`.
+   - Moved `promptForTextInput` from `src/renderer/app.ts` into `src/renderer/appMessageResendUiUtils.ts` (its only call-site cluster), keeping behavior and modal UX unchanged.
+   - Kept classic renderer script order unchanged; both destination utility files already load before `app.js`.
+183. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

@@ -22,6 +22,15 @@ function setupPreviewPanel(): void {
   });
 }
 
+async function loadAppInfo(): Promise<void> {
+  try {
+    const info = await window.api.app.info();
+    updateHeaderBuildLabel(info.name, info.version);
+  } catch {
+    updateHeaderBuildLabel("Cipher Workspace", "");
+  }
+}
+
 async function refreshClaudeSessionStatus(): Promise<void> {
   try {
     const status = await window.api.claude.status();

@@ -1,3 +1,93 @@
+async function promptForTextInput(options: TextPromptOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.display = "flex";
+
+    const modal = document.createElement("div");
+    modal.className = "modal";
+
+    const titleEl = document.createElement("p");
+    titleEl.className = "modal-title";
+    titleEl.textContent = options.title;
+
+    const inputEl: HTMLInputElement | HTMLTextAreaElement = options.multiline
+      ? document.createElement("textarea")
+      : document.createElement("input");
+    inputEl.className = "field-input";
+    inputEl.placeholder = options.placeholder ?? "";
+    inputEl.value = options.initialValue ?? "";
+    if (inputEl instanceof HTMLInputElement) {
+      inputEl.type = "text";
+    } else {
+      inputEl.rows = 6;
+      inputEl.style.minHeight = "140px";
+    }
+
+    const buttonRow = document.createElement("div");
+    buttonRow.className = "btn-row";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "btn-primary";
+    confirmBtn.type = "button";
+    confirmBtn.textContent = options.confirmLabel ?? "Save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-ghost";
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+
+    buttonRow.appendChild(confirmBtn);
+    buttonRow.appendChild(cancelBtn);
+    modal.appendChild(titleEl);
+    modal.appendChild(inputEl);
+    modal.appendChild(buttonRow);
+    overlay.appendChild(modal);
+
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown, true);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const submit = (): void => {
+      finish(inputEl.value);
+    };
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(null);
+        return;
+      }
+      if (event.key === "Enter") {
+        const canSubmit = !options.multiline || event.ctrlKey || event.metaKey;
+        if (!canSubmit) return;
+        event.preventDefault();
+        event.stopPropagation();
+        submit();
+      }
+    };
+
+    overlay.addEventListener("click", (event: Event) => {
+      if (event.target === overlay) finish(null);
+    });
+    cancelBtn.onclick = () => finish(null);
+    confirmBtn.onclick = submit;
+    document.addEventListener("keydown", onKeyDown, true);
+    document.body.appendChild(overlay);
+
+    requestAnimationFrame(() => {
+      inputEl.focus();
+      if (inputEl instanceof HTMLInputElement) inputEl.select();
+    });
+  });
+}
+
 async function queueMessageForResend(content: string): Promise<void> {
   if (activeAttachments.length > 0) {
     showToast("Clear pending attachments before resend.", 2200);
