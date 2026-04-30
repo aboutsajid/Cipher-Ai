@@ -527,6 +527,14 @@
 129. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+130. `refactor(renderer): extract agent history view helpers`
+   - Moved agent history/main-card rendering helpers (`buildMainChatCards`, `buildMainAgentTaskCards`, `renderAgentHistoryFilters`, `renderAgentHistoryControls`, `syncAgentHistoryPanelWidth`, `renderAgentHistory`) from `src/renderer/app.ts` into `src/renderer/appAgentHistoryUiUtils.ts`.
+   - Kept behavior unchanged by preserving history filtering/expansion controls, target-missing indicators, verification badges, restart/action controls, and main panel card rendering flow.
+   - Kept classic renderer script loading by adding `appAgentHistoryUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentHistoryUiUtils.ts`.
+131. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
