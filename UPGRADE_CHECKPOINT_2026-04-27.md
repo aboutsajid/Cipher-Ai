@@ -748,6 +748,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 179. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+180. `refactor(renderer): extract provider-switch and startup query helpers`
+   - Moved provider-switch and startup query helpers (`refreshOllamaModels`, `getInitialChatIdFromLocation`, `shouldOpenDraftChatFromLocation`, and `selectChatProvider`) from `src/renderer/app.ts` into `src/renderer/appChatContextProviderUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and existing classic script order (`appChatContextProviderUiUtils.js` already loads before `app.js` in `src/renderer/index.html`).
+   - Updated `src/test/newWindowWorkflow.test.ts` source introspection for query-param startup assertions to read both `app.ts` and `appChatContextProviderUiUtils.ts` after extraction.
+181. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

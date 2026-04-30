@@ -15,7 +15,10 @@ test("new window flow opens another workspace window in draft-chat mode without 
 });
 
 test("renderer startup honors the chatId query parameter for initial chat selection", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appChatContextProviderUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /new URLSearchParams\(window\.location\.search\)\.get\("chatId"\)/);
   assert.match(rendererSource, /const initialChatId = getInitialChatIdFromLocation\(\);/);
@@ -40,7 +43,10 @@ test("second instance flow also opens another workspace window in draft-chat mod
 });
 
 test("renderer can open an unsaved draft chat from the window query string", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appChatContextProviderUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /function shouldOpenDraftChatFromLocation\(\): boolean/);
   assert.match(rendererSource, /new URLSearchParams\(window\.location\.search\)\.get\("draftChat"\)/);

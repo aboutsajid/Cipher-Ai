@@ -349,3 +349,55 @@ async function prepareOllamaProviderSelection(): Promise<void> {
   setStatus(`Ollama ready with ${preferredModel}.`, "ok");
   showToast(`Ollama ready. Local models auto-load ho gaye: ${preferredModel}`, 2600);
 }
+
+async function refreshOllamaModels(): Promise<void> {
+  const baseUrl = ($("ollama-base-url-input") as HTMLInputElement).value.trim() || "http://localhost:11434/v1";
+  try {
+    const models = await window.api.ollama.listModels(baseUrl);
+    if (settings) settings.ollamaModels = models;
+    renderOllamaModels(models);
+    populateModels();
+    const switched = autoSwitchToOllamaIfNeeded();
+    showToast(switched ? "Switched to first available Ollama model." : `Loaded ${models.length} Ollama model(s).`, 2200);
+  } catch (err) {
+    showToast(`Failed to load Ollama models: ${err instanceof Error ? err.message : "unknown error"}`, 3500);
+  }
+}
+
+function getInitialChatIdFromLocation(): string | null {
+  const raw = new URLSearchParams(window.location.search).get("chatId") ?? "";
+  const value = raw.trim();
+  return value || null;
+}
+
+function shouldOpenDraftChatFromLocation(): boolean {
+  return (new URLSearchParams(window.location.search).get("draftChat") ?? "").trim() === "1";
+}
+
+async function selectChatProvider(option: "openrouter" | "nvidia" | "ollama" | "claude"): Promise<void> {
+  applyInteractionMode("chat");
+  if (option === "claude") {
+    applyMode("claude");
+    showChatProviderMenu(false);
+    refreshChatProviderMenuUi();
+    await syncChatContextAfterUiChange();
+    return;
+  }
+
+  if (option === "openrouter" || option === "nvidia") {
+    await prepareCloudProviderSelection(option);
+    const providerName = getProviderDisplayName(option);
+    setStatus(`${providerName} presets ready.`, "ok");
+    showToast(`${providerName} ready. Base URL aur models auto-set ho gaye.`, 2600);
+  } else if (option === "ollama") {
+    await prepareOllamaProviderSelection();
+  } else {
+    setProviderMode(option);
+  }
+  if (currentMode === "claude" || currentMode === "edit") {
+    applyMode("write");
+  }
+  showChatProviderMenu(false);
+  refreshChatProviderMenuUi();
+  await syncChatContextAfterUiChange();
+}
