@@ -58,6 +58,7 @@ let activeAgentTaskStatus: AgentTask["status"] | null = null;
 let agentPollTimer: ReturnType<typeof setInterval> | null = null;
 let agentEventRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingAgentEventRefreshForceLogs = false;
+let lastAgentTaskChangeAt = 0;
 let cachedAgentTasks: AgentTask[] = [];
 let cachedAgentSnapshots: WorkspaceSnapshot[] = [];
 let cachedAgentRouteDiagnostics: AgentRouteDiagnostics | null = null;
@@ -125,6 +126,7 @@ const chatSaveGuardByMessageId = new Map<string, ClaudeSaveGuard>();
 const CLAUDE_RENDER_BATCH_MS = 80;
 const AGENT_EVENT_REFRESH_DEBOUNCE_MS = 300;
 const AGENT_POLL_FALLBACK_MS = 6000;
+const AGENT_EVENT_STALE_FALLBACK_MS = AGENT_POLL_FALLBACK_MS;
 const CLAUDE_MODEL_LABEL = "claude/minimax-m2.5:cloud";
 const OPENROUTER_DEFAULT_MODEL = "qwen/qwen3.6-plus";
 const OPENROUTER_THINK_MODEL = "deepseek/deepseek-v3.2";
@@ -1725,203 +1727,11 @@ function applyInteractionMode(mode: InteractionMode): void {
   refreshChatProviderMenuUi();
 }
 
-function mountTopbarControls(): void {
-  const topbarControls = document.getElementById("app-topbar-controls");
-  const workspaceHeader = document.querySelector(".chat-header");
-  const controls = workspaceHeader?.querySelector(".chat-header-right");
-  if (!(topbarControls instanceof HTMLElement) || !(controls instanceof HTMLElement)) return;
-  topbarControls.replaceChildren(controls);
-}
-
-function showToast(msg: string, duration = 2500) {
-  const el = $("toast");
-  el.textContent = msg;
-  el.classList.add("show");
-  setTimeout(() => el.classList.remove("show"), duration);
-}
-
 function reportSnapshotRestoreResult(message: string, ok: boolean): void {
   setAgentStatus(message, ok ? "ok" : "err");
   if (!ok || rightPanelTab !== "agent") {
     showToast(message, ok ? 2600 : 3800);
   }
-}
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  const normalized = (text ?? "").trim();
-  if (!normalized) return false;
-
-  try {
-    await navigator.clipboard.writeText(normalized);
-    return true;
-  } catch {
-    try {
-      return await window.api.clipboard.writeText(normalized);
-    } catch {
-      return false;
-    }
-  }
-}
-
-function normalizeApiKey(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-
-  const withoutBearer = trimmed.replace(/^Bearer\s+/i, "");
-  const firstToken = withoutBearer.split(/\s+/)[0] ?? "";
-  const extracted = trimmed.match(/sk-or-v1-[^\s"'`]+/i);
-  if (extracted?.[0]) return extracted[0];
-
-  return firstToken;
-}
-
-function setStatus(msg: string, type: "ok" | "err" | "" = "") {
-  const el = $("settings-status");
-  el.textContent = msg;
-  el.className = "status-msg " + type;
-}
-
-function inferCloudProviderFromBaseUrl(baseUrl: string): CloudProviderMode {
-  const normalized = (baseUrl ?? "").trim().toLowerCase();
-  return normalized.includes("nvidia.com") ? "nvidia" : "openrouter";
-}
-
-function getCloudProviderModeFromSettings(source: Settings | null): CloudProviderMode {
-  const preferred = (source?.cloudProvider ?? "").trim().toLowerCase();
-  if (preferred === "nvidia") return "nvidia";
-  if (preferred === "openrouter") return "openrouter";
-  return inferCloudProviderFromBaseUrl(source?.baseUrl ?? OPENROUTER_BASE_URL);
-}
-
-function isCloudProviderMode(mode: ProviderMode): mode is CloudProviderMode {
-  return mode !== "ollama";
-}
-
-function getImageProviderFromSettings(source: Settings | null): ImageProviderMode {
-  const preferred = (source?.imageProvider ?? "").trim().toLowerCase();
-  if (preferred === "comfyui") return "comfyui";
-  if (preferred === "nvidia") return "nvidia";
-  if (preferred === "openrouter") return "openrouter";
-  return getCloudProviderModeFromSettings(source);
-}
-
-function getProviderDisplayName(mode: ProviderMode): string {
-  if (mode === "ollama") return "Ollama";
-  return mode === "nvidia" ? "NVIDIA" : "OpenRouter";
-}
-
-function getImageProviderDisplayName(mode: ImageProviderMode): string {
-  return mode === "comfyui" ? "ComfyUI Local" : getProviderDisplayName(mode);
-}
-
-function getDefaultBaseUrlForProvider(mode: CloudProviderMode): string {
-  return mode === "nvidia" ? NVIDIA_BASE_URL : OPENROUTER_BASE_URL;
-}
-
-function getRecommendedCloudModelsForProvider(mode: CloudProviderMode): string[] {
-  return [...(mode === "nvidia" ? NVIDIA_RECOMMENDED_MODELS : RECOMMENDED_MODELS)];
-}
-
-function getDefaultRoutingForProvider(mode: CloudProviderMode): Settings["routing"] {
-  if (mode === "nvidia") {
-    return {
-      default: NVIDIA_DEFAULT_MODEL,
-      think: NVIDIA_THINK_MODEL,
-      longContext: NVIDIA_LONG_CONTEXT_MODEL
-    };
-  }
-
-  return {
-    default: OPENROUTER_DEFAULT_MODEL,
-    think: OPENROUTER_THINK_MODEL,
-    longContext: OPENROUTER_LONG_CONTEXT_MODEL
-  };
-}
-
-function getCloudProviderLabelFromBaseUrl(baseUrl: string): string {
-  return getProviderDisplayName(inferCloudProviderFromBaseUrl(baseUrl));
-}
-
-function getCloudProviderLabelForModel(model: string, route?: Pick<AgentModelRouteDiagnostics, "baseUrl"> | null): string {
-  if (model.startsWith("ollama/")) return "Local provider";
-  return `${getCloudProviderLabelFromBaseUrl(route?.baseUrl ?? settings?.baseUrl ?? OPENROUTER_BASE_URL)} cloud`;
-}
-
-function syncBaseUrlInputForProvider(mode: ProviderMode): void {
-  if (!isCloudProviderMode(mode)) return;
-  const input = document.getElementById("base-url-input");
-  if (!(input instanceof HTMLInputElement)) return;
-
-  const current = input.value.trim();
-  const knownDefaults = new Set([OPENROUTER_BASE_URL, NVIDIA_BASE_URL]);
-  if (!current || knownDefaults.has(current)) {
-    input.value = getDefaultBaseUrlForProvider(mode);
-  }
-}
-
-function requireCloudApiKey(message?: string): boolean {
-  const key = (settings?.apiKey ?? "").trim();
-  if (key) return true;
-  const activeProvider = providerMode === "ollama" ? getCloudProviderModeFromSettings(settings) : providerMode;
-  const providerName = getProviderDisplayName(activeProvider);
-  openPanel("settings");
-  setStatus(
-    message ?? `${providerName} API key required for cloud models. Add key, or choose an ollama/... model.`,
-    "err"
-  );
-  showToast(`Add ${providerName} API key, or select an ollama model to continue without key.`, 4200);
-  const input = $("api-key-input") as HTMLInputElement;
-  input.focus();
-  return false;
-}
-
-function setRouterMsg(msg: string) {
-  const el = $("router-action-msg");
-  el.textContent = msg;
-}
-
-function updateVoiceUi(): void {
-  const btn = document.getElementById("voice-btn");
-  if (!(btn instanceof HTMLButtonElement)) return;
-  if (!LOCAL_VOICE_SUPPORTED) {
-    btn.style.display = "none";
-    btn.disabled = true;
-    btn.title = "Local voice input is unavailable in this build";
-    return;
-  }
-  const enabled = Boolean(settings?.localVoiceEnabled);
-  btn.style.display = enabled ? "inline-flex" : "none";
-  btn.title = enabled
-    ? `Local voice input (${settings?.localVoiceModel ?? "base"})`
-    : "Enable local voice in Settings";
-}
-
-function messageRolePriority(role: string): number {
-  if (role === "user") return 0;
-  if (role === "assistant") return 1;
-  return 2;
-}
-
-function compareMessagesForRender(a: Message, b: Message): number {
-  const tsA = Date.parse(a.createdAt ?? "");
-  const tsB = Date.parse(b.createdAt ?? "");
-
-  const aHasTime = Number.isFinite(tsA);
-  const bHasTime = Number.isFinite(tsB);
-  if (aHasTime && bHasTime && tsA !== tsB) return tsA - tsB;
-
-  if ((a.createdAt ?? "") !== (b.createdAt ?? "")) {
-    return (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
-  }
-
-  const roleDelta = messageRolePriority(a.role) - messageRolePriority(b.role);
-  if (roleDelta !== 0) return roleDelta;
-
-  return (a.id ?? "").localeCompare(b.id ?? "");
-}
-
-function normalizeRenderedMessageOrder(): void {
-  renderedMessages.sort(compareMessagesForRender);
 }
 
 // â”€â”€ Model Select â”€â”€
@@ -3863,122 +3673,6 @@ async function refreshOllamaModels(): Promise<void> {
   }
 }
 
-function renderChatList(chats: ChatSummary[]): void {
-  const list = $("chat-list");
-  list.innerHTML = "";
-
-  if (chats.length === 0) {
-    list.innerHTML = '<p class="chat-list-empty">Start a new conversation. Ask anything. Code, write, think.</p>';
-    return;
-  }
-
-  const filteredChats = getFilteredChats(chats);
-  if (filteredChats.length === 0) {
-    list.innerHTML = '<p class="chat-list-empty">No chats found</p>';
-    return;
-  }
-
-  for (const chat of filteredChats) {
-    const item = document.createElement("div");
-    item.className = "chat-item" + (chat.id === currentChatId ? " active" : "");
-    item.dataset["id"] = chat.id;
-
-    const top = document.createElement("div");
-    top.className = "chat-item-top";
-
-    const title = document.createElement("span");
-    title.className = "chat-item-title";
-    title.textContent = chat.title;
-
-    const meta = document.createElement("div");
-    meta.className = "chat-item-meta";
-
-    const time = document.createElement("span");
-    time.className = "chat-item-time";
-    time.textContent = formatUiTime(chat.updatedAt);
-
-    const menuShell = document.createElement("div");
-    menuShell.className = "chat-item-menu-shell";
-
-    const menuBtn = document.createElement("button");
-    menuBtn.className = "chat-item-menu-btn";
-    menuBtn.type = "button";
-    menuBtn.title = "Chat actions";
-    menuBtn.setAttribute("aria-label", "Chat actions");
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.setAttribute("aria-expanded", "false");
-    menuBtn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.25" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.75" cy="8" r="1.1"/></svg>';
-    menuBtn.onclick = (e) => {
-      e.stopPropagation();
-      const isOpen = menu.getAttribute("data-open") === "true";
-      showChatItemMenu(chat.id, menuBtn, menu, !isOpen);
-      menu.setAttribute("data-open", !isOpen ? "true" : "false");
-    };
-
-    const menu = document.createElement("div");
-    menu.className = "chat-item-menu";
-    menu.setAttribute("role", "menu");
-    menu.style.display = "none";
-    menu.setAttribute("data-open", "false");
-
-    const rename = document.createElement("button");
-    rename.className = "chat-item-menu-item";
-    rename.type = "button";
-    rename.setAttribute("role", "menuitem");
-    rename.textContent = "Rename";
-    rename.onclick = (e) => {
-      e.stopPropagation();
-      closeChatItemMenus();
-      openRenameModalForChat(chat.id, chat.title);
-    };
-
-    const exportBtn = document.createElement("button");
-    exportBtn.className = "chat-item-menu-item";
-    exportBtn.type = "button";
-    exportBtn.setAttribute("role", "menuitem");
-    exportBtn.textContent = "Export";
-    exportBtn.onclick = async (e) => {
-      e.stopPropagation();
-      closeChatItemMenus();
-      await exportChatById(chat.id);
-    };
-
-    const del = document.createElement("button");
-    del.className = "chat-item-menu-item danger";
-    del.type = "button";
-    del.setAttribute("role", "menuitem");
-    del.textContent = "Delete";
-    del.onclick = async (e) => {
-      e.stopPropagation();
-      closeChatItemMenus();
-      await window.api.chat.delete(chat.id);
-      if (currentChatId === chat.id) { currentChatId = null; clearMessages(); }
-      await loadChatList();
-    };
-
-    top.appendChild(title);
-    meta.appendChild(time);
-    menu.appendChild(rename);
-    menu.appendChild(exportBtn);
-    menu.appendChild(del);
-    menuShell.appendChild(menuBtn);
-    menuShell.appendChild(menu);
-    meta.appendChild(menuShell);
-    top.appendChild(meta);
-    item.appendChild(top);
-    item.onclick = () => {
-      closeChatItemMenus();
-      void loadChat(chat.id);
-    };
-    list.appendChild(item);
-  }
-}
-
-async function loadChatList() {
-  cachedChatSummaries = await window.api.chat.list();
-  renderChatList(cachedChatSummaries);
-}
-
 function getInitialChatIdFromLocation(): string | null {
   const raw = new URLSearchParams(window.location.search).get("chatId") ?? "";
   const value = raw.trim();
@@ -4589,28 +4283,6 @@ function applyRawMode(enabled: boolean): void {
   rerenderAllMessageBodies(!isStreaming);
 }
 
-function setStreamingUi(active: boolean, statusText = "") {
-  isStreaming = active;
-  if (active) {
-    $("send-btn").setAttribute("disabled", "true");
-    $("stop-btn").style.display = "inline-block";
-    const nextStatusText = statusText || claudeElapsedStatusText || "Working...";
-    if (!claudeElapsedStartedAt) {
-      startClaudeElapsedTimer(nextStatusText);
-    } else {
-      claudeElapsedStatusText = nextStatusText;
-      renderClaudeElapsedStatus();
-    }
-    refreshClaudeSafetyPanel();
-    return;
-  }
-  stopClaudeElapsedTimer();
-  $("send-btn").removeAttribute("disabled");
-  $("stop-btn").style.display = "none";
-  $("stream-status").textContent = "";
-  refreshClaudeSafetyPanel();
-}
-
 async function submitImageGeneration(): Promise<void> {
   if (imageGenerationSubmitting) return;
 
@@ -4694,32 +4366,6 @@ async function submitImageGeneration(): Promise<void> {
     submitBtn.textContent = "Generate";
     setStreamingUi(false);
   }
-}
-
-async function sendMessage() {
-  if (currentInteractionMode === "agent") {
-    const resolvedPromptInput = resolveAgentPromptInput();
-    const prompt = resolvedPromptInput?.input.value.trim() ?? "";
-    if (!prompt) return;
-    syncComposerAgentPrompts(resolvedPromptInput?.source ?? "composer");
-    const started = await startAgentTaskPrompt(prompt);
-    if (started) {
-      clearAgentPrompts();
-    }
-    return;
-  }
-  if (currentMode === "claude") {
-    await sendClaudePrompt();
-    return;
-  }
-  if (currentMode === "edit") {
-    await sendClaudeEditSavePrompt();
-    return;
-  }
-  const input = $("composer-input") as HTMLTextAreaElement;
-  const rawContent = input.value.trim();
-  if (!rawContent && activeAttachments.length === 0) return;
-  await sendChatPromptWithAttachments(rawContent, [...activeAttachments]);
 }
 
 // â”€â”€ IPC Events â”€â”€
@@ -4829,6 +4475,7 @@ function setupIpcListeners() {
   }));
 
   registerIpcListener(window.api.agent.onChanged((payload) => {
+    lastAgentTaskChangeAt = Date.now();
     const changedTaskId = (payload?.taskId ?? "").trim();
     const activeTaskId = (activeAgentTaskId ?? "").trim();
     const isLogEvent = payload?.reason === "log";
@@ -4928,146 +4575,7 @@ function setupIpcListeners() {
   }));
 }
 
-// â”€â”€ Settings Panel â”€â”€
-async function loadSettings() {
-  const loaded = await window.api.settings.get();
-  temporaryClaudeChatFilesystemRoots = normalizeClaudeChatFilesystemRoots(loaded.claudeChatFilesystem?.temporaryRoots ?? []);
-  applyLoadedSettingsToUi(loaded);
-  refreshClaudeSafetyPanel();
-  const localVoiceSettings = document.getElementById("local-voice-settings");
-  if (localVoiceSettings instanceof HTMLElement) {
-    localVoiceSettings.dataset["availability"] = LOCAL_VOICE_SUPPORTED ? "available" : "unavailable";
-    localVoiceSettings.classList.toggle("is-unavailable", !LOCAL_VOICE_SUPPORTED);
-  }
-  await refreshLocalAgentWorkspacePath();
-}
-
-async function saveSettings() {
-  const apiKeyRaw = ($("api-key-input") as HTMLInputElement).value;
-  const apiKey = normalizeApiKey(apiKeyRaw);
-  const baseUrlInput = ($("base-url-input") as HTMLInputElement).value.trim();
-  const defaultModelInput = ($("default-model-input") as HTMLInputElement).value.trim();
-  const ollamaEnabled = providerMode === "ollama";
-  const cloudProvider = isCloudProviderMode(providerMode) ? providerMode : getCloudProviderModeFromSettings(settings);
-  const baseUrl = ollamaEnabled ? baseUrlInput : (baseUrlInput || getDefaultBaseUrlForProvider(cloudProvider));
-  const ollamaBaseUrl = ($("ollama-base-url-input") as HTMLInputElement).value.trim() || "http://localhost:11434/v1";
-  const comfyuiBaseUrl = ((document.getElementById("comfyui-base-url-input") as HTMLInputElement | null)?.value ?? "").trim() || COMFYUI_DEFAULT_BASE_URL;
-  const claudeChatFilesystemDraft = getClaudeChatFilesystemSettingsDraft();
-  const claudeChatFilesystem = {
-    ...claudeChatFilesystemDraft,
-    temporaryRoots: [],
-    rootConfigs: claudeChatFilesystemDraft.rootConfigs
-  };
-  const modelsInput = [...new Set(($("models-textarea") as HTMLTextAreaElement).value
-    .split(/[\n,]+/)
-    .map((m) => m.trim())
-    .filter(Boolean))];
-  const routing = {
-    default: readRouteStrategyValue("route-default-select", defaultModelInput || settings?.routing?.default || settings?.defaultModel || ""),
-    think: readRouteStrategyValue("route-think-select", settings?.routing?.think || defaultModelInput || settings?.defaultModel || ""),
-    longContext: readRouteStrategyValue("route-long-context-select", settings?.routing?.longContext || defaultModelInput || settings?.defaultModel || "")
-  };
-
-  const selectedModel = getSelectedModel();
-  const existingDefault = (settings?.defaultModel ?? "").trim();
-  const fallbackModel = cloudProvider === "nvidia" ? NVIDIA_DEFAULT_MODEL : OPENROUTER_DEFAULT_MODEL;
-
-  const cloudInput = modelsInput.filter((model) => !model.startsWith("ollama/"));
-  const ollamaInput = modelsInput
-    .filter((model) => model.startsWith("ollama/"))
-    .map((model) => model.slice("ollama/".length))
-    .map((model) => model.trim())
-    .filter(Boolean);
-
-  let models = [...new Set([
-    ...cloudInput,
-    ...(settings?.models ?? []),
-    !selectedModel.startsWith("ollama/") ? selectedModel : "",
-    !existingDefault.startsWith("ollama/") ? existingDefault : "",
-    fallbackModel
-  ].map((m) => m.trim()).filter(Boolean))];
-  models = models.filter((model) => !model.startsWith("ollama/"));
-
-  let ollamaModels = [...new Set([
-    ...(settings?.ollamaModels ?? []),
-    ...ollamaInput,
-    selectedModel.startsWith("ollama/") ? selectedModel.slice("ollama/".length).trim() : "",
-    defaultModelInput.startsWith("ollama/") ? defaultModelInput.slice("ollama/".length).trim() : ""
-  ].filter(Boolean))];
-
-  let defaultModel = defaultModelInput || selectedModel || existingDefault;
-  if (ollamaEnabled) {
-    if (!defaultModel.startsWith("ollama/")) {
-      const firstOllama = ollamaModels[0] ?? "";
-      defaultModel = firstOllama ? `ollama/${firstOllama}` : "";
-    }
-    if (!defaultModel) {
-      setStatus("No Ollama model configured. Refresh Ollama models first.", "err");
-      showToast("No Ollama model found. Refresh models and save again.", 3200);
-      return;
-    }
-  } else {
-    if (!defaultModel || defaultModel.startsWith("ollama/")) {
-      defaultModel = models[0] ?? fallbackModel;
-    }
-    if (!models.includes(defaultModel)) models.unshift(defaultModel);
-  }
-
-  if (!ollamaEnabled && cloudProvider === "openrouter" && apiKeyRaw.trim() && !apiKey.startsWith("sk-or-v1-")) {
-    setStatus("Invalid OpenRouter key format.", "err");
-    showToast("API key ghalat format mein hai. Sirf sk-or-v1-... key paste karo.", 4500);
-    return;
-  }
-
-  const saved = await window.api.settings.save({
-    apiKey,
-    baseUrl,
-    cloudProvider,
-    imageProvider: getImageProviderFromSettings(settings),
-    defaultModel,
-    models,
-    routing,
-    ollamaEnabled,
-    ollamaBaseUrl,
-    ollamaModels,
-    comfyuiBaseUrl,
-    localVoiceEnabled: false,
-    localVoiceModel: "base",
-    claudeChatFilesystem
-  });
-  applyLoadedSettingsToUi(saved);
-  setStatus("Settings saved!", "ok");
-  setTimeout(() => setStatus(""), 2000);
-  showToast("Settings saved");
-}
-
 // â”€â”€ Router Panel â”€â”€
-async function refreshRouterStatus(options?: { includeLogs?: boolean }) {
-  const status = await window.api.router.status();
-  const dot = $("router-dot");
-  const text = $("router-status-text");
-  const portEl = $("router-port-text");
-
-  if (status.running) {
-    dot.className = "router-dot on";
-    text.textContent = "Router Running";
-    portEl.textContent = `Port ${status.port} - PID ${status.pid ?? "?"}`;
-  } else {
-    dot.className = "router-dot off";
-    text.textContent = "Router Stopped";
-    portEl.textContent = `Port ${status.port}`;
-  }
-
-  if (options?.includeLogs) {
-    await loadRouterLogs();
-  }
-}
-
-async function loadRouterLogs() {
-  const logs = await window.api.router.logs();
-  $("router-log").textContent = logs.join("\n");
-}
-
 async function refreshAgentTask(forceLogs = false): Promise<void> {
   const tasks = await window.api.agent.listTasks();
   await refreshAgentTaskTargetStates(tasks);
@@ -5192,61 +4700,6 @@ function shouldQueueDesktopLaunchPrompt(
   if (pendingDesktopLaunchPromptTasks.has(task.id)) return true;
   if (previousStatus === "running") return true;
   return completedTaskIsRecent(task);
-}
-
-let rightPanelTab = "settings";
-
-function openPanel(tab: string) {
-  if (tab !== "agent" && agentHistoryCollapsedPanelWidth !== null) {
-    applyRightPanelWidth(agentHistoryCollapsedPanelWidth);
-    agentHistoryCollapsedPanelWidth = null;
-  }
-
-  rightPanelTab = tab;
-  const panel = $("right-panel");
-  panel.style.display = "flex";
-  panel.style.flexDirection = "column";
-  panel.dataset["openTab"] = tab;
-  $("panel-title").textContent = tab === "router"
-    ? "Router"
-    : tab === "agent"
-      ? "Agent"
-      : tab === "preview"
-        ? "Preview"
-        : "Settings";
-
-  document.querySelectorAll<HTMLElement>(".panel-tab").forEach((t) => {
-    t.classList.toggle("active", t.dataset["tab"] === tab);
-  });
-  setPanelBody(tab);
-
-  const settingsBtn = document.getElementById("settings-toggle-btn");
-  const routerBtn = document.getElementById(ROUTER_TOGGLE_BUTTON_ID);
-  const agentBtn = document.getElementById(AGENT_TOGGLE_BUTTON_ID);
-  if (!(settingsBtn instanceof HTMLElement)) return;
-  settingsBtn.classList.toggle("active", tab === "settings");
-  if (routerBtn instanceof HTMLElement) routerBtn.classList.toggle("active", tab === "router");
-  if (agentBtn instanceof HTMLElement) agentBtn.classList.toggle("active", tab === "agent");
-
-  if (tab === "router") {
-    void refreshRouterStatus({ includeLogs: true });
-    void refreshMcpStatus();
-  }
-  if (tab === "agent") {
-    syncAgentHistoryPanelWidth();
-    void refreshAgentTask(true);
-  }
-}
-
-function togglePanel(tab: string) {
-  const panel = $("right-panel");
-  const isOpen = panel.style.display !== "none";
-  const openTab = panel.dataset["openTab"] ?? rightPanelTab;
-  if (isOpen && openTab === tab) {
-    closeRightPanel();
-  } else {
-    openPanel(tab);
-  }
 }
 
 async function init() {
@@ -5884,8 +5337,5 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
-
-
-
 
 

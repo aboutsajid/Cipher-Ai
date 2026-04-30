@@ -4,14 +4,29 @@
 - Keep a clear memory of what was being upgraded.
 - Preserve rollback-safe anchors while continuing incremental improvements.
 
+## Autonomous Product Goal Roadmap (2026-04-30)
+Goal: convert Cipher into a prompt-to-product factory where a detailed prompt can produce a verified Windows installer end-to-end.
+
+1. Stabilization closeout (active now):
+   - Finish partial P1 event-driven refresh work (polling as stale-event fallback only).
+   - Keep renderer/source contracts green after each extraction or runtime tweak.
+   - Keep one source-of-truth checkpoint in this workspace and sync external copies later.
+2. Definition of Done hardening:
+   - Require plan -> implement -> verify -> repair -> package -> installer smoke to pass before a run is marked successful.
+   - Standardize structured task output for product handoff (`run`, `installer`, `known limitations`, `next fixes`).
+3. One-click product pipeline:
+   - Add an orchestrated “Build Product” run mode for agent tasks that enforces the full gated pipeline automatically.
+4. Productization features:
+   - Improve artifact diagnostics, failure auto-repair loops, and packaging quality signals for higher autonomous success rate.
+
 ## Current Snapshot
-- Last sync: `2026-04-28`
+- Last sync: `2026-04-30`
 - Branch: `main`
 - Workspace state: contains many existing modified/untracked files from the in-progress stream.
 - App status: Electron app launches and runs.
 - Manual launch check: `npm run start` executed on `2026-04-28`; Electron renderer processes started successfully.
 - Landing status: duplicate bottom tagline removed from the main landing/empty state.
-- Test status (latest run): `433 passed / 0 failed`.
+- Test status (latest run): `434 passed / 0 failed`.
 - Security audit status: `npm audit --omit=dev` previously reported `0` vulnerabilities.
 
 ## Work Completed In This Autopilot Run
@@ -92,9 +107,9 @@
 ### P1 (Performance Without Workflow Change)
 1. Agent task-state persist rate limiting: completed.
 2. Chat streaming persist coalescing: completed.
-3. Polling replacement with event-driven refresh: mostly completed for agent/router/MCP paths with safe fallbacks.
+3. Polling replacement with event-driven refresh: completed (event-driven primary with stale-event fallback polling for agent tasks; router/MCP already event-driven with guarded refresh paths).
 4. Image history pagination/lazy loading: completed.
-5. Router diagnostics now avoid redundant log history fetches during status-only refreshes.
+5. Router diagnostics now avoid redundant log history fetches during status-only refreshes: completed.
 
 ### P2 (Maintainability)
 1. Unsubscribe-safe preload listener wrappers: completed.
@@ -632,6 +647,71 @@
 153. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+154. `refactor(renderer): extract chat list render/load helpers`
+   - Moved `renderChatList` and `loadChatList` from `src/renderer/app.ts` into `src/renderer/appChatListRenderUiUtils.ts`.
+   - Kept behavior unchanged by preserving empty-state text, filtered-search empty-state text, per-chat action menu wiring, active chat highlighting, and delete/rename/export actions.
+   - Kept classic renderer script loading by adding `appChatListRenderUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appChatListRenderUiUtils.ts`.
+155. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
+156. `refactor(renderer): extract settings panel helpers`
+   - Moved `loadSettings` and `saveSettings` from `src/renderer/app.ts` into `src/renderer/appSettingsUiUtils.ts`.
+   - Kept behavior unchanged by preserving provider-aware default-model resolution, Ollama/cloud model normalization, OpenRouter key-format validation, Claude filesystem draft serialization, and local voice availability badge refresh.
+   - Kept classic renderer script loading by adding `appSettingsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appSettingsUiUtils.ts`.
+157. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
+158. `refactor(renderer): extract streaming/send dispatch helpers`
+   - Moved `setStreamingUi` and `sendMessage` from `src/renderer/app.ts` into `src/renderer/appSendUiUtils.ts`.
+   - Kept behavior unchanged by preserving Claude elapsed-timer start/stop semantics, stream-status button toggles, and send-mode routing (agent, claude, edit, chat+attachments).
+   - Kept classic renderer script loading by adding `appSendUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appSendUiUtils.ts`.
+   - Updated `src/test/claudeElapsedTimer.test.ts` source introspection to read both `app.ts` and `appSendUiUtils.ts` so timer contract assertions still cover extracted helper ownership.
+159. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
+160. `refactor(renderer): extract right-panel toggle/orchestration helpers`
+   - Moved `rightPanelTab`, `openPanel`, and `togglePanel` from `src/renderer/app.ts` into `src/renderer/appPanelToggleUiUtils.ts`.
+   - Kept behavior unchanged by preserving router/settings/agent tab activation logic, title updates, router logs refresh trigger, MCP refresh trigger, and agent panel refresh behavior.
+   - Kept classic renderer script loading by adding `appPanelToggleUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appPanelToggleUiUtils.ts`.
+   - Updated router-status source introspection in `src/test/rendererDomContract.test.ts` to read both `app.ts` and `appPanelToggleUiUtils.ts` so the open-panel refresh contract remains covered after extraction.
+161. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
+162. `perf(renderer): make agent polling fallback event-staleness aware`
+   - Updated agent refresh behavior so `ensureAgentPolling()` only triggers fallback refresh when task-change events are stale, instead of polling continuously while running.
+   - Added `lastAgentTaskChangeAt` tracking and `AGENT_EVENT_STALE_FALLBACK_MS` gating to preserve safety fallback while making event-driven updates primary.
+   - Preserved existing behavior for log-force refreshes and debounced event refresh flow.
+163. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
+164. `refactor(renderer): extract router status/log helpers`
+   - Moved `refreshRouterStatus` and `loadRouterLogs` from `src/renderer/app.ts` into `src/renderer/appRouterStatusUiUtils.ts`.
+   - Kept behavior unchanged by preserving router running/stopped badge text, port/PID display, and explicit `includeLogs` gating.
+   - Kept classic renderer script loading by adding `appRouterStatusUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appRouterStatusUiUtils.ts`.
+   - Updated router-status source introspection in `src/test/rendererDomContract.test.ts` to read `app.ts`, `appPanelToggleUiUtils.ts`, and `appRouterStatusUiUtils.ts`.
+165. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
+166. `refactor(renderer): extract feedback + message-order helpers`
+   - Moved feedback helpers (`mountTopbarControls`, `showToast`, `copyTextToClipboard`, `setStatus`) from `src/renderer/app.ts` into `src/renderer/appFeedbackUiUtils.ts`.
+   - Moved message-order helpers (`messageRolePriority`, `compareMessagesForRender`, `normalizeRenderedMessageOrder`) from `src/renderer/app.ts` into `src/renderer/appMessageOrderUiUtils.ts`.
+   - Kept behavior unchanged by preserving classic non-module script loading and wiring both helper scripts before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appFeedbackUiUtils.ts` and `src/renderer/appMessageOrderUiUtils.ts`.
+167. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
+168. `refactor(renderer): extract provider/settings helper cluster`
+   - Moved provider/settings helpers (`normalizeApiKey`, cloud/image provider-mode resolvers, provider labels/defaults, route default builders, `syncBaseUrlInputForProvider`, `requireCloudApiKey`, `setRouterMsg`, `updateVoiceUi`) from `src/renderer/app.ts` into `src/renderer/appProviderSettingsUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and classic non-module script loading with `appProviderSettingsUiUtils.js` loaded before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appProviderSettingsUiUtils.ts`.
+169. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

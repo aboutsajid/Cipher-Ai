@@ -20,6 +20,8 @@ function readRendererBindingSource(): string {
     "src/renderer/appGuidedEmptyStateUiUtils.ts",
     "src/renderer/appChatLifecycleUiUtils.ts",
     "src/renderer/appChatDraftUiUtils.ts",
+    "src/renderer/appChatListRenderUiUtils.ts",
+    "src/renderer/appSendUiUtils.ts",
     "src/renderer/appChatSummaryUiUtils.ts",
     "src/renderer/appPreviewModalUiUtils.ts",
     "src/renderer/appPreviewExecutionUiUtils.ts",
@@ -28,6 +30,11 @@ function readRendererBindingSource(): string {
     "src/renderer/appShellLayoutUiUtils.ts",
     "src/renderer/appPanelResizeUiUtils.ts",
     "src/renderer/appPanelBodyPreviewUiUtils.ts",
+    "src/renderer/appPanelToggleUiUtils.ts",
+    "src/renderer/appRouterStatusUiUtils.ts",
+    "src/renderer/appFeedbackUiUtils.ts",
+    "src/renderer/appMessageOrderUiUtils.ts",
+    "src/renderer/appProviderSettingsUiUtils.ts",
     "src/renderer/appComposerVoiceUiUtils.ts",
     "src/renderer/appComposerToolsUiUtils.ts",
     "src/renderer/appAgentArtifactUiUtils.ts",
@@ -45,6 +52,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appAgentTaskActionsUiUtils.ts",
     "src/renderer/appAgentControlsUiUtils.ts",
     "src/renderer/appWindowSyncUiUtils.ts",
+    "src/renderer/appSettingsUiUtils.ts",
     "src/renderer/appDesktopLaunchUiUtils.ts",
     "src/renderer/appRuntimeSetupUiUtils.ts",
     "src/renderer/appKeyboardShortcutsUiUtils.ts"
@@ -103,7 +111,11 @@ test("renderer IPC listener setup is idempotent to avoid duplicate subscriptions
 });
 
 test("router status refresh only loads logs when explicitly requested", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appPanelToggleUiUtils.ts"),
+    readProjectFile("src/renderer/appRouterStatusUiUtils.ts")
+  ].join("\n");
   assert.match(rendererSource, /async function refreshRouterStatus\(options\?: \{ includeLogs\?: boolean \}\)/);
   assert.match(rendererSource, /if \(options\?\.includeLogs\) \{\s*await loadRouterLogs\(\);\s*\}/);
   assert.match(rendererSource, /if \(tab === "router"\) \{\s*void refreshRouterStatus\(\{ includeLogs: true \}\);/);
@@ -114,4 +126,16 @@ test("renderer tracks IPC unsubscriptions and tears listeners down on unload", (
   assert.match(rendererSource, /const ipcListenerUnsubscribers: Array<\(\) => void> = \[\];/);
   assert.match(rendererSource, /function teardownIpcListeners\(\): void/);
   assert.match(rendererSource, /window\.addEventListener\("beforeunload", teardownIpcListeners, \{ once: true \}\);/);
+});
+
+test("agent polling falls back only when task change events are stale", () => {
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appAgentTaskRefreshUiUtils.ts")
+  ].join("\n");
+  assert.match(rendererSource, /let lastAgentTaskChangeAt = 0;/);
+  assert.match(rendererSource, /const AGENT_EVENT_STALE_FALLBACK_MS = AGENT_POLL_FALLBACK_MS;/);
+  assert.match(rendererSource, /lastAgentTaskChangeAt = Date\.now\(\);/);
+  assert.match(rendererSource, /const staleMs = Date\.now\(\) - lastAgentTaskChangeAt;/);
+  assert.match(rendererSource, /if \(staleMs < AGENT_EVENT_STALE_FALLBACK_MS\) return;/);
 });
