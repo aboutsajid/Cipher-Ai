@@ -560,6 +560,15 @@
 137. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+138. `refactor(renderer): extract agent message parser helpers`
+   - Moved agent message parsing helpers (`ParsedAgentMessage`, `detectAgentPreviewUrl`, action-label parsers, step-title humanizer, previewability checks, and `parseAgentMessageContent`) from `src/renderer/app.ts` into `src/renderer/appAgentMessageParserUiUtils.ts`.
+   - Kept behavior unchanged by preserving preview URL detection heuristics, artifact/action normalization, verification-check parsing, changed-file extraction, and parsed summary/log assembly.
+   - Kept contract-sensitive panel/router snippets in `src/renderer/app.ts` so renderer DOM contract assertions remain stable.
+   - Kept classic renderer script loading by adding `appAgentMessageParserUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentMessageParserUiUtils.ts`.
+139. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
