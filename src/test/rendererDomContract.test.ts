@@ -37,6 +37,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appAgentSnapshotsUiUtils.ts",
     "src/renderer/appAgentTaskChatUiUtils.ts",
     "src/renderer/appAgentTaskRefreshUiUtils.ts",
+    "src/renderer/appAgentTaskRenderUiUtils.ts",
     "src/renderer/appAgentTaskActionsUiUtils.ts",
     "src/renderer/appAgentControlsUiUtils.ts",
     "src/renderer/appWindowSyncUiUtils.ts",

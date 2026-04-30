@@ -587,6 +587,15 @@
 143. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+144. `refactor(renderer): extract agent task render helpers`
+   - Moved `renderAgentTask` from `src/renderer/app.ts` into `src/renderer/appAgentTaskRenderUiUtils.ts`.
+   - Kept behavior unchanged by preserving agent step/log panel rendering, artifact and execution-spec status lines, verification and failure-memory summary output, and target/restore-state footer messaging.
+   - Kept contract-sensitive refresh ordering (`shouldQueueDesktopLaunchPrompt` before `renderAgentTask`) in `src/renderer/app.ts`.
+   - Kept classic renderer script loading by adding `appAgentTaskRenderUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentTaskRenderUiUtils.ts`.
+145. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
