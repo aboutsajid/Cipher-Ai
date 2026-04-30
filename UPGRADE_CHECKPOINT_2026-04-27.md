@@ -740,6 +740,14 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 177. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+178. `refactor(renderer): extract Claude safety and timer helpers`
+   - Moved Claude status/timer helpers plus Claude filesystem safety/resume helpers (`setClaudeStatus` through `fillClaudeResumePrompt`) from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and loading `appClaudeSafetyUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Updated Claude source-introspection/runtime tests (`src/test/claudeElapsedTimer.test.ts` and `src/test/claudeRateLimitResume.test.ts`) to include the extracted helper file in source/runtime concatenation.
+179. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

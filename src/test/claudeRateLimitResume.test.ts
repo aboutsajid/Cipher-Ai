@@ -11,6 +11,7 @@ function readRendererRuntimeSource(): string {
   return [
     "dist/renderer/appPathUtils.js",
     "dist/renderer/appTextUtils.js",
+    "dist/renderer/appClaudeSafetyUiUtils.js",
     "dist/renderer/appManagedWriteUtils.js",
     "dist/renderer/app.js"
   ]
@@ -67,7 +68,10 @@ test("Claude rate-limit resume prompt includes the touched project path when ava
 });
 
 test("renderer appends Claude rate-limit guidance from the Claude error path", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /function isClaudeRateLimitError\(message: string\): boolean/);
   assert.match(rendererSource, /function maybeShowClaudeRateLimitResumeGuidance\(message: string\): void/);
@@ -77,7 +81,10 @@ test("renderer appends Claude rate-limit guidance from the Claude error path", (
 });
 
 test("renderer exposes Claude target lock, resume action, and filesystem timeline hooks", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
+  ].join("\n");
   const rendererHtml = readProjectFile("src/renderer/index.html");
 
   assert.match(rendererHtml, /id="claude-chat-safety-panel"/);

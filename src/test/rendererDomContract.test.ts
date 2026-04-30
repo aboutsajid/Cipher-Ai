@@ -10,6 +10,7 @@ function readProjectFile(path: string): string {
 function readRendererBindingSource(): string {
   return [
     "src/renderer/app.ts",
+    "src/renderer/appClaudeSafetyUiUtils.ts",
     "src/renderer/appComposerAttachmentUiUtils.ts",
     "src/renderer/appMessageMetaUiUtils.ts",
     "src/renderer/appMessageResendUiUtils.ts",

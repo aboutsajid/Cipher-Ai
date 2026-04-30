@@ -31,7 +31,10 @@ function extractFunctionSource(source: string, functionName: string): string {
 }
 
 function loadClaudeElapsedFormatter(): (durationMs: number) => string {
-  const rendererSource = readProjectFile("dist/renderer/app.js");
+  const rendererSource = [
+    readProjectFile("dist/renderer/appClaudeSafetyUiUtils.js"),
+    readProjectFile("dist/renderer/app.js")
+  ].join("\n");
   const functionSource = extractFunctionSource(rendererSource, "formatClaudeElapsed");
   const factory = new Function(`${functionSource}; return formatClaudeElapsed;`) as () => (durationMs: number) => string;
   return factory();
@@ -46,7 +49,11 @@ test("Claude elapsed formatter renders seconds and minute-second labels", () => 
 });
 
 test("renderer uses the shared streaming timer across app activity states", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
+    readProjectFile("src/renderer/appSendUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /function startClaudeElapsedTimer\(statusText: string\): void/);
   assert.match(rendererSource, /function stopClaudeElapsedTimer\(\): void/);
