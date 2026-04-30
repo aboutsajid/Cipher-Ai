@@ -414,6 +414,14 @@
 101. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+102. `refactor(renderer): extract runtime setup control helpers`
+   - Moved runtime setup/control helpers (`setupPreviewPanel`, `refreshClaudeSessionStatus`, `setupClaudePanel`, `setupModeSwitcher`, `setupCompareControls`, `setupOllamaControls`, `setupMcpControls`, `setupMessageInteractions`, `closeRightPanel`, `setupVirtualScrolling`, `setupOnboardingControls`) from `src/renderer/app.ts` into `src/renderer/appRuntimeSetupUiUtils.ts`.
+   - Kept behavior unchanged by preserving existing event wiring, preview actions, Claude status refresh handling, mode/provider toggles, message interaction handlers, panel closing behavior, and onboarding actions.
+   - Kept classic renderer script loading by adding `appRuntimeSetupUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appRuntimeSetupUiUtils.ts`.
+103. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
