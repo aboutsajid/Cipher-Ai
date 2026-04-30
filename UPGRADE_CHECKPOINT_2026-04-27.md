@@ -495,6 +495,14 @@
 121. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+122. `refactor(renderer): extract agent artifact helpers`
+   - Moved agent artifact display/action helpers (`formatAgentArtifactType`, `getArtifactResultTitle`, `parseAgentArtifactTypeLabel`, `isWebArtifactType`, `isTaskPreviewable`, `getArtifactOpenLabel`, `formatAgentPrimaryAction`, `getArtifactUsageCopy`) from `src/renderer/app.ts` into `src/renderer/appAgentArtifactUiUtils.ts`.
+   - Kept behavior unchanged by preserving artifact labels, primary-action labels, preview eligibility, open-folder labels, and artifact usage copy for all artifact variants.
+   - Kept classic renderer script loading by adding `appAgentArtifactUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentArtifactUiUtils.ts`.
+123. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
