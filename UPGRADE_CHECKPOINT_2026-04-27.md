@@ -462,6 +462,14 @@
 113. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`433` passed / `0` failed).
+114. `refactor(renderer): extract agent task lifecycle helpers`
+   - Moved agent task lifecycle helpers (`startAgentTaskPrompt`, `restartAgentTaskPrompt`) from `src/renderer/app.ts` into `src/renderer/appAgentTaskActionsUiUtils.ts`.
+   - Kept behavior unchanged by preserving existing target-selection checks, approval warnings, attachment handoff, task state updates, and retry-clean confirmation flow.
+   - Kept classic renderer script loading by adding `appAgentTaskActionsUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appAgentTaskActionsUiUtils.ts`.
+115. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`433` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
