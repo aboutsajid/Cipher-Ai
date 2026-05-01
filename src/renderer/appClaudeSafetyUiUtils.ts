@@ -52,6 +52,159 @@ async function ensureClaudeSessionStarted(): Promise<boolean> {
   }
 }
 
+function isVagueEditRequest(prompt: string): boolean {
+  const normalized = (prompt ?? "").trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized.length >= 22) return false;
+
+  const vaguePatterns = [
+    "edit it",
+    "edit this",
+    "change it",
+    "change this",
+    "make changes",
+    "do changes",
+    "fix it",
+    "update it",
+    "modify it",
+    "do it"
+  ];
+
+  return vaguePatterns.includes(normalized);
+}
+
+function isClaudeManagedWriteRequest(prompt: string, attachments: AttachmentPayload[] = []): boolean {
+  const normalized = (prompt ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  const pathHint = /[a-z0-9._-]+[\\/][a-z0-9._-]+/i.test(prompt ?? "");
+  const editableAttachmentPaths = getEditableSourcePaths(attachments);
+  const writableAttachmentRoots = getWritableRootPaths(attachments);
+  const hasWriteContext = editableAttachmentPaths.length > 0 || writableAttachmentRoots.length > 0;
+  const createVerb = /\b(create|scaffold|generate|add|set up|setup)\b/.test(normalized);
+  const writeVerb = /\b(build|make|write|implement|fix|rename|remove|delete)\b/.test(normalized);
+  const updateVerb = /\b(edit|modify|update|rewrite|refactor|change|save|patch|apply)\b/.test(normalized);
+  const fileTarget = /\b(workspace|repo|repository|package|file|files|folder|folders|directory|directories|component|components|module|modules|script|scripts|source|src|readme|package\.json)\b/.test(normalized);
+  const productTarget = /\b(project|app|application|service|api|library|tool|website|site)\b/.test(normalized);
+  const workspaceScopeHint = /\b(in|inside|within|under)\s+(?:this\s+)?(workspace|repo|repository|folder|directory|project)\b/.test(normalized);
+  const requestLead = /^(please\s+)?(?:can|could|would|will)\s+you\b/.test(normalized)
+    || /\b(?:please|pls)\b/.test(normalized)
+    || /\b(?:need|want)\s+you\s+to\b/.test(normalized)
+    || /\bhelp me\b/.test(normalized);
+  const imperativeLead = /^(please\s+)?(?:create|scaffold|generate|add|set up|setup|build|make|write|implement|fix|rename|remove|delete|edit|modify|update|rewrite|refactor|change|save|patch|apply)\b/.test(normalized);
+  const explicitWriteIntent = requestLead || imperativeLead;
+  const statusReportPhrase = /\b(key outputs|saved files|backup files|unchanged files|unsaved files|files changed|result:|smoke test|the remaining work is done|ready to help|if you want, i can)\b/.test(normalized);
+  const firstPersonReport = /\b(i|we)\s+(?:added|updated|patched|trained|verified|changed|edited|created|generated|installed|refreshed|completed|finished)\b/.test(normalized);
+
+  if (!explicitWriteIntent && (statusReportPhrase || firstPersonReport)) return false;
+  if (!explicitWriteIntent) return false;
+  if (pathHint && (createVerb || writeVerb || updateVerb)) return true;
+  if (updateVerb && (fileTarget || hasWriteContext || workspaceScopeHint)) return true;
+  if ((createVerb || writeVerb) && fileTarget && (hasWriteContext || workspaceScopeHint)) return true;
+  if ((createVerb || writeVerb) && productTarget && (hasWriteContext || workspaceScopeHint)) return true;
+  return false;
+}
+
+function shouldPreferClaudeFilesystemProjectFlow(
+  prompt: string,
+  filesystem?: Settings["claudeChatFilesystem"]
+): boolean {
+  const normalized = (prompt ?? "").trim().toLowerCase();
+  if (!normalized || !filesystem) return false;
+
+  const configuredRoots = normalizeClaudeChatFilesystemRootDrafts(
+    Array.isArray(filesystem.rootConfigs) && filesystem.rootConfigs.length > 0
+      ? filesystem.rootConfigs
+      : (filesystem.roots ?? []).map((path) => ({
+          path,
+          label: "",
+          allowWrite: filesystem.allowWrite === true,
+          overwritePolicy: filesystem.overwritePolicy ?? "allow-overwrite"
+        })),
+    filesystem.allowWrite === true,
+    filesystem.overwritePolicy ?? "allow-overwrite"
+  ).filter((root) => root.allowWrite && root.path);
+
+  if (configuredRoots.length === 0) return false;
+
+  const hasApprovedFolderAlias = /\b(allowed|approved|selected|chosen)\s+(folder|folders|directory|directories|path|paths|root|roots)\b/.test(normalized);
+  const referencesApprovedRoot = configuredRoots.some((root) => normalized.includes(root.path.toLowerCase()));
+  const hasWriteVerb = /\b(create|build|scaffold|generate|bootstrap|initialize|set up|setup|write|make|add|implement|save)\b/.test(normalized);
+  const hasProjectTarget = /\b(project|app|agent|repo|repository|workspace|tool|service|api|library)\b/.test(normalized);
+  const hasFolderTarget = /\b(file|files|folder|folders|directory|directories|path|paths|root|roots)\b/.test(normalized);
+
+  return (hasApprovedFolderAlias || referencesApprovedRoot) && hasWriteVerb && (hasProjectTarget || hasFolderTarget);
+}
+
+function buildClaudeManagedWritePrompt(
+  prompt: string,
+  attachments: AttachmentPayload[],
+  permissions: ClaudeManagedEditPermissions
+): string {
+  const basePrompt = (prompt ?? "").trim() || "Create or update the requested project files in the workspace.";
+  const editablePaths = permissions.allowedPaths;
+  const writableRoots = permissions.allowedRoots;
+
+  return [
+    "You are in Claude managed write mode.",
+    "The app will apply file writes for you after validating your JSON response.",
+    "Write permission is already granted for every listed writable root.",
+    "Do not ask for permission, approval, confirmation, or access.",
+    "You may create new files and new subfolders anywhere inside each writable root.",
+    "A nested path inside a writable root is allowed even if that subfolder does not exist yet.",
+    "Do not claim that being limited to the writable root prevents creating a project folder inside it.",
+    "Do not narrate your reasoning.",
+    "Do not use markdown.",
+    "Return only valid JSON and nothing else.",
+    'Use this exact shape: {"summary":"short summary","edits":[{"path":"absolute path","content":"full new file content"}]}',
+    "The content field must contain the complete final file contents, not a diff.",
+    "Only include files from the editable paths list or inside the writable roots list.",
+    "Do not propose paths outside the listed roots.",
+    "If the request is unclear, still return valid JSON with a short clarification question in summary and an empty edits array.",
+    "If the request is clear, your full response must start with { and end with }.",
+    editablePaths.length > 0 ? `Editable paths:\n${editablePaths.map((path) => `- ${path}`).join("\n")}` : "Editable paths: none",
+    writableRoots.length > 0 ? `Writable roots:\n${writableRoots.map((path) => `- ${path}`).join("\n")}` : "Writable roots: none",
+    attachments.length > 0 ? "Base changes on the attached file contents when relevant." : "No files are attached.",
+    "",
+    "Valid response example:",
+    '{"summary":"Created the requested starter project files.","edits":[{"path":"D:\\\\project\\\\cipher-agent\\\\README.md","content":"# Cipher Agent\\n"}]}',
+    '{"summary":"Created the requested project under the writable root.","edits":[{"path":"D:\\\\Antigravity\\\\Cipher Ai\\\\generated-apps\\\\Cipher Agent\\\\README.md","content":"# Cipher Agent\\n"}]}',
+    '{"summary":"Which runtime should this project target: Python, Node.js, or both?","edits":[]}',
+    "",
+    `Task: ${basePrompt}`
+  ].join("\n");
+}
+
+function buildClaudeEditSavePrompt(prompt: string, attachments: AttachmentPayload[]): string {
+  const basePrompt = (prompt ?? "").trim() || "Review the attached files and save only necessary changes.";
+  const editablePaths = getEditableSourcePaths(attachments);
+
+  return [
+    "You are in Edit & Save mode.",
+    "You cannot write files directly in this mode.",
+    "The app will save files for you after validating your JSON response.",
+    "Base every change only on the attached file contents in this request.",
+    "Do not narrate your reasoning.",
+    "Do not describe what you found.",
+    "Do not say you will try again.",
+    "Do not use markdown.",
+    "Return only valid JSON and nothing else.",
+    'Use this exact shape: {"summary":"short summary","edits":[{"path":"absolute path","content":"full new file content"}]}',
+    "The content field must contain the complete final file contents, not a diff.",
+    "Only include files from the editable paths list.",
+    "If the requested text or target does not exist in the attached files, return JSON with a short summary and an empty edits array.",
+    "If the request is unclear, still return valid JSON with a short clarification question in summary and an empty edits array.",
+    "If the request is clear, your full response must start with { and end with }.",
+    editablePaths.length > 0 ? `Editable paths:\n${editablePaths.map((path) => `- ${path}`).join("\n")}` : "Editable paths: none",
+    "",
+    "Valid response example:",
+    '{"summary":"Updated the chat title text.","edits":[{"path":"D:\\\\project\\\\src\\\\renderer\\\\index.html","content":"<full file content here>"}]}',
+    '{"summary":"The requested text was not found in the attached files.","edits":[]}',
+    "",
+    `Task: ${basePrompt}`
+  ].join("\n");
+}
+
 async function sendClaudeEditSavePrompt(): Promise<void> {
   const input = $("composer-input") as HTMLTextAreaElement;
   const rawPrompt = input.value.trim();

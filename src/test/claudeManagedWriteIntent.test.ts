@@ -8,6 +8,13 @@ function readProjectFile(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
 
+function readRendererRuntimeSource(): string {
+  return [
+    readProjectFile("dist/renderer/app.js"),
+    readProjectFile("dist/renderer/appClaudeSafetyUiUtils.js")
+  ].join("\n");
+}
+
 function extractFunctionSource(source: string, functionName: string): string {
   const marker = `function ${functionName}`;
   const start = source.indexOf(marker);
@@ -32,7 +39,7 @@ function extractFunctionSource(source: string, functionName: string): string {
 }
 
 function loadManagedWriteDetector(): (prompt: string, attachments?: AttachmentPayload[]) => boolean {
-  const rendererSource = readProjectFile("dist/renderer/app.js");
+  const rendererSource = readRendererRuntimeSource();
   const functionSource = extractFunctionSource(rendererSource, "isClaudeManagedWriteRequest");
   const factory = new Function(
     "getEditableSourcePaths",
@@ -67,7 +74,7 @@ function loadFilesystemFlowPreference(): (
     }>;
   }
 ) => boolean {
-  const rendererSource = readProjectFile("dist/renderer/app.js");
+  const rendererSource = readRendererRuntimeSource();
   const functionSource = extractFunctionSource(rendererSource, "shouldPreferClaudeFilesystemProjectFlow");
   const factory = new Function(
     "normalizeClaudeChatFilesystemRootDrafts",
