@@ -249,51 +249,6 @@ function qs<T extends Element>(sel: string): T {
   return element;
 }
 
-function setClaudeModeActiveVisual(active: boolean): void {
-  const quickBtn = document.getElementById("quick-claude-btn");
-  if (quickBtn instanceof HTMLButtonElement) quickBtn.classList.toggle("active", active);
-}
-
-async function ensureClaudeSessionStarted(): Promise<boolean> {
-  if (claudeSessionResetting) {
-    setClaudeStatus("Resetting Claude Code...", "busy");
-    return false;
-  }
-  if (claudeSessionRunning) {
-    setClaudeStatus("Ready", "ok");
-    return true;
-  }
-  if (claudeSessionStarting) {
-    setClaudeStatus("Starting Claude Code...", "busy");
-    return false;
-  }
-
-  claudeSessionStarting = true;
-  setClaudeStatus("Starting Claude Code...", "busy");
-  try {
-    const res = await window.api.claude.start();
-    claudeSessionRunning = Boolean(res.running);
-    if (!res.ok) {
-      setClaudeStatus(res.message, "err");
-      showToast(res.message, 3500);
-      appendClaudeLine(res.message, "stderr");
-      return false;
-    }
-    setClaudeStatus("Ready", "ok");
-    if (res.message.toLowerCase().includes("session started")) appendClaudeLine(res.message, "system");
-    return true;
-  } catch (err) {
-    claudeSessionRunning = false;
-    const msg = err instanceof Error ? err.message : "Failed to start Claude Code.";
-    setClaudeStatus(msg, "err");
-    showToast(msg, 3500);
-    appendClaudeLine(msg, "stderr");
-    return false;
-  } finally {
-    claudeSessionStarting = false;
-  }
-}
-
 async function sendClaudeEditSavePrompt(): Promise<void> {
   const input = $("composer-input") as HTMLTextAreaElement;
   const rawPrompt = input.value.trim();

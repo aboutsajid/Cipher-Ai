@@ -828,6 +828,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 201. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+202. `refactor(renderer): extract Claude session start UI helpers`
+   - Moved `setClaudeModeActiveVisual` and `ensureClaudeSessionStarted` from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving Claude quick-button active-state toggle plus full session-start status/toast/error handling flow.
+   - Kept classic renderer script load order unchanged (`appClaudeSafetyUiUtils.js` already loads before `app.js` in `src/renderer/index.html`).
+203. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
