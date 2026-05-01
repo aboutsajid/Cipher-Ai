@@ -835,11 +835,19 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 203. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+204. `refactor(renderer): extract Claude send prompt helpers`
+   - Moved `sendClaudeEditSavePrompt` and `sendClaudePrompt` from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving managed-write gating, approved-folder/filesystem access routing, attachment handling, Claude chat session binding, and streaming/status transitions.
+   - Updated source-introspection coverage in `src/test/newWindowWorkflow.test.ts` to include `src/renderer/appClaudeSafetyUiUtils.ts` for assertions that now reference extracted send-flow internals.
+205. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `bdc411c`
   - `5a14ce7`
   - `50b0937`
   - `afd942a`
