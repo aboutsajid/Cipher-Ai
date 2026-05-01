@@ -123,7 +123,10 @@ test("renderer falls back to saved Ollama models when refresh fails during provi
 });
 
 test("renderer top stop button stops active Claude sessions", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /async function stopClaudeSessionFromUi\(toastMessage = "Claude stop requested\."\): Promise<boolean>/);
   assert.match(rendererSource, /suppressClaudeExitNotice = true;\s*setClaudeStatus\("Stopping Claude Code\.\.\.", "busy"\);/);
