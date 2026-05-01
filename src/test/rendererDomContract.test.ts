@@ -14,6 +14,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appComposerAttachmentUiUtils.ts",
     "src/renderer/appMessageMetaUiUtils.ts",
     "src/renderer/appMessageRenderUiUtils.ts",
+    "src/renderer/appVirtualMessagesUiUtils.ts",
     "src/renderer/appMessageResendUiUtils.ts",
     "src/renderer/appChatListSearchUiUtils.ts",
     "src/renderer/appChatRenameActionsUtils.ts",
