@@ -40,6 +40,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appModelProviderRoutingUiUtils.ts",
     "src/renderer/appLocalAgentSetupUiUtils.ts",
     "src/renderer/appChatContextProviderUiUtils.ts",
+    "src/renderer/appDirectSaveVisionUiUtils.ts",
     "src/renderer/appComposerVoiceUiUtils.ts",
     "src/renderer/appComposerToolsUiUtils.ts",
     "src/renderer/appAgentArtifactUiUtils.ts",

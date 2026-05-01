@@ -771,6 +771,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 185. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+186. `refactor(renderer): extract direct-save and vision helper slice`
+   - Moved direct-save status helpers (`getDirectSaveStatus`, `updateDirectSaveUi`) and vision model helpers (`isLikelyVisionCapableModel`, `findVisionModelCandidate`) from `src/renderer/app.ts` into `src/renderer/appDirectSaveVisionUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and adding `appDirectSaveVisionUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appDirectSaveVisionUiUtils.ts`.
+187. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
