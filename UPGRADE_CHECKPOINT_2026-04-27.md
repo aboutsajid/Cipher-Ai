@@ -807,6 +807,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 195. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+196. `refactor(renderer): extract Claude stream and save-guard helpers`
+   - Moved Claude stream/render and save-guard helper cluster (`ensureClaudeAssistantMessage` through `finalizeClaudeAssistantMessage`) from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving assistant/system/user message append flow, batched Claude draft rendering, save-claim verification guardrails, and Claude render-state reset behavior.
+   - Updated source-introspection coverage in `src/test/newWindowWorkflow.test.ts` to include `src/renderer/appClaudeSafetyUiUtils.ts` for system-notice assertions after extraction.
+197. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).

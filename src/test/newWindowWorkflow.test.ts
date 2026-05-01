@@ -83,6 +83,7 @@ test("renderer only enables Claude managed write mode when prompts include expli
 test("renderer preserves Claude system notices and applies sparse-chat density state", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
     readProjectFile("src/renderer/appChatLoadUiUtils.ts"),
     readProjectFile("src/renderer/appMessageRenderUiUtils.ts")
   ].join("\n");
