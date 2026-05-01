@@ -793,6 +793,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 191. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+192. `refactor(renderer): extract message wrapper helper`
+   - Moved `createMessageWrapper` from `src/renderer/app.ts` into `src/renderer/appVirtualMessagesUiUtils.ts`.
+   - Kept behavior unchanged by preserving wrapper structure, role/avatar/meta rendering, assistant/user action buttons, markdown/plain-text mode selection, and agent-message card rendering flow.
+   - Kept classic renderer script load order unchanged (`appVirtualMessagesUiUtils.js` already loads before `app.js` in `src/renderer/index.html`).
+193. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
