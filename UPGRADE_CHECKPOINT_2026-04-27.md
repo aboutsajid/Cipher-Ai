@@ -842,11 +842,19 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 205. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+206. `refactor(renderer): extract Claude managed-write intent helper cluster`
+   - Moved `isVagueEditRequest`, `isClaudeManagedWriteRequest`, `shouldPreferClaudeFilesystemProjectFlow`, `buildClaudeManagedWritePrompt`, and `buildClaudeEditSavePrompt` from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving managed-write intent heuristics, approved-folder filesystem flow preference logic, and managed-write/edit-save prompt contract text.
+   - Updated `src/test/claudeManagedWriteIntent.test.ts` source extraction to read combined runtime source (`dist/renderer/app.js` + `dist/renderer/appClaudeSafetyUiUtils.js`) after helper extraction.
+207. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `7dab029`
   - `bdc411c`
   - `5a14ce7`
   - `50b0937`
