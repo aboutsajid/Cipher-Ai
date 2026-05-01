@@ -819,6 +819,7 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `c015f5e`
   - `ec0a6d5`
   - `f060ccf`
   - `02b9e22`
