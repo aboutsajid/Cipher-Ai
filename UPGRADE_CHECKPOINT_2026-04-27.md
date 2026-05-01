@@ -778,6 +778,14 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 187. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+188. `refactor(renderer): extract message render helpers`
+   - Moved message render helpers (`renderMessageBody`, `shouldRenderMessageAsPlainText`, `updateMessageDensityState`, `applyGeneratedImageAssetIds`, `rerenderAllMessageBodies`, and `applyRawMode`) from `src/renderer/app.ts` into `src/renderer/appMessageRenderUiUtils.ts`.
+   - Kept behavior unchanged by preserving function bodies and loading `appMessageRenderUiUtils.js` before `app.js` in `src/renderer/index.html`.
+   - Updated renderer DOM contract source coverage in `src/test/rendererDomContract.test.ts` to include `src/renderer/appMessageRenderUiUtils.ts`.
+   - Updated `src/test/newWindowWorkflow.test.ts` source introspection assertions for plain-text renderer and sparse-density helpers to read `src/renderer/appMessageRenderUiUtils.ts`.
+189. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
