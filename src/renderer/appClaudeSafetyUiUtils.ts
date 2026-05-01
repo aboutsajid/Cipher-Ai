@@ -251,6 +251,380 @@ function finalizeClaudeAssistantMessage(done: boolean): void {
   refreshClaudeSafetyPanel();
 }
 
+function parseClaudeManagedEditResponse(content: string): { summary: string; edits: ClaudeManagedEdit[] } | null {
+  const trimmed = (content ?? "").trim();
+  if (!trimmed) return null;
+
+  const jsonMatch = trimmed.match(/```json\s*([\s\S]*?)```/i);
+  const candidate = (jsonMatch?.[1] ?? trimmed).trim();
+
+  const extractFirstJsonObject = (input: string): string | null => {
+    const start = input.indexOf("{");
+    if (start < 0) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < input.length; i += 1) {
+      const ch = input[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        if (inString) escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          return input.slice(start, i + 1).trim();
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const jsonCandidate = extractFirstJsonObject(candidate) ?? candidate;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonCandidate);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") return null;
+  const record = parsed as { summary?: unknown; edits?: unknown };
+  if (!Array.isArray(record.edits)) return null;
+
+  const edits = record.edits
+    .filter((item): item is { path?: unknown; content?: unknown } => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      path: typeof item.path === "string" ? item.path.trim() : "",
+      content: typeof item.content === "string" ? item.content : ""
+    }))
+    .filter((item) => item.path);
+
+  return {
+    summary: typeof record.summary === "string" ? record.summary.trim() : "",
+    edits
+  };
+}
+
+function buildManagedSaveResultLines(
+  heading: string,
+  summary: string,
+  result: ClaudeApplyEditsResult | null,
+  verification?: ManagedWriteVerificationReport | null
+): string[] {
+  const verificationLines = verification ? buildManagedWriteVerificationLines(verification) : [];
+  if (!result) {
+    return [
+      heading,
+      summary,
+      ...verificationLines,
+      "Saved files:",
+      "- none",
+      "Backup files:",
+      "- none",
+      "Unchanged files:",
+      "- none",
+      "Unsaved files:",
+      "- none",
+      "Result: No file changes were returned."
+    ];
+  }
+
+  return [
+    heading,
+    summary,
+    ...verificationLines,
+    "Saved files:",
+    ...(result.savedFiles.length > 0 ? result.savedFiles.map((path) => `- ${path}`) : ["- none"]),
+    "Backup files:",
+    ...(result.backupFiles.length > 0
+      ? result.backupFiles.map((item) => `- ${item.path} -> ${item.backupPath}`)
+      : ["- none"]),
+    "Unchanged files:",
+    ...(result.unchangedFiles.length > 0 ? result.unchangedFiles.map((path) => `- ${path}`) : ["- none"]),
+    "Unsaved files:",
+    ...(result.failedFiles.length > 0 ? result.failedFiles.map((item) => `- ${item.path}: ${item.reason}`) : ["- none"]),
+    `Result: ${result.message}`
+  ];
+}
+
+function buildManagedWriteVerificationLines(report: ManagedWriteVerificationReport): string[] {
+  const reviewer = report.reviewerModel ? ` (${report.reviewerModel})` : "";
+  return [
+    `Verification: ${report.status}${reviewer}`,
+    report.summary || "No verification summary provided.",
+    ...(report.findings.length > 0
+      ? report.findings.map((finding) => `- ${finding.severity.toUpperCase()}${finding.path ? ` ${finding.path}` : ""}: ${finding.message}`)
+      : ["- No findings"])
+  ];
+}
+
+async function verifyManagedEditsWithFallback(edits: ClaudeManagedEdit[]): Promise<ManagedWriteVerificationReport> {
+  try {
+    return await window.api.claude.verifyManagedEdits(edits);
+  } catch (err) {
+    return {
+      ok: true,
+      status: "skipped",
+      summary: `Verification skipped: ${err instanceof Error ? err.message : "unknown error"}`,
+      findings: []
+    };
+  }
+}
+
+async function repairManagedEditsWithFallback(
+  edits: ClaudeManagedEdit[],
+  verification: ManagedWriteVerificationReport
+): Promise<ManagedWriteRepairResult> {
+  try {
+    return await window.api.claude.repairManagedEdits(edits, verification);
+  } catch (err) {
+    return {
+      ok: false,
+      summary: `Auto-repair failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      edits: [],
+      error: err instanceof Error ? err.message : "unknown error"
+    };
+  }
+}
+
+function hideManagedSavePreview(): void {
+  managedSaveApplying = false;
+  pendingManagedSavePreview = null;
+  const applyBtn = document.getElementById("managed-save-apply-btn");
+  const cancelBtn = document.getElementById("managed-save-cancel-btn");
+  const closeBtn = document.getElementById("managed-save-preview-close-btn");
+  if (applyBtn instanceof HTMLButtonElement) {
+    applyBtn.disabled = false;
+    applyBtn.textContent = "Save Changes";
+  }
+  if (cancelBtn instanceof HTMLButtonElement) cancelBtn.disabled = false;
+  if (closeBtn instanceof HTMLButtonElement) closeBtn.disabled = false;
+  $("managed-save-preview-modal").style.display = "none";
+}
+
+function showManagedSavePreview(
+  msgId: string,
+  parsed: { summary: string; edits: ClaudeManagedEdit[] },
+  permissions: ClaudeManagedEditPermissions,
+  verification: ManagedWriteVerificationReport | null,
+  baselines: ClaudeManagedEditBaseline[] = pendingClaudeManagedBaselines
+): void {
+  pendingManagedSavePreview = {
+    msgId,
+    parsed,
+    permissions,
+    baselines: baselines.map((item) => ({ ...item })),
+    verification
+  };
+  $("managed-save-preview-modal").style.display = "flex";
+  const summaryLines = [
+    parsed.summary || "Review Claude's proposed file changes before saving.",
+    `${parsed.edits.length} file(s) proposed. The app will only write exact attached files or new/existing files inside selected writable folders.`,
+    ...(verification ? buildManagedWriteVerificationLines(verification) : [])
+  ];
+  $("managed-save-preview-summary").textContent = summaryLines.join(" ");
+  $("managed-save-preview-files").textContent = parsed.edits.map((edit) => edit.path).join("\n");
+  ($("managed-save-preview-content") as HTMLTextAreaElement).value = parsed.edits
+    .map((edit) => `===== ${edit.path} =====\n${edit.content}`)
+    .join("\n\n");
+  const applyBtn = document.getElementById("managed-save-apply-btn");
+  if (applyBtn instanceof HTMLButtonElement) {
+    applyBtn.disabled = verification?.status === "blocked";
+    applyBtn.textContent = verification?.status === "blocked" ? "Blocked By Verifier" : "Save Changes";
+  }
+}
+
+async function confirmManagedSavePreview(): Promise<void> {
+  const pending = pendingManagedSavePreview;
+  if (!pending || managedSaveApplying) return;
+  if (pending.verification?.status === "blocked") {
+    showToast("Managed save is blocked by verifier findings.", 3200);
+    return;
+  }
+
+  managedSaveApplying = true;
+  const applyBtn = document.getElementById("managed-save-apply-btn");
+  const cancelBtn = document.getElementById("managed-save-cancel-btn");
+  const closeBtn = document.getElementById("managed-save-preview-close-btn");
+  if (applyBtn instanceof HTMLButtonElement) {
+    applyBtn.disabled = true;
+    applyBtn.textContent = "Saving...";
+  }
+  if (cancelBtn instanceof HTMLButtonElement) cancelBtn.disabled = true;
+  if (closeBtn instanceof HTMLButtonElement) closeBtn.disabled = true;
+
+  try {
+    const result = await window.api.claude.applyEdits(
+      pending.parsed.edits,
+      pending.permissions,
+      pending.baselines
+    );
+    hideManagedSavePreview();
+    const lines = buildManagedSaveResultLines(
+      result.ok ? "[Managed save applied]" : "[Managed save partially applied]",
+      pending.parsed.summary || "Managed edit completed.",
+      result,
+      pending.verification
+    );
+
+    updateMessageContent(pending.msgId, lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    await loadChatList();
+    showToast(result.ok ? "Managed save applied." : "Managed save completed with issues.", 2600);
+  } catch (err) {
+    managedSaveApplying = false;
+    if (applyBtn instanceof HTMLButtonElement) {
+      applyBtn.disabled = false;
+      applyBtn.textContent = "Save Changes";
+    }
+    if (cancelBtn instanceof HTMLButtonElement) cancelBtn.disabled = false;
+    if (closeBtn instanceof HTMLButtonElement) closeBtn.disabled = false;
+    showToast(`Managed save failed: ${err instanceof Error ? err.message : "unknown error"}`, 3600);
+  }
+}
+
+function cancelManagedSavePreview(): void {
+  const pending = pendingManagedSavePreview;
+  hideManagedSavePreview();
+  if (!pending) return;
+
+  const lines = buildManagedSaveResultLines(
+    "[Managed save cancelled]",
+    pending.parsed.summary || "Claude proposed file changes, but save was cancelled.",
+    null,
+    pending.verification
+  );
+  lines[lines.length - 1] = "Result: Save cancelled before any files were written.";
+  updateMessageContent(pending.msgId, lines.join("\n"), true, false);
+  pendingClaudeSaveGuard = null;
+}
+
+async function applyManagedClaudeEdits(
+  msgId: string,
+  permissions: ClaudeManagedEditPermissions,
+  mode: "edit" | "chat",
+  baselines: ClaudeManagedEditBaseline[] = pendingClaudeManagedBaselines
+): Promise<void> {
+  if (permissions.allowedPaths.length === 0 && permissions.allowedRoots.length === 0) return;
+  const current = renderedMessages.find((message) => message.id === msgId)?.content ?? "";
+  const parsed = parseClaudeManagedEditResponse(current);
+  if (!parsed) {
+    const lines = mode === "edit"
+      ? [
+          "[Managed save not applied]",
+          "Claude did not return valid JSON for Edit & Save.",
+          "Result: No files were written. Ask for the same change again with a more exact instruction."
+        ]
+      : [
+          "[Managed write not applied]",
+          "Claude replied in normal chat format instead of managed-write JSON.",
+          "Result: No files were written. Ask again with an exact project or file instruction."
+        ];
+    updateMessageContent(msgId, mode === "chat" ? `${current.trim()}\n\n${lines.join("\n")}`.trim() : lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    showToast(mode === "edit" ? "Claude returned invalid Edit & Save JSON." : "Claude did not return valid managed-write JSON.", 3400);
+    return;
+  }
+
+  if (parsed.edits.length === 0) {
+    const lines = buildManagedSaveResultLines(
+      "[Managed save not applied]",
+      parsed.summary || "Claude returned no file edits.",
+      null
+    );
+    updateMessageContent(msgId, lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    return;
+  }
+
+  const inspection = await window.api.claude.inspectEdits(parsed.edits, permissions, baselines);
+  if (!inspection.ok) {
+    const lines = buildManagedSaveResultLines(
+      "[Managed save not applied]",
+      inspection.failedFiles.length > 0
+        ? `${parsed.summary || "Claude proposed file changes."} Local safety checks rejected the proposal before review.`
+        : parsed.summary || "Claude proposed no actionable file changes.",
+      inspection
+    );
+    lines[lines.length - 1] = `Result: ${inspection.message}`;
+    updateMessageContent(msgId, lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    showToast(
+      inspection.failedFiles.length > 0
+        ? "Managed save blocked before review."
+        : "No actionable file changes to review.",
+      3200
+    );
+    return;
+  }
+
+  let verification: ManagedWriteVerificationReport | null = await verifyManagedEditsWithFallback(parsed.edits);
+
+  if (verification.status === "blocked") {
+    showToast("Verifier blocked the proposal. Attempting auto-repair...", 3200);
+    const repair = await repairManagedEditsWithFallback(parsed.edits, verification);
+    if (repair.ok && repair.edits.length > 0) {
+      const repairedVerification = await verifyManagedEditsWithFallback(repair.edits);
+      if (repairedVerification.status !== "blocked") {
+        const repairedSummary = [
+          parsed.summary || "Claude proposed file changes.",
+          `Auto-repair applied${repair.reviewerModel ? ` by ${repair.reviewerModel}` : ""}: ${repair.summary || "Verifier issues were corrected."}`
+        ].join(" ");
+        showToast("Auto-repair generated a corrected proposal.", 2800);
+        showManagedSavePreview(
+          msgId,
+          { summary: repairedSummary, edits: repair.edits },
+          permissions,
+          repairedVerification
+        );
+        return;
+      }
+
+      verification = repairedVerification;
+      const lines = buildManagedSaveResultLines(
+        "[Managed save blocked]",
+        `${repair.summary || "Auto-repair generated a new proposal."} The repaired proposal is still blocked by verifier findings.`,
+        null,
+        verification
+      );
+      lines[lines.length - 1] = "Result: No files were written because verifier findings still block the repaired proposal.";
+      updateMessageContent(msgId, lines.join("\n"), true, false);
+      pendingClaudeSaveGuard = null;
+      showToast("Auto-repair ran, but verifier still blocked the result.", 3600);
+      return;
+    }
+
+    const lines = buildManagedSaveResultLines(
+      "[Managed save blocked]",
+      `${parsed.summary || "Claude proposed file changes, but verification blocked them."} Auto-repair did not produce a valid fix${repair.reviewerModel ? ` from ${repair.reviewerModel}` : ""}. ${repair.summary || ""}`.trim(),
+      null,
+      verification
+    );
+    lines[lines.length - 1] = "Result: No files were written because verifier findings blocked the proposal and auto-repair failed.";
+    updateMessageContent(msgId, lines.join("\n"), true, false);
+    pendingClaudeSaveGuard = null;
+    showToast("Managed save blocked. Auto-repair failed.", 3400);
+    return;
+  }
+
+  showManagedSavePreview(msgId, parsed, permissions, verification);
+}
+
 function formatClaudeElapsed(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
   const minutes = Math.floor(totalSeconds / 60);

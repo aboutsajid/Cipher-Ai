@@ -814,6 +814,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 197. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+198. `refactor(renderer): extract managed-save helper cluster`
+   - Moved managed-save helper cluster (`parseClaudeManagedEditResponse` through `applyManagedClaudeEdits`) from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving managed-edit JSON parsing, verifier fallback/auto-repair flow, preview modal controls, and final managed-write apply/cancel result messaging.
+   - Kept classic renderer script load order unchanged (`appClaudeSafetyUiUtils.js` already loads before `app.js` in `src/renderer/index.html`).
+199. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
