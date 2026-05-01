@@ -52,6 +52,183 @@ async function ensureClaudeSessionStarted(): Promise<boolean> {
   }
 }
 
+async function sendClaudeEditSavePrompt(): Promise<void> {
+  const input = $("composer-input") as HTMLTextAreaElement;
+  const rawPrompt = input.value.trim();
+  const attachmentsToSend = [...activeAttachments];
+  const permissions = getClaudeManagedEditPermissions(attachmentsToSend);
+  const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
+  if (!rawPrompt && attachmentsToSend.length === 0) return;
+  if (isVagueEditRequest(rawPrompt)) {
+    showToast("Edit & Save ke liye exact change likho. Example: text change karo, button rename karo, ya spacing adjust karo.", 4800);
+    input.focus();
+    return;
+  }
+
+  if (permissions.allowedPaths.length === 0 && permissions.allowedRoots.length === 0) {
+    const status = getDirectSaveStatus();
+    showToast(status.detail, 3600);
+    updateDirectSaveUi();
+    return;
+  }
+
+  const filesystemReady = await ensureFilesystemToolReadyForEditSave();
+  if (!filesystemReady) return;
+
+  await ensureActiveChatId();
+
+  pendingClaudeManagedPermissions = permissions;
+  pendingClaudeManagedBaselines = baselines;
+  pendingClaudeManagedMode = "edit";
+  const prompt = buildClaudeEditSavePrompt(rawPrompt, attachmentsToSend);
+  pendingClaudeSaveGuard = shouldVerifyClaudeSave(prompt, attachmentsToSend) ?? {
+    requested: true,
+    expectedPaths: [...permissions.allowedPaths, ...permissions.allowedRoots]
+  };
+
+  const ready = await ensureClaudeSessionStarted();
+  if (!ready) return;
+
+  activeAttachments = [];
+  renderComposerAttachments();
+  appendClaudeLine(`${rawPrompt || "Edit and save the attached files."}\n\n[Edit & Save mode]`, "user");
+  input.value = "";
+  input.style.height = "auto";
+
+  try {
+    const res = await window.api.claude.send(prompt, {
+      attachments: attachmentsToSend,
+      enabledTools: [],
+      includeFullTextAttachments: true
+    });
+    claudeSessionRunning = Boolean(res.running);
+    if (!res.ok) {
+      pendingClaudeSaveGuard = null;
+      pendingClaudeManagedBaselines = [];
+      activeAttachments = attachmentsToSend;
+      renderComposerAttachments();
+      setClaudeStatus(res.message, "err");
+      showToast(res.message, 3200);
+      appendClaudeLine(res.message, "stderr");
+      setStreamingUi(false);
+      return;
+    }
+    ensureClaudeAssistantMessage();
+    shouldAutoScroll = true;
+    setClaudeStatus("Running...", "busy");
+    setStreamingUi(true, "Claude is editing files...");
+  } catch (err) {
+    pendingClaudeSaveGuard = null;
+    pendingClaudeManagedBaselines = [];
+    activeAttachments = attachmentsToSend;
+    renderComposerAttachments();
+    const msg = err instanceof Error ? err.message : "Failed to send prompt.";
+    setClaudeStatus(msg, "err");
+    showToast(msg, 3200);
+    appendClaudeLine(msg, "stderr");
+    setStreamingUi(false);
+  }
+}
+
+async function sendClaudePrompt(): Promise<void> {
+  const input = $("composer-input") as HTMLTextAreaElement;
+  const rawPrompt = input.value.trim();
+  const attachmentsToSend = [...activeAttachments];
+  if (!rawPrompt && attachmentsToSend.length === 0) return;
+  const prompt = rawPrompt || "Please review the attached files.";
+  const baseFilesystemAccess = settings?.claudeChatFilesystem
+    ? {
+        ...settings.claudeChatFilesystem,
+        temporaryRoots: [...temporaryClaudeChatFilesystemRoots]
+      }
+    : undefined;
+  const filesystemAccess = buildLockedClaudeFilesystemAccess(baseFilesystemAccess);
+  const preferFilesystemProjectFlow = shouldPreferClaudeFilesystemProjectFlow(prompt, filesystemAccess);
+  const managedWriteIntent = !preferFilesystemProjectFlow && isClaudeManagedWriteRequest(prompt, attachmentsToSend);
+  const workspaceRoot = managedWriteIntent ? await ensureWorkspaceRootPath() : "";
+  const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
+  const managedWritePermissions: ClaudeManagedEditPermissions = managedWriteIntent && workspaceRoot
+    ? {
+        allowedPaths: getEditableSourcePaths(attachmentsToSend),
+        allowedRoots: [workspaceRoot]
+      }
+    : { allowedPaths: [], allowedRoots: [] };
+  const managedWriteRequested = managedWritePermissions.allowedRoots.length > 0 || managedWritePermissions.allowedPaths.length > 0;
+  pendingClaudeManagedPermissions = managedWriteRequested ? managedWritePermissions : { allowedPaths: [], allowedRoots: [] };
+  pendingClaudeManagedBaselines = managedWriteRequested ? baselines : [];
+  pendingClaudeManagedMode = managedWriteRequested ? "chat" : "none";
+  pendingClaudeSaveGuard = managedWriteRequested ? null : shouldVerifyClaudeSave(rawPrompt || prompt, attachmentsToSend);
+
+  const hasImageAttachment = attachmentsToSend.some((attachment) => attachment.type === "image");
+  if (hasImageAttachment) {
+    pendingClaudeSaveGuard = null;
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedBaselines = [];
+    pendingClaudeManagedMode = "none";
+    await sendChatPromptWithAttachments(rawPrompt, attachmentsToSend, {
+      forceVisionModel: true,
+      switchFromClaude: true
+    });
+    return;
+  }
+
+  const chatId = await ensureActiveChatId();
+  const ready = await ensureClaudeChatSessionReady(chatId);
+  if (!ready) return;
+
+  activeAttachments = [];
+  renderComposerAttachments();
+
+  const attachmentSummary = attachmentsToSend.length > 0
+    ? `\n\nAttached: ${attachmentsToSend.map((attachment) => attachment.name).join(", ")}`
+    : "";
+  appendClaudeLine(`${rawPrompt || prompt}${attachmentSummary}`, "user");
+  input.value = "";
+  input.style.height = "auto";
+
+  try {
+    const claudePrompt = managedWriteRequested
+      ? buildClaudeManagedWritePrompt(prompt, attachmentsToSend, managedWritePermissions)
+      : prompt;
+    const res = await window.api.claude.send(claudePrompt, {
+      chatId,
+      attachments: attachmentsToSend,
+      enabledTools: getEnabledToolNames(),
+      filesystemAccess
+    });
+    claudeSessionRunning = Boolean(res.running);
+    if (!res.ok) {
+      pendingClaudeSaveGuard = null;
+      pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+      pendingClaudeManagedBaselines = [];
+      pendingClaudeManagedMode = "none";
+      activeAttachments = attachmentsToSend;
+      renderComposerAttachments();
+      setClaudeStatus(res.message, "err");
+      showToast(res.message, 3200);
+      appendClaudeLine(res.message, "stderr");
+      setStreamingUi(false);
+      return;
+    }
+    ensureClaudeAssistantMessage();
+    shouldAutoScroll = true;
+    setClaudeStatus("Running...", "busy");
+    setStreamingUi(true, "Claude is thinking...");
+  } catch (err) {
+    pendingClaudeSaveGuard = null;
+    pendingClaudeManagedPermissions = { allowedPaths: [], allowedRoots: [] };
+    pendingClaudeManagedBaselines = [];
+    pendingClaudeManagedMode = "none";
+    activeAttachments = attachmentsToSend;
+    renderComposerAttachments();
+    const msg = err instanceof Error ? err.message : "Failed to send prompt.";
+    setClaudeStatus(msg, "err");
+    showToast(msg, 3200);
+    appendClaudeLine(msg, "stderr");
+    setStreamingUi(false);
+  }
+}
+
 function ensureClaudeAssistantMessage(): string {
   const existingId = activeClaudeAssistantMessageId;
   if (existingId && renderedMessages.some((msg) => msg.id === existingId)) {

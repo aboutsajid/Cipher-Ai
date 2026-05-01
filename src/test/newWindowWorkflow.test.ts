@@ -56,6 +56,7 @@ test("renderer can open an unsaved draft chat from the window query string", () 
 test("renderer binds Claude sessions to a chat id without forcing Claude assistant output into plain-text mode", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
     readProjectFile("src/renderer/appMessageRenderUiUtils.ts")
   ].join("\n");
 
@@ -68,7 +69,10 @@ test("renderer binds Claude sessions to a chat id without forcing Claude assista
 });
 
 test("renderer only enables Claude managed write mode when prompts include explicit workspace or file write signals", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /function isClaudeManagedWriteRequest\(prompt: string, attachments: AttachmentPayload\[\] = \[\]\): boolean/);
   assert.match(rendererSource, /const hasWriteContext = editableAttachmentPaths\.length > 0 \|\| writableAttachmentRoots\.length > 0;/);
