@@ -668,6 +668,269 @@ function isClaudeRateLimitError(message: string): boolean {
   return /api error:\s*429|rate_limit_error|rate limit|session usage limit/.test(normalized);
 }
 
+function normalizeClaudeChatFilesystemRoots(value: string | string[]): string[] {
+  const raw = Array.isArray(value) ? value.join("\n") : value;
+  return [...new Set(
+    String(raw ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  )];
+}
+
+function normalizeClaudeChatFilesystemRootDrafts(
+  value: ClaudeChatFilesystemRootDraft[] | Array<{
+    path?: string;
+    label?: string;
+    allowWrite?: boolean;
+    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  }>,
+  fallbackAllowWrite = false,
+  fallbackOverwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite" = "allow-overwrite"
+): ClaudeChatFilesystemRootDraft[] {
+  const byPath = new Map<string, ClaudeChatFilesystemRootDraft>();
+  for (const item of value ?? []) {
+    const path = String(item?.path ?? "").trim();
+    if (!path) continue;
+    byPath.set(path, {
+      path,
+      label: String(item?.label ?? "").trim() || undefined,
+      allowWrite: item?.allowWrite === true || (item?.allowWrite !== false && fallbackAllowWrite),
+      overwritePolicy: item?.overwritePolicy === "create-only" || item?.overwritePolicy === "ask-before-overwrite"
+        ? item.overwritePolicy
+        : fallbackOverwritePolicy
+    });
+  }
+  return [...byPath.values()];
+}
+
+function getClaudeChatFilesystemRootDraftsFromUi(): ClaudeChatFilesystemRootDraft[] {
+  const list = document.getElementById("claude-chat-fs-root-list");
+  const globalWriteToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const globalWriteEnabled = globalWriteToggle instanceof HTMLInputElement && globalWriteToggle.checked;
+  const globalOverwritePolicy = document.getElementById("claude-chat-fs-overwrite-policy");
+  const fallbackOverwritePolicy = globalOverwritePolicy instanceof HTMLSelectElement
+    && (globalOverwritePolicy.value === "create-only" || globalOverwritePolicy.value === "ask-before-overwrite")
+    ? globalOverwritePolicy.value
+    : "allow-overwrite";
+  if (!(list instanceof HTMLElement)) return [];
+
+  const drafts: ClaudeChatFilesystemRootDraft[] = [];
+  for (const row of Array.from(list.querySelectorAll<HTMLElement>("[data-claude-fs-root-row='true']"))) {
+    const pathInput = row.querySelector<HTMLInputElement>("[data-role='path']");
+    const labelInput = row.querySelector<HTMLInputElement>("[data-role='label']");
+    const writeInput = row.querySelector<HTMLInputElement>("[data-role='allow-write']");
+    const overwriteInput = row.querySelector<HTMLSelectElement>("[data-role='overwrite-policy']");
+    const path = (pathInput?.value ?? "").trim();
+    if (!path) continue;
+    drafts.push({
+      path,
+      label: (labelInput?.value ?? "").trim() || undefined,
+      allowWrite: globalWriteEnabled && writeInput?.checked === true,
+      overwritePolicy: overwriteInput?.value === "create-only" || overwriteInput?.value === "ask-before-overwrite"
+        ? overwriteInput.value
+        : fallbackOverwritePolicy
+    });
+  }
+  return normalizeClaudeChatFilesystemRootDrafts(drafts, globalWriteEnabled, fallbackOverwritePolicy);
+}
+
+function renderClaudeChatFilesystemRootList(
+  drafts: ClaudeChatFilesystemRootDraft[],
+  globalWriteEnabled: boolean
+): void {
+  const list = document.getElementById("claude-chat-fs-root-list");
+  if (!(list instanceof HTMLElement)) return;
+
+  list.innerHTML = "";
+  if (drafts.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "field-help";
+    empty.textContent = "No approved Claude folders yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  drafts.forEach((draft, index) => {
+    const row = document.createElement("div");
+    row.dataset["claudeFsRootRow"] = "true";
+    row.className = "claude-fs-root-row";
+
+    const pathInput = document.createElement("input");
+    pathInput.className = "field-input";
+    pathInput.type = "text";
+    pathInput.value = draft.path;
+    pathInput.placeholder = "Folder path";
+    pathInput.dataset["role"] = "path";
+
+    const labelInput = document.createElement("input");
+    labelInput.className = "field-input";
+    labelInput.type = "text";
+    labelInput.value = draft.label ?? "";
+    labelInput.placeholder = "Optional label";
+    labelInput.dataset["role"] = "label";
+
+    const writeWrap = document.createElement("label");
+    writeWrap.className = "toggle-field";
+    const writeInput = document.createElement("input");
+    writeInput.type = "checkbox";
+    writeInput.checked = draft.allowWrite;
+    writeInput.disabled = !globalWriteEnabled;
+    writeInput.dataset["role"] = "allow-write";
+    const writeText = document.createElement("span");
+    writeText.textContent = "Write";
+    writeWrap.append(writeInput, writeText);
+
+    const overwriteInput = document.createElement("select");
+    overwriteInput.className = "field-input";
+    overwriteInput.dataset["role"] = "overwrite-policy";
+    overwriteInput.innerHTML = [
+      `<option value="allow-overwrite"${draft.overwritePolicy === "allow-overwrite" ? " selected" : ""}>Allow overwrite</option>`,
+      `<option value="create-only"${draft.overwritePolicy === "create-only" ? " selected" : ""}>Create only</option>`,
+      `<option value="ask-before-overwrite"${draft.overwritePolicy === "ask-before-overwrite" ? " selected" : ""}>Ask before overwrite</option>`
+    ].join("");
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn-ghost-sm";
+    removeBtn.textContent = "Remove";
+    removeBtn.dataset["role"] = "remove";
+    removeBtn.dataset["index"] = String(index);
+
+    row.append(pathInput, labelInput, writeWrap, overwriteInput, removeBtn);
+    list.appendChild(row);
+  });
+}
+
+function getClaudeChatFilesystemSettingsDraft(): {
+  roots: string[];
+  allowWrite: boolean;
+  overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  rootConfigs: ClaudeChatFilesystemRootDraft[];
+  temporaryRoots: string[];
+  budgets: { maxFilesPerTurn?: number; maxBytesPerTurn?: number; maxToolCallsPerTurn?: number };
+  auditEnabled: boolean;
+  requireWritePlan: boolean;
+} {
+  const writeToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const overwritePolicy = document.getElementById("claude-chat-fs-overwrite-policy");
+  const tempRootsInput = document.getElementById("claude-chat-fs-temp-roots");
+  const maxFilesInput = document.getElementById("claude-chat-fs-max-files");
+  const maxBytesInput = document.getElementById("claude-chat-fs-max-bytes");
+  const maxToolsInput = document.getElementById("claude-chat-fs-max-tools");
+  const auditToggle = document.getElementById("claude-chat-fs-audit-toggle");
+  const planToggle = document.getElementById("claude-chat-fs-plan-toggle");
+  const parseOptionalInt = (element: HTMLElement | null): number | undefined => {
+    if (!(element instanceof HTMLInputElement)) return undefined;
+    const value = element.value.trim();
+    if (!value) return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+  const rootConfigs = getClaudeChatFilesystemRootDraftsFromUi();
+  return {
+    roots: rootConfigs.map((item) => item.path),
+    allowWrite: writeToggle instanceof HTMLInputElement && writeToggle.checked,
+    overwritePolicy: overwritePolicy instanceof HTMLSelectElement
+      && (overwritePolicy.value === "create-only" || overwritePolicy.value === "ask-before-overwrite")
+      ? overwritePolicy.value
+      : "allow-overwrite",
+    rootConfigs,
+    temporaryRoots: normalizeClaudeChatFilesystemRoots(tempRootsInput instanceof HTMLTextAreaElement ? tempRootsInput.value : temporaryClaudeChatFilesystemRoots),
+    budgets: {
+      maxFilesPerTurn: parseOptionalInt(maxFilesInput),
+      maxBytesPerTurn: parseOptionalInt(maxBytesInput),
+      maxToolCallsPerTurn: parseOptionalInt(maxToolsInput)
+    },
+    auditEnabled: !(auditToggle instanceof HTMLInputElement) || auditToggle.checked,
+    requireWritePlan: planToggle instanceof HTMLInputElement && planToggle.checked
+  };
+}
+
+function renderClaudeChatFilesystemSettingsUi(filesystem: {
+  roots: string[];
+  allowWrite: boolean;
+  overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  rootConfigs?: Array<{
+    path?: string;
+    label?: string;
+    allowWrite?: boolean;
+    overwritePolicy?: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+  }>;
+  temporaryRoots?: string[];
+  budgets?: { maxFilesPerTurn?: number; maxBytesPerTurn?: number; maxToolCallsPerTurn?: number };
+  auditEnabled?: boolean;
+  requireWritePlan?: boolean;
+} | null | undefined): void {
+  const writeToggle = document.getElementById("claude-chat-fs-write-toggle");
+  const overwritePolicy = document.getElementById("claude-chat-fs-overwrite-policy");
+  const tempRootsInput = document.getElementById("claude-chat-fs-temp-roots");
+  const maxFilesInput = document.getElementById("claude-chat-fs-max-files");
+  const maxBytesInput = document.getElementById("claude-chat-fs-max-bytes");
+  const maxToolsInput = document.getElementById("claude-chat-fs-max-tools");
+  const auditToggle = document.getElementById("claude-chat-fs-audit-toggle");
+  const planToggle = document.getElementById("claude-chat-fs-plan-toggle");
+  const status = document.getElementById("claude-chat-fs-status");
+  const normalized = {
+    roots: normalizeClaudeChatFilesystemRoots(filesystem?.roots ?? []),
+    allowWrite: filesystem?.allowWrite === true,
+    overwritePolicy: filesystem?.overwritePolicy ?? "allow-overwrite",
+    rootConfigs: normalizeClaudeChatFilesystemRootDrafts(
+      Array.isArray(filesystem?.rootConfigs) && filesystem!.rootConfigs!.length > 0
+        ? filesystem!.rootConfigs!
+        : normalizeClaudeChatFilesystemRoots(filesystem?.roots ?? []).map((path) => ({
+            path,
+            allowWrite: filesystem?.allowWrite === true,
+            overwritePolicy: filesystem?.overwritePolicy ?? "allow-overwrite"
+          })),
+      filesystem?.allowWrite === true,
+      filesystem?.overwritePolicy ?? "allow-overwrite"
+    ),
+    temporaryRoots: normalizeClaudeChatFilesystemRoots(filesystem?.temporaryRoots ?? temporaryClaudeChatFilesystemRoots),
+    budgets: {
+      maxFilesPerTurn: filesystem?.budgets?.maxFilesPerTurn,
+      maxBytesPerTurn: filesystem?.budgets?.maxBytesPerTurn,
+      maxToolCallsPerTurn: filesystem?.budgets?.maxToolCallsPerTurn
+    },
+    auditEnabled: filesystem?.auditEnabled !== false,
+    requireWritePlan: filesystem?.requireWritePlan === true
+  };
+
+  if (writeToggle instanceof HTMLInputElement) {
+    writeToggle.checked = normalized.allowWrite;
+  }
+  if (overwritePolicy instanceof HTMLSelectElement) {
+    overwritePolicy.value = normalized.overwritePolicy;
+  }
+  if (tempRootsInput instanceof HTMLTextAreaElement) {
+    tempRootsInput.value = normalized.temporaryRoots.join("\n");
+  }
+  if (maxFilesInput instanceof HTMLInputElement) {
+    maxFilesInput.value = normalized.budgets.maxFilesPerTurn ? String(normalized.budgets.maxFilesPerTurn) : "";
+  }
+  if (maxBytesInput instanceof HTMLInputElement) {
+    maxBytesInput.value = normalized.budgets.maxBytesPerTurn ? String(normalized.budgets.maxBytesPerTurn) : "";
+  }
+  if (maxToolsInput instanceof HTMLInputElement) {
+    maxToolsInput.value = normalized.budgets.maxToolCallsPerTurn ? String(normalized.budgets.maxToolCallsPerTurn) : "";
+  }
+  if (auditToggle instanceof HTMLInputElement) {
+    auditToggle.checked = normalized.auditEnabled;
+  }
+  if (planToggle instanceof HTMLInputElement) {
+    planToggle.checked = normalized.requireWritePlan;
+  }
+  renderClaudeChatFilesystemRootList(normalized.rootConfigs, normalized.allowWrite);
+  if (status instanceof HTMLElement) {
+    const writeEnabledCount = normalized.rootConfigs.filter((item) => item.allowWrite).length;
+    status.textContent = normalized.rootConfigs.length === 0
+      ? "Claude chat filesystem access is off."
+      : normalized.allowWrite
+        ? `Claude chat can read ${normalized.rootConfigs.length} approved folder${normalized.rootConfigs.length === 1 ? "" : "s"} and write in ${writeEnabledCount} folder${writeEnabledCount === 1 ? "" : "s"}.`
+        : `Claude chat can read, list, and search inside ${normalized.rootConfigs.length} approved folder${normalized.rootConfigs.length === 1 ? "" : "s"}.`;
+  }
+}
+
 function getActiveClaudeChatFilesystemSettings(): Settings["claudeChatFilesystem"] | undefined {
   if (!settings?.claudeChatFilesystem) return undefined;
   return {

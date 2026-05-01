@@ -821,6 +821,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 199. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+200. `refactor(renderer): extract Claude filesystem settings helper cluster`
+   - Moved Claude filesystem settings/root helper cluster (`normalizeClaudeChatFilesystemRoots` through `renderClaudeChatFilesystemSettingsUi`) from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving root-draft normalization, per-root write/overwrite controls, filesystem settings draft assembly, and settings panel status messaging.
+   - Kept classic renderer script load order unchanged (`appClaudeSafetyUiUtils.js` already loads before `app.js` in `src/renderer/index.html`).
+201. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
