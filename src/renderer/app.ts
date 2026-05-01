@@ -249,18 +249,6 @@ function qs<T extends Element>(sel: string): T {
   return element;
 }
 
-function nextClientMessageId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-async function ensureActiveChatId(): Promise<string> {
-  let chatId = currentChatId;
-  if (!chatId) {
-    chatId = await createNewChat(false, activeChatContext ?? getActiveUiChatContext());
-  }
-  return chatId;
-}
-
 function ensureClaudeAssistantMessage(): string {
   const existingId = activeClaudeAssistantMessageId;
   if (existingId && renderedMessages.some((msg) => msg.id === existingId)) {

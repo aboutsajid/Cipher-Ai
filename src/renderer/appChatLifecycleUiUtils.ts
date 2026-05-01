@@ -4,6 +4,18 @@ function updateChatHeaderTitle(title: string | null): void {
   document.querySelector(".chat-title-stack")?.classList.toggle("is-empty", value.length === 0);
 }
 
+function nextClientMessageId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function ensureActiveChatId(): Promise<string> {
+  let chatId = currentChatId;
+  if (!chatId) {
+    chatId = await createNewChat(false, activeChatContext ?? getActiveUiChatContext());
+  }
+  return chatId;
+}
+
 async function createNewChat(showEmptyState = true, context = activeChatContext ?? getActiveUiChatContext()): Promise<string> {
   const chat = await window.api.chat.create(context);
   currentChatId = chat.id;

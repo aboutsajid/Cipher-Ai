@@ -800,6 +800,13 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 193. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+194. `refactor(renderer): extract chat id helpers`
+   - Moved `nextClientMessageId` and `ensureActiveChatId` from `src/renderer/app.ts` into `src/renderer/appChatLifecycleUiUtils.ts`.
+   - Kept behavior unchanged by preserving ID generation format and create-chat fallback behavior when no active chat is selected.
+   - Kept classic renderer script load order unchanged (`appChatLifecycleUiUtils.js` already loads before `app.js` in `src/renderer/index.html`).
+195. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
