@@ -849,11 +849,19 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 207. Validation:
    - `npm run build:ts` passed.
    - `npm test` passed (`434` passed / `0` failed).
+208. `refactor(renderer): extract Claude chat-session context helper pair`
+   - Moved `ensureClaudeChatSessionReady` and `stopClaudeSessionFromUi` from `src/renderer/app.ts` into `src/renderer/appClaudeSafetyUiUtils.ts`.
+   - Kept behavior unchanged by preserving per-chat Claude session reset/start flow, status/toast/error handling, and top stop-button shutdown behavior.
+   - Updated `src/test/newWindowWorkflow.test.ts` source introspection scope for stop-session assertions to include `src/renderer/appClaudeSafetyUiUtils.ts`.
+209. Validation:
+   - `npm run build:ts` passed.
+   - `npm test` passed (`434` passed / `0` failed).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
 - If regression appears, rollback to the latest green checkpoint commit.
 - Suggested rollback anchors (latest first):
+  - `86fb52c`
   - `7dab029`
   - `bdc411c`
   - `5a14ce7`
