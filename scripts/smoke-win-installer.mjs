@@ -207,7 +207,15 @@ async function stopProcesses(processes) {
   for (const processInfo of processes) {
     const pid = Number(processInfo.ProcessId);
     if (!Number.isFinite(pid) || pid <= 0) continue;
-    await run("taskkill", ["/PID", String(pid), "/F"]);
+    try {
+      await run("taskkill", ["/PID", String(pid), "/F"]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/failed with code 128/i.test(message) || /not found/i.test(message)) {
+        continue;
+      }
+      throw error;
+    }
   }
 }
 

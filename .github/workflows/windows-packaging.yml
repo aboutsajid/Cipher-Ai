@@ -40,8 +40,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run Build Product DoD gate tests
+        run: npm.cmd run test:agent:dod
+
+      - name: Verify DoD telemetry contract artifact
+        run: npm.cmd run verify:agent:dod:contract
+
       - name: Run Electron startup smoke
         run: npm.cmd run smoke:electron:start
+
+      - name: Run chat isolation smoke
+        run: npm.cmd run smoke:chat:isolation
 
       - name: Package Windows installer
         run: npm.cmd run pack:win
@@ -131,6 +140,28 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Upload chat isolation smoke artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-chat-isolation-smoke
+          path: |
+            tmp/chat-isolation-result.json
+            tmp/chat-isolation-error.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload DoD telemetry contract artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dod-telemetry-contract
+          path: |
+            tmp/agent-dod-telemetry-contract.json
+            tmp/agent-dod-telemetry-contract-summary.md
+          if-no-files-found: ignore
+          retention-days: 30
+
   update_smoke:
     runs-on: windows-latest
     timeout-minutes: 45
@@ -150,8 +181,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run Build Product DoD gate tests
+        run: npm.cmd run test:agent:dod
+
+      - name: Verify DoD telemetry contract artifact
+        run: npm.cmd run verify:agent:dod:contract
+
       - name: Run Electron startup smoke
         run: npm.cmd run smoke:electron:start
+
+      - name: Run chat isolation smoke
+        run: npm.cmd run smoke:chat:isolation
 
       - name: Download current installer artifact
         uses: actions/download-artifact@v4
@@ -291,3 +331,25 @@ jobs:
           path: tmp/win-update-smoke-summary.md
           if-no-files-found: error
           retention-days: 90
+
+      - name: Upload chat isolation smoke artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-update-chat-isolation-smoke
+          path: |
+            tmp/chat-isolation-result.json
+            tmp/chat-isolation-error.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload DoD telemetry contract artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-update-dod-telemetry-contract
+          path: |
+            tmp/agent-dod-telemetry-contract.json
+            tmp/agent-dod-telemetry-contract-summary.md
+          if-no-files-found: ignore
+          retention-days: 30

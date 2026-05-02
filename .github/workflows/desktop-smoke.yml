@@ -28,8 +28,37 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run Build Product DoD gate tests
+        run: npm.cmd run test:agent:dod
+
+      - name: Verify DoD telemetry contract artifact
+        run: npm.cmd run verify:agent:dod:contract
+
       - name: Run unit and integration tests
         run: npm.cmd test
 
       - name: Run Electron startup smoke
         run: npm.cmd run smoke:electron:start
+
+      - name: Run chat isolation smoke
+        run: npm.cmd run smoke:chat:isolation
+
+      - name: Upload chat isolation smoke artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-isolation-smoke
+          path: |
+            tmp/chat-isolation-result.json
+            tmp/chat-isolation-error.txt
+          if-no-files-found: ignore
+
+      - name: Upload DoD telemetry contract artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dod-telemetry-contract
+          path: |
+            tmp/agent-dod-telemetry-contract.json
+            tmp/agent-dod-telemetry-contract-summary.md
+          if-no-files-found: ignore
