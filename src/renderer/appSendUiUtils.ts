@@ -56,7 +56,7 @@ async function sendChatPromptWithAttachments(
   const content = rawContent || "Please review the attachment.";
   const wantsDirectSave = Boolean(shouldVerifyClaudeSave(rawContent || content, attachmentsToSend)?.requested);
   if (wantsDirectSave) {
-    showToast("Direct save sirf Edit & Save mode me Claude ke sath allowed hai.", 3800);
+    showToast("Direct save is only allowed with Claude in Edit & Save mode.", 3800);
     applyMode("edit");
     updateDirectSaveUi();
     return;
@@ -81,7 +81,7 @@ async function sendChatPromptWithAttachments(
     const candidate = findVisionModelCandidate();
     if (!candidate) {
       pendingChatSaveGuard = null;
-      showToast("Image review ke liye vision-capable model configure karo, phir dobara try karo.", 4200);
+      showToast("Configure a vision-capable model for image review, then try again.", 4200);
       activeAttachments = mergeAttachments(attachmentsToSend);
       renderComposerAttachments();
       return;
@@ -139,7 +139,7 @@ async function sendChatPromptWithAttachments(
 
   if (options?.switchFromClaude) {
     applyMode("write");
-    showToast("Image request ko multimodal chat model par route kiya gaya hai.", 2800);
+    showToast("Image request was routed to a multimodal chat model.", 2800);
   }
 
   shouldAutoScroll = true;

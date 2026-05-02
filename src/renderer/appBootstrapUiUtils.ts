@@ -359,6 +359,27 @@ async function init() {
   $("agent-preflight-modal").addEventListener("click", (event: Event) => {
     if (event.target === event.currentTarget) closeAgentPromptPreflightModal(false);
   });
+  $("agent-plan-preview-refresh-btn").onclick = () => {
+    void refreshAgentPlanPreviewModal();
+  };
+  $("agent-plan-preview-approve-btn").onclick = () => {
+    const promptInput = $("agent-plan-preview-prompt") as HTMLTextAreaElement;
+    closeAgentPlanPreviewModal({
+      approved: true,
+      prompt: (promptInput.value ?? "").trim()
+    });
+  };
+  $("agent-plan-preview-cancel-btn").onclick = () => {
+    closeAgentPlanPreviewModal({ approved: false, prompt: "" });
+  };
+  $("agent-plan-preview-close-btn").onclick = () => {
+    closeAgentPlanPreviewModal({ approved: false, prompt: "" });
+  };
+  $("agent-plan-preview-modal").addEventListener("click", (event: Event) => {
+    if (event.target === event.currentTarget) {
+      closeAgentPlanPreviewModal({ approved: false, prompt: "" });
+    }
+  });
   $("code-preview-close-btn").onclick = closeCodePreview;
   $("code-preview-modal").addEventListener("click", (event: Event) => {
     if (event.target === event.currentTarget) closeCodePreview();
@@ -458,7 +479,7 @@ async function init() {
       roots: nextRoots.map((item) => item.path),
       rootConfigs: nextRoots
     });
-    showToast(nextRoots.length > 0 ? "Claude chat folders updated. Save Settings dabao." : "No folders selected.", 2400);
+    showToast(nextRoots.length > 0 ? "Claude chat folders updated. Click Save Settings." : "No folders selected.", 2400);
   });
   $("claude-chat-fs-add-row-btn").addEventListener("click", () => {
     const draft = getClaudeChatFilesystemSettingsDraft();
@@ -501,7 +522,7 @@ async function init() {
       auditEnabled: true,
       requireWritePlan: false
     });
-    showToast("Claude chat folders cleared. Save Settings dabao.", 2200);
+    showToast("Claude chat folders cleared. Click Save Settings.", 2200);
   });
   $("model-select").addEventListener("change", () => {
     void syncChatContextAfterUiChange();
@@ -536,7 +557,7 @@ async function init() {
       }
       populateSettingsDefaultModelSelect();
       refreshRouteStrategyUi();
-      showToast(ollamaModels.length > 0 ? "Ollama models list updated. Save Settings dabao." : "No Ollama models found. Refresh first.", 2500);
+      showToast(ollamaModels.length > 0 ? "Ollama models list updated. Click Save Settings." : "No Ollama models found. Refresh first.", 2500);
       return;
     }
     if (providerMode === "nvidia") {
@@ -546,7 +567,7 @@ async function init() {
       }
       populateSettingsDefaultModelSelect();
       refreshRouteStrategyUi();
-      showToast("NVIDIA recommended models add ho gaye. Save Settings dabao.", 2600);
+      showToast("NVIDIA recommended models added. Click Save Settings.", 2600);
       return;
     }
 
@@ -556,7 +577,7 @@ async function init() {
     }
     populateSettingsDefaultModelSelect();
     refreshRouteStrategyUi();
-    showToast("OpenRouter recommended models add ho gaye. Save Settings dabao.");
+    showToast("OpenRouter recommended models added. Click Save Settings.");
   };
   $("test-conn-btn").onclick = async () => {
     if (providerMode === "ollama") {

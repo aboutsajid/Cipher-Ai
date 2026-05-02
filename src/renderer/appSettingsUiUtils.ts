@@ -84,7 +84,7 @@ async function saveSettings() {
 
   if (!ollamaEnabled && cloudProvider === "openrouter" && apiKeyRaw.trim() && !apiKey.startsWith("sk-or-v1-")) {
     setStatus("Invalid OpenRouter key format.", "err");
-    showToast("API key ghalat format mein hai. Sirf sk-or-v1-... key paste karo.", 4500);
+    showToast("API key format is invalid. Paste only an sk-or-v1-... key.", 4500);
     return;
   }
 

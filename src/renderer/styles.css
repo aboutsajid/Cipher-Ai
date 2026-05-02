@@ -2994,6 +2994,12 @@ body[data-theme="light"] .msg-wrapper-assistant .msg-content.is-plain {
   width: 100%;
   max-width: none;
 }
+.msg-wrapper-agent {
+  gap: 0;
+}
+.msg-wrapper-agent .msg-avatar {
+  display: none;
+}
 .msg-wrapper-system {
   justify-content: center;
   padding-top: 10px;
@@ -5611,6 +5617,28 @@ body[data-theme="light"] .image-history-visual {
   max-height: min(82vh, 760px);
   padding: 20px;
   gap: 12px;
+}
+.agent-plan-preview-modal {
+  width: min(94vw, 940px);
+  max-width: 940px;
+  max-height: min(86vh, 860px);
+  padding: 18px;
+  gap: 12px;
+}
+.agent-plan-preview-details {
+  min-height: 200px;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .agent-preflight-modal-details {
   min-height: 140px;

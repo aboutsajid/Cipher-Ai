@@ -401,7 +401,7 @@ async function ensureFilesystemToolReadyForEditSave(): Promise<boolean> {
     }
 
     if (!filesystemServer) {
-      showToast("Filesystem MCP tayar nahi ho saka.", 3200);
+      showToast("Could not prepare Filesystem MCP.", 3200);
       return false;
     }
 

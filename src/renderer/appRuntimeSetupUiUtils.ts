@@ -110,7 +110,7 @@ function setupMcpControls() {
     const addBtn = $("mcp-add-btn") as HTMLButtonElement;
 
     if (!name || !command) {
-      showToast("MCP name aur command required hain.", 2200);
+      showToast("MCP name and command are required.", 2200);
       return;
     }
 

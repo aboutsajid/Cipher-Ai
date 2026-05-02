@@ -347,7 +347,7 @@ async function prepareOllamaProviderSelection(): Promise<void> {
   }
 
   setStatus(`Ollama ready with ${preferredModel}.`, "ok");
-  showToast(`Ollama ready. Local models auto-load ho gaye: ${preferredModel}`, 2600);
+  showToast(`Ollama ready. Local models loaded automatically: ${preferredModel}`, 2600);
 }
 
 async function refreshOllamaModels(): Promise<void> {
@@ -388,7 +388,7 @@ async function selectChatProvider(option: "openrouter" | "nvidia" | "ollama" | "
     await prepareCloudProviderSelection(option);
     const providerName = getProviderDisplayName(option);
     setStatus(`${providerName} presets ready.`, "ok");
-    showToast(`${providerName} ready. Base URL aur models auto-set ho gaye.`, 2600);
+    showToast(`${providerName} ready. Base URL and models were set automatically.`, 2600);
   } else if (option === "ollama") {
     await prepareOllamaProviderSelection();
   } else {

@@ -284,7 +284,7 @@ async function sendClaudeEditSavePrompt(): Promise<void> {
   const baselines = buildClaudeManagedEditBaselines(attachmentsToSend);
   if (!rawPrompt && attachmentsToSend.length === 0) return;
   if (isVagueEditRequest(rawPrompt)) {
-    showToast("Edit & Save ke liye exact change likho. Example: text change karo, button rename karo, ya spacing adjust karo.", 4800);
+    showToast("For Edit & Save, describe the exact change. Example: change text, rename a button, or adjust spacing.", 4800);
     input.focus();
     return;
   }
