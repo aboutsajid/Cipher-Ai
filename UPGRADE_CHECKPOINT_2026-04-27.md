@@ -1610,6 +1610,10 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 395. `docs(checkpoint): refresh current snapshot timestamp and validation counters`
    - Updated `Current Snapshot` `Last sync` timestamp to `2026-05-03 02:24:43 +04:00`.
    - Updated latest test baseline to `npm test` = `466 passed / 0 failed`.
+396. `chore(sync): begin commit/sync follow-through from pending scope`
+   - Created local checkpoint/fix commit: `314ce83` (`chore(checkpoint): finalize placeholder cleanup and strict repair routing`).
+   - Commit includes placeholder cleanup completion artifacts, strict repair-route fallback hardening, reusable-package library classification guard updates, and checkpoint metadata refresh.
+   - Current branch sync state after `git fetch origin`: `main` is `ahead 198 / behind 1` (`origin/main...main` left/right count `1 198`), so remote push requires an explicit merge/rebase/force strategy decision before final sync.
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
@@ -1682,6 +1686,6 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 ## Notes
 - All changes above were validated with full test runs after each enhancement cluster.
 - No workflow-breaking changes were intentionally introduced.
-- Commit/sync is still pending; validated slices `212-393` are present in workspace and checkpointed.
+- Remote sync is still pending; local commit progress includes slice `396` and branch divergence currently reports `ahead 198 / behind 1`.
 
 
