@@ -3,12 +3,30 @@ export function inferArtifactTypeFromPrompt(
 ): "desktop-app" | "web-app" | "api-service" | "library" | "script-tool" | null {
   if (!normalizedPrompt) return null;
   if (looksLikeDesktopPrompt(normalizedPrompt)) return "desktop-app";
+  if (looksLikeDesktopPackagingPrompt(normalizedPrompt)) return "desktop-app";
   if (looksLikeCrudAppPrompt(normalizedPrompt)) return "web-app";
   if (/\b(api|backend|server|endpoint|rest|graphql|express|fastify|hono|nest)\b/.test(normalizedPrompt)) return "api-service";
-  if (/\b(library|sdk|package|module)\b/.test(normalizedPrompt)) return "library";
+  if (/\b(library|sdk|module)\b/.test(normalizedPrompt)) return "library";
+  if (/\b(npm package|publish(?:ing)?(?:\s+an?)?\s+package|package library)\b/.test(normalizedPrompt)) return "library";
+  if (
+    /\b(reusable|shared)\b/.test(normalizedPrompt)
+    && /\b(javascript|typescript|node(?:\.js)?|npm)?\s*package\b/.test(normalizedPrompt)
+  ) {
+    return "library";
+  }
   if (/\b(script|cli|command line|automation|bot|cron|utility|tool)\b/.test(normalizedPrompt)) return "script-tool";
   if (/\b(web app|website|landing page|pricing page|frontend|dashboard|marketing site|marketing page|react app|vite app|kanban|task board|microsite|showcase page)\b/.test(normalizedPrompt)) return "web-app";
   return null;
+}
+
+function looksLikeDesktopPackagingPrompt(normalizedPrompt: string): boolean {
+  if (!normalizedPrompt) return false;
+  const hasDesktopPackagingSignal = /\b(package:win|package win|installer smoke|windows installer|electron-builder|nsis|win-unpacked)\b/.test(normalizedPrompt);
+  if (!hasDesktopPackagingSignal) return false;
+  if (/\b(npm package|publish(?:ing)?(?:\s+an?)?\s+package|package library|sdk package)\b/.test(normalizedPrompt)) {
+    return false;
+  }
+  return true;
 }
 
 export function looksLikeDesktopPrompt(normalizedPrompt: string): boolean {

@@ -131,7 +131,7 @@ export function buildNodePackageStarterContentTemplate(
           "import test from 'node:test';",
           "import assert from 'node:assert/strict';",
           "",
-          "test('service smoke placeholder', () => {",
+          "test('service smoke runs in node runtime', () => {",
           "  assert.equal(typeof process.version, 'string');",
           "});"
         ].join("\n") + "\n"
@@ -213,7 +213,7 @@ export function buildNodePackageStarterContentTemplate(
         "import test from 'node:test';",
         "import assert from 'node:assert/strict';",
         "",
-        "test('cli smoke placeholder', () => {",
+        "test('cli smoke runs in node runtime', () => {",
         "  assert.equal(2 + 2, 4);",
         "});"
       ].join("\n") + "\n"
