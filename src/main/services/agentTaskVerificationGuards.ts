@@ -1,5 +1,6 @@
 import type {
   AgentTask,
+  AgentTaskRunMode,
   AgentVerificationCheck
 } from "../../shared/types";
 
@@ -14,11 +15,32 @@ export interface TaskApprovalScriptsLike {
   [key: string]: string | undefined;
 }
 
-export function ensureVerificationRequired(task: AgentTask): void {
+export function ensureVerificationRequired(task: AgentTask, runMode: AgentTaskRunMode = "build-product"): void {
+  const normalizedRunMode: AgentTaskRunMode = runMode === "standard" ? "standard" : "build-product";
+  const implementationStep = task.steps.find((step) => step.title === "Implement requested changes");
+  if (!implementationStep || implementationStep.status !== "completed") {
+    throw new Error("Implementation is required before completing an agent task.");
+  }
   const verificationStep = task.steps.find((step) => step.title === "Verify build and quality scripts");
   if (!verificationStep || verificationStep.status !== "completed") {
     throw new Error("Verification is required before completing an agent task.");
   }
+
+  if (normalizedRunMode === "build-product") {
+    const repairStep = task.steps.find((step) => step.title === "Repair verification failures");
+    if (!repairStep || repairStep.status !== "completed") {
+      throw new Error("Repair gate is required before completing an agent task.");
+    }
+    const packagingStep = task.steps.find((step) => step.title === "Package Windows installer");
+    if (!packagingStep || packagingStep.status !== "completed") {
+      throw new Error("Packaging gate is required before completing an agent task.");
+    }
+    const installerSmokeStep = task.steps.find((step) => step.title === "Run Windows installer smoke");
+    if (!installerSmokeStep || installerSmokeStep.status !== "completed") {
+      throw new Error("Installer smoke gate is required before completing an agent task.");
+    }
+  }
+
   const approvalStep = task.steps.find((step) => step.title === "Approve generated output");
   if (!approvalStep || approvalStep.status !== "completed") {
     throw new Error("Approval is required before completing an agent task.");

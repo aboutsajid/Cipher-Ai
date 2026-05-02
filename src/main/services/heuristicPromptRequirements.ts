@@ -15,6 +15,50 @@ export interface HeuristicPromptRequirement {
   mode: "all" | "any";
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasNegatedPhrase(normalizedPrompt: string, phrase: string): boolean {
+  const escapedPhrase = escapeRegExp(phrase).replace(/\s+/g, "\\s+");
+  const directNegation = new RegExp(
+    `\\b(?:no|without|omit|excluding|exclude|avoid|skip)\\s+(?:any\\s+)?${escapedPhrase}\\b`
+  );
+  const doNotNegation = new RegExp(
+    `\\bdo\\s+not\\s+(?:add|include|use|build|create|show|render|require|have|need)\\s+(?:any\\s+)?${escapedPhrase}\\b`
+  );
+  const dontNegation = new RegExp(
+    `\\bdon't\\s+(?:add|include|use|build|create|show|render|require|have|need)\\s+(?:any\\s+)?${escapedPhrase}\\b`
+  );
+  return directNegation.test(normalizedPrompt)
+    || doNotNegation.test(normalizedPrompt)
+    || dontNegation.test(normalizedPrompt);
+}
+
+function isNegatedPhraseOccurrence(prefixText: string): boolean {
+  return /\b(?:no|without|omit|excluding|exclude|avoid|skip)\s+(?:any\s+)?$/i.test(prefixText)
+    || /\bdo\s+not\s+(?:add|include|use|build|create|show|render|require|have|need)\s+(?:any\s+)?$/i.test(prefixText)
+    || /\bdon't\s+(?:add|include|use|build|create|show|render|require|have|need)\s+(?:any\s+)?$/i.test(prefixText);
+}
+
+function hasAffirmativePhrase(normalizedPrompt: string, phrase: string): boolean {
+  const escapedPhrase = escapeRegExp(phrase).replace(/\s+/g, "\\s+");
+  const phrasePattern = new RegExp(`\\b${escapedPhrase}\\b`, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = phrasePattern.exec(normalizedPrompt)) !== null) {
+    const startIndex = match.index;
+    const prefix = normalizedPrompt.slice(Math.max(0, startIndex - 96), startIndex);
+    if (!isNegatedPhraseOccurrence(prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasAnyAffirmativePhrase(normalizedPrompt: string, phrases: string[]): boolean {
+  return phrases.some((phrase) => hasAffirmativePhrase(normalizedPrompt, phrase));
+}
+
 export function hasProductSummaryRequirement(normalizedPrompt: string): boolean {
   const normalized = (normalizedPrompt ?? "").trim().toLowerCase();
   if (!normalized) return false;
@@ -58,7 +102,7 @@ export function extractPromptRequirements(
     }
   };
 
-  if (normalized.includes("hero")) {
+  if (hasAffirmativePhrase(normalized, "hero")) {
     addRequirement({
       id: "req-hero",
       label: "Hero section",
@@ -67,20 +111,24 @@ export function extractPromptRequirements(
     });
   }
 
-  if (normalized.includes("feature cards") || normalized.includes("features")) {
+  if (hasAnyAffirmativePhrase(normalized, ["feature section", "feature sections", "feature card", "feature cards"])) {
     addRequirement({
       id: "req-features",
       label: "Feature section",
-      terms: ["features", "feature", "card"],
-      mode: "all"
+      terms: ["feature", "card", "features"],
+      mode: "any"
     });
   }
 
-  if (
-    normalized.includes("contact cta")
-    || normalized.includes("call to action")
-    || /\b(contact us|get in touch|talk to sales|book now|book appointment)\b/.test(normalized)
-  ) {
+  if (hasAnyAffirmativePhrase(normalized, [
+    "contact cta",
+    "call to action",
+    "contact us",
+    "get in touch",
+    "talk to sales",
+    "book now",
+    "book appointment"
+  ])) {
     addRequirement({
       id: "req-contact",
       label: "Contact CTA",

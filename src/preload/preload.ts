@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AgentTaskPlanPreview,
+  AgentPromptPreflightResult,
   AgentTaskChangedPayload,
   AgentTaskRequest,
   AgentTaskRestartMode,
@@ -142,6 +144,8 @@ const api = {
     getTask: (taskId: string) => ipcRenderer.invoke("agent:getTask", taskId),
     getLogs: (taskId: string) => ipcRenderer.invoke("agent:getLogs", taskId),
     getRouteDiagnostics: (taskId?: string): Promise<AgentRouteDiagnostics> => ipcRenderer.invoke("agent:getRouteDiagnostics", taskId),
+    preflightPrompt: (request: string | AgentTaskRequest): Promise<AgentPromptPreflightResult> => ipcRenderer.invoke("agent:preflightPrompt", request),
+    previewPlan: (request: string | AgentTaskRequest): Promise<AgentTaskPlanPreview> => ipcRenderer.invoke("agent:previewPlan", request),
     startTask: (request: string | AgentTaskRequest) => ipcRenderer.invoke("agent:startTask", request),
     restartTask: (taskId: string, mode: AgentTaskRestartMode) => ipcRenderer.invoke("agent:restartTask", taskId, mode),
     stopTask: (taskId: string) => ipcRenderer.invoke("agent:stopTask", taskId),

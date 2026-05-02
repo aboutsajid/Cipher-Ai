@@ -260,7 +260,12 @@ export function buildAgentSoakReport(
         ? {
           blacklistedModels: [...task.telemetry.routeDiagnostics.blacklistedModels],
           failureCounts: task.telemetry.routeDiagnostics.failureCounts.map((entry) => ({ ...entry })),
-          activeStageRoutes: task.telemetry.routeDiagnostics.activeStageRoutes.map((entry) => ({ ...entry }))
+          visionRequested: task.telemetry.routeDiagnostics.visionRequested ?? false,
+          activeStageRoutes: task.telemetry.routeDiagnostics.activeStageRoutes.map((entry) => ({
+            ...entry,
+            visionRequested: entry.visionRequested ?? false,
+            visionCapable: entry.visionCapable ?? false
+          }))
         }
         : undefined,
       updatedAt: task.updatedAt,

@@ -59,8 +59,14 @@ export function shouldExposeClaudeChatFilesystem(
 
 function formatConversationRole(role: string): string {
   if (role === "assistant") return "Assistant";
-  if (role === "system") return "System";
+  if (role === "system") return "App";
   return "User";
+}
+
+function shouldIncludeSystemTranscriptEntry(content: string): boolean {
+  const normalized = (content ?? "").trim();
+  return normalized.startsWith("[Claude filesystem]")
+    || normalized.startsWith("[Claude rate limit]");
 }
 
 export function buildClaudeConversationPrompt(
@@ -79,7 +85,11 @@ export function buildClaudeConversationPrompt(
       .filter((entry) => Boolean(entry.content))
     : [];
 
-  let transcriptEntries = normalizedHistory.filter((entry) => entry.role === "user" || entry.role === "assistant");
+  let transcriptEntries = normalizedHistory.filter((entry) =>
+    entry.role === "user"
+    || entry.role === "assistant"
+    || (entry.role === "system" && shouldIncludeSystemTranscriptEntry(entry.content))
+  );
   const lastTranscriptEntry = transcriptEntries[transcriptEntries.length - 1];
   if (lastTranscriptEntry?.role === "user" && lastTranscriptEntry.content === normalizedPrompt) {
     transcriptEntries = transcriptEntries.slice(0, -1);

@@ -299,6 +299,8 @@ export interface AgentExecutionSpec {
 
 export type AgentTaskModelAttemptOutcome = "success" | "transient-error" | "error" | "semantic-error";
 export type AgentTaskFinalVerificationResult = AgentVerificationStatus | "partial";
+export type AgentTaskRunMode = "standard" | "build-product";
+export type AgentTaskDoDGateId = "plan" | "implement" | "verify" | "repair" | "package" | "installer-smoke" | "approve";
 export type AgentTaskFailureCategory =
   | "missing-file"
   | "malformed-json"
@@ -324,7 +326,15 @@ export interface AgentTaskModelAttempt {
   error?: string;
 }
 
+export interface AgentTaskDoDGateOutcome {
+  gate: AgentTaskDoDGateId;
+  status: AgentVerificationStatus;
+  summary: string;
+  updatedAt: string;
+}
+
 export interface AgentTaskTelemetry {
+  runMode?: AgentTaskRunMode;
   selectedModel?: string;
   fallbackModel?: string;
   fallbackUsed: boolean;
@@ -334,6 +344,7 @@ export interface AgentTaskTelemetry {
   verificationSummary?: string;
   lastStage?: string;
   failureMemoryHints?: string[];
+  dodGateOutcomes?: AgentTaskDoDGateOutcome[];
   routeDiagnostics?: AgentTaskRouteTelemetrySummary;
   modelAttempts: AgentTaskModelAttempt[];
 }
@@ -403,10 +414,57 @@ export interface AgentRouteDiagnostics {
   task?: AgentTaskRouteDiagnostics;
 }
 
+export interface AgentTaskRunBudget {
+  maxRuntimeMs?: number;
+  maxCommands?: number;
+  maxFileEdits?: number;
+  maxRepairAttempts?: number;
+}
+
+export interface AgentTaskRunBudgetUsage {
+  runtimeMs: number;
+  commands: number;
+  fileEdits: number;
+  repairAttempts: number;
+}
+
+export interface AgentTaskPlanPreview {
+  prompt: string;
+  runMode: AgentTaskRunMode;
+  targetPath?: string;
+  workingDirectory: string;
+  artifactType: AgentArtifactType;
+  summary: string;
+  stages: string[];
+  workItems: string[];
+  candidateFiles: string[];
+  qualityGates: string[];
+  requiredScripts: string[];
+}
+
 export interface AgentTaskRequest {
   prompt: string;
   attachments?: AttachmentPayload[];
   targetPath?: string;
+  runMode?: AgentTaskRunMode;
+  budget?: AgentTaskRunBudget;
+}
+
+export interface AgentPromptPreflightIssue {
+  severity: "error" | "warn";
+  code: string;
+  message: string;
+  suggestion?: string;
+}
+
+export interface AgentPromptPreflightResult {
+  ok: boolean;
+  normalizedPrompt: string;
+  runMode: AgentTaskRunMode;
+  inferredArtifact: AgentArtifactType;
+  requirementIds: string[];
+  issues: AgentPromptPreflightIssue[];
+  summary: string;
 }
 
 export interface AgentTaskOutput {
@@ -414,6 +472,10 @@ export interface AgentTaskOutput {
   packageName?: string;
   workingDirectory?: string;
   runCommand?: string;
+  run?: string;
+  installer?: string;
+  knownLimitations?: string[];
+  nextFixes?: string[];
   usageTitle?: string;
   usageDetail?: string;
 }
@@ -422,6 +484,9 @@ export interface AgentTask {
   id: string;
   prompt: string;
   attachments?: AttachmentPayload[];
+  runMode?: AgentTaskRunMode;
+  budget?: AgentTaskRunBudget;
+  budgetUsage?: AgentTaskRunBudgetUsage;
   status: AgentTaskStatus;
   createdAt: string;
   updatedAt: string;
@@ -562,6 +627,7 @@ export type IpcChannel =
   | "agent:listTasks"
   | "agent:getTask"
   | "agent:getLogs"
+  | "agent:previewPlan"
   | "agent:startTask"
   | "agent:restartTask"
   | "agent:stopTask"

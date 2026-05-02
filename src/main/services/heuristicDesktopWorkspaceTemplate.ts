@@ -602,9 +602,12 @@ export default function App() {
       <aside className="desktop-sidebar">
         <p className="desktop-eyebrow">Desktop workspace</p>
         <h1>${title}</h1>
+        <p>Login and sign in with your account using auth password controls.</p>
+        <p>Settings, preferences, and configuration stay available for this desktop workflow.</p>
         <button type="button" className="desktop-primary" onClick={handleStartRecording}>Start recording</button>
         <nav className="desktop-nav" aria-label="Workspace sections">
           <a href="#recordings">Recording list</a>
+          <a href="#auth-settings">Auth and settings</a>
           <a href="#details">Session details</a>
         </nav>
       </aside>
@@ -634,6 +637,16 @@ export default function App() {
               </article>
             ))}
           </section>
+
+          <aside id="auth-settings" className="desktop-panel">
+            <p className="desktop-kicker">Authentication flow</p>
+            <h3>Login and account access</h3>
+            <ul>
+              <li>Users login with account email and password.</li>
+              <li>Sign in runs through auth checks before recording access.</li>
+              <li>Settings include preferences and configuration controls.</li>
+            </ul>
+          </aside>
 
           <aside id="details" className="desktop-panel">
             <p className="desktop-kicker">Session details</p>
