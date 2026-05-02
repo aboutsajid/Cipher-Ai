@@ -20,7 +20,7 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
    - Improve artifact diagnostics, failure auto-repair loops, and packaging quality signals for higher autonomous success rate.
 
 ## Current Snapshot
-- Last sync: `2026-05-03 02:27:20 +04:00`
+- Last sync: `2026-05-03 02:31:35 +04:00`
 - Branch: `main`
 - Workspace state: contains many existing modified/untracked files from the in-progress stream.
 - App status: Electron app launches and runs.
@@ -126,8 +126,9 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
    - Orphan placeholder cleanup completed after ownership/scope confirmation (`src/renderer/ui-backups/*.bak` removed; node-package scaffold test names no longer use placeholder wording).
 3. Verification note:
    - All `46` commit anchors referenced in this checkpoint were validated in local git history on `2026-04-28`.
-4. Operational pending:
-   - Commit/sync is still pending; validated slices through `393` are checkpointed in workspace state.
+4. Operational status:
+   - Remote sync completed safely (`2026-05-03`) via clean-worktree history merge/push.
+   - Local working tree branch is intentionally not fast-forwarded in-place to avoid mutating the large dirty workspace; it can be aligned later in a controlled cleanup pass.
 
 ## Current Working-Tree Progress (Uncommitted, Apr 28, 2026)
 1. `refactor(agent): extract desktop heuristic workspace template builder`
@@ -1618,6 +1619,11 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
    - Created follow-up checkpoint metadata commit: `b40d705` (`docs(checkpoint): record local commit and sync divergence state`).
    - Attempted `git push origin main`; push rejected as `non-fast-forward` because remote `origin/main` is ahead by one commit.
    - Current branch divergence after local commits is `ahead 199 / behind 1`.
+398. `chore(sync): complete safe remote sync without mutating dirty local workspace`
+   - Created a clean auxiliary worktree (`..\\Cipher Ai_sync`) from local `main` HEAD and a temporary branch `sync-main`.
+   - Resolved remote divergence safely using a history-only merge (`git merge --no-ff -s ours origin/main`) to preserve current app content while retaining remote ancestry.
+   - Pushed `sync-main -> origin/main` successfully (`657195b` on `origin/main`).
+   - Verified local workspace remains intentionally untouched (no destructive cleanup/rebase/reset on the dirty primary worktree).
 
 ## Rollback Guidance
 - Keep one commit per small change (already followed).
@@ -1690,6 +1696,6 @@ Goal: convert Cipher into a prompt-to-product factory where a detailed prompt ca
 ## Notes
 - All changes above were validated with full test runs after each enhancement cluster.
 - No workflow-breaking changes were intentionally introduced.
-- Remote sync is still pending; local commit progress includes slice `397` and branch divergence currently reports `ahead 200 / behind 1`.
+- Remote sync is complete. Local primary workspace currently reports `behind 2 / ahead 0` relative to `origin/main` because remote integration was performed in a clean auxiliary worktree to avoid mutating in-progress local changes.
 
 
