@@ -56,6 +56,7 @@ function setupKeyboardShortcuts() {
       const imageHistoryModal = document.getElementById("image-history-modal");
       const imagePreviewModal = document.getElementById("image-preview-modal");
       const agentTargetModal = document.getElementById("agent-target-modal");
+      const agentPreflightModal = document.getElementById("agent-preflight-modal");
       const chatProviderMenu = document.getElementById("chat-provider-menu");
       const headerToolsMenu = document.getElementById("header-tools-menu");
       const codePreviewModal = document.getElementById("code-preview-modal");
@@ -66,6 +67,10 @@ function setupKeyboardShortcuts() {
       }
       if (agentTargetModal instanceof HTMLElement && agentTargetModal.style.display !== "none") {
         closeAgentTargetPromptModal(null);
+        return;
+      }
+      if (agentPreflightModal instanceof HTMLElement && agentPreflightModal.style.display !== "none") {
+        closeAgentPromptPreflightModal(true);
         return;
       }
       if (previewWorkspace instanceof HTMLElement && previewWorkspace.style.display !== "none") {
@@ -110,4 +115,3 @@ function setupKeyboardShortcuts() {
     }
   });
 }
-

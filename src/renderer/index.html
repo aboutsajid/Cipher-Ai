@@ -631,6 +631,15 @@
             <button id="agent-target-clear-btn" class="btn-ghost-sm" type="button">Clear</button>
           </div>
           <small class="field-help">Optional. When set, the agent will create or update files in this workspace folder instead of choosing its own default location.</small>
+          <div class="field-row" style="align-items:center; gap:8px; flex-wrap:wrap;">
+            <label class="field-label" for="agent-run-mode-select" style="margin:0;">Run mode</label>
+            <select id="agent-run-mode-select" class="field-input" style="max-width:250px;">
+              <option value="build-product">Build Product (full DoD)</option>
+              <option value="standard">Standard (implement + verify + approve)</option>
+            </select>
+          </div>
+          <small class="field-help">Build Product enforces plan -> implement -> verify -> repair -> package -> installer smoke -> approve. Standard skips product-only packaging gates.</small>
+          <p id="agent-preflight-msg" class="status-msg"></p>
           <div class="btn-row">
             <button id="agent-start-btn" class="btn-primary" type="button">Start Agent</button>
             <button id="agent-stop-btn" class="btn-ghost" type="button">Stop Agent</button>
@@ -933,10 +942,29 @@
     </div>
   </div>
 
+  <div id="agent-preflight-modal" class="modal-overlay" style="display:none">
+    <div class="modal agent-preflight-modal" role="dialog" aria-modal="true" aria-labelledby="agent-preflight-modal-title">
+      <div class="code-preview-header">
+        <p id="agent-preflight-modal-title" class="modal-title">Prompt Needs Changes</p>
+        <button id="agent-preflight-modal-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <p id="agent-preflight-modal-summary" class="field-help">
+        Update the prompt details below, then run the agent again.
+      </p>
+      <div id="agent-preflight-modal-details" class="agent-preflight-modal-details"></div>
+      <div class="btn-row">
+        <button id="agent-preflight-modal-edit-btn" class="btn-primary" type="button">Edit Prompt</button>
+        <button id="agent-preflight-modal-dismiss-btn" class="btn-ghost" type="button">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script src="./appPathUtils.js"></script>
   <script src="./appTextUtils.js"></script>
+  <script src="./appDomLookupUiUtils.js"></script>
+  <script src="./appStateUiUtils.js"></script>
   <script src="./appClaudeSafetyUiUtils.js"></script>
   <script src="./appManagedWriteUtils.js"></script>
   <script src="./appMcpOllamaUiUtils.js"></script>
@@ -954,6 +982,9 @@
   <script src="./appChatDraftUiUtils.js"></script>
   <script src="./appChatListRenderUiUtils.js"></script>
   <script src="./appChatLoadUiUtils.js"></script>
+  <script src="./appAgentPromptSyncUiUtils.js"></script>
+  <script src="./appInteractionModeUiUtils.js"></script>
+  <script src="./appIpcListenerUiUtils.js"></script>
   <script src="./appSendUiUtils.js"></script>
   <script src="./appChatSummaryUiUtils.js"></script>
   <script src="./appPreviewModalUiUtils.js"></script>
@@ -979,6 +1010,7 @@
   <script src="./appSnapshotRestoreUiUtils.js"></script>
   <script src="./appAgentRouteSummaryUiUtils.js"></script>
   <script src="./appAgentRouteHealthUiUtils.js"></script>
+  <script src="./appAgentPromptPreflightUiUtils.js"></script>
   <script src="./appAgentRouteDiagnosticsUiUtils.js"></script>
   <script src="./appAgentTaskResultsUiUtils.js"></script>
   <script src="./appAgentHistoryUiUtils.js"></script>
@@ -993,6 +1025,7 @@
   <script src="./appDesktopLaunchUiUtils.js"></script>
   <script src="./appRuntimeSetupUiUtils.js"></script>
   <script src="./appKeyboardShortcutsUiUtils.js"></script>
+  <script src="./appBootstrapUiUtils.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

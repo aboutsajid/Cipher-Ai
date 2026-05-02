@@ -1,3 +1,51 @@
+function normalizeAgentRunMode(value: string | null | undefined): AgentTaskRunMode {
+  return value === "standard" ? "standard" : "build-product";
+}
+
+function getAgentRunModeLabel(mode: AgentTaskRunMode): string {
+  return mode === "standard" ? "Standard" : "Build Product";
+}
+
+function getAgentRunModeSelect(): HTMLSelectElement | null {
+  const node = document.getElementById("agent-run-mode-select");
+  return node instanceof HTMLSelectElement ? node : null;
+}
+
+function syncAgentRunModeSelection(mode: AgentTaskRunMode, persist = true): void {
+  const normalizedMode = normalizeAgentRunMode(mode);
+  selectedAgentRunMode = normalizedMode;
+  const runModeSelect = getAgentRunModeSelect();
+  if (runModeSelect && runModeSelect.value !== normalizedMode) {
+    runModeSelect.value = normalizedMode;
+  }
+  if (!persist) return;
+  try {
+    localStorage.setItem(AGENT_RUN_MODE_STORAGE_KEY, normalizedMode);
+  } catch {
+    // Ignore storage write failures in restricted environments.
+  }
+}
+
+function hydrateAgentRunModeSelection(): void {
+  let storedMode: AgentTaskRunMode = "build-product";
+  try {
+    storedMode = normalizeAgentRunMode(localStorage.getItem(AGENT_RUN_MODE_STORAGE_KEY));
+  } catch {
+    storedMode = "build-product";
+  }
+  syncAgentRunModeSelection(storedMode, false);
+}
+
+function getSelectedAgentRunMode(): AgentTaskRunMode {
+  const runModeSelect = getAgentRunModeSelect();
+  if (!runModeSelect) return normalizeAgentRunMode(selectedAgentRunMode);
+  const selectedMode = normalizeAgentRunMode(runModeSelect.value);
+  if (selectedMode !== selectedAgentRunMode) {
+    selectedAgentRunMode = selectedMode;
+  }
+  return selectedMode;
+}
+
 async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
   const normalized = (prompt ?? "").trim();
   if (!normalized) {
@@ -10,9 +58,39 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
   }
   const attachmentsToSend = [...activeAttachments];
   const targetPath = getRequestedAgentTargetPath();
+  const runMode = getSelectedAgentRunMode();
+  let promptForRun = normalized;
+  let preflightResult: AgentPromptPreflightResult | null = null;
 
   try {
-    const warning = getAgentApprovalWarning(normalized);
+    preflightResult = await runAgentPromptPreflight(promptForRun, runMode);
+    renderAgentPromptPreflight(preflightResult);
+    if (!preflightResult.ok) {
+      const consented = requestAgentPromptAutoEnhanceConsent(preflightResult);
+      if (consented) {
+        const enhanced = await autoEnhanceAgentPromptForPreflight(promptForRun, runMode, preflightResult);
+        if (enhanced.enhanced) {
+          promptForRun = enhanced.prompt;
+          preflightResult = enhanced.preflight;
+          applyAgentPromptToInputs(promptForRun);
+          renderAgentPromptPreflight(preflightResult);
+          showToast("Prompt auto-enhanced by agent preflight.", 2200);
+          if (preflightResult.ok) {
+            setAgentStatus("Prompt auto-enhanced. Starting task...");
+          }
+        }
+      } else {
+        setAgentStatus("Auto-enhancement skipped. Review prompt issues in popup.", "err");
+      }
+    }
+    if (!preflightResult.ok) {
+      openAgentPromptPreflightModal(preflightResult);
+      const blockingMessage = getAgentPromptPreflightBlockingMessage(preflightResult);
+      setAgentStatus("Start blocked. Review prompt issues in popup.", "err");
+      showToast(blockingMessage, 3600);
+      return false;
+    }
+    const warning = getAgentApprovalWarning(promptForRun);
     if (warning && !window.confirm(warning)) {
       setAgentStatus("Agent task cancelled before start.");
       return false;
@@ -22,9 +100,10 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
       targetInput.value = targetPath;
     }
     const task = await window.api.agent.startTask({
-      prompt: normalized,
+      prompt: promptForRun,
       attachments: attachmentsToSend,
-      targetPath: targetPath || undefined
+      targetPath: targetPath || undefined,
+      runMode
     });
     activeAgentRestoreState = null;
     activeAgentTaskId = task.id;
@@ -33,11 +112,11 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
     handledDesktopLaunchPromptTasks.delete(task.id);
     cachedAgentTasks = [task, ...cachedAgentTasks.filter((item) => item.id !== task.id)];
     syncActiveAgentTaskSelectionUi();
-    await appendAgentTaskToChat(normalized, task);
+    await appendAgentTaskToChat(promptForRun, task);
     activeAttachments = [];
     renderComposerAttachments();
     setStreamingUi(true, "Agent is starting...");
-    setAgentStatus("Agent task started.");
+    setAgentStatus(`Agent task started (${getAgentRunModeLabel(runMode)}).`);
     renderAgentTask(task, []);
     ensureAgentPolling();
     void refreshAgentTask(true);
@@ -69,6 +148,8 @@ async function restartAgentTaskPrompt(taskId: string, mode: AgentTaskRestartMode
 
   try {
     const restarted = await window.api.agent.restartTask(taskId, mode);
+    const restartedRunMode = normalizeAgentRunMode(restarted.runMode);
+    syncAgentRunModeSelection(restartedRunMode, true);
     activeAgentRestoreState = null;
     activeAgentTaskId = restarted.id;
     pendingAutoOpenAgentPreviewTaskId = restarted.id;
@@ -78,7 +159,7 @@ async function restartAgentTaskPrompt(taskId: string, mode: AgentTaskRestartMode
     syncActiveAgentTaskSelectionUi();
     await appendAgentTaskToChat(restarted.prompt, restarted);
     setStreamingUi(true, "Agent is starting...");
-    setAgentStatus(`${getAgentRestartModeLabel(mode)} started.`);
+    setAgentStatus(`${getAgentRestartModeLabel(mode)} started (${getAgentRunModeLabel(restartedRunMode)}).`);
     renderAgentTask(restarted, []);
     ensureAgentPolling();
     void refreshAgentTask(true);
