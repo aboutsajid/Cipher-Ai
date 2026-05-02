@@ -7,6 +7,15 @@ function readProjectFile(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
 
+function readRendererSource(...paths: string[]): string {
+  return [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
+    readProjectFile("src/renderer/appBootstrapUiUtils.ts"),
+    ...paths.map((path) => readProjectFile(path))
+  ].join("\n");
+}
+
 test("new window flow opens another workspace window in draft-chat mode without creating a saved chat", () => {
   const ipcSource = readProjectFile("src/main/chatAppIpc.ts");
 
@@ -15,10 +24,7 @@ test("new window flow opens another workspace window in draft-chat mode without 
 });
 
 test("renderer startup honors the chatId query parameter for initial chat selection", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appChatContextProviderUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource("src/renderer/appChatContextProviderUiUtils.ts");
 
   assert.match(rendererSource, /new URLSearchParams\(window\.location\.search\)\.get\("chatId"\)/);
   assert.match(rendererSource, /const initialChatId = getInitialChatIdFromLocation\(\);/);
@@ -43,10 +49,7 @@ test("second instance flow also opens another workspace window in draft-chat mod
 });
 
 test("renderer can open an unsaved draft chat from the window query string", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appChatContextProviderUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource("src/renderer/appChatContextProviderUiUtils.ts");
 
   assert.match(rendererSource, /function shouldOpenDraftChatFromLocation\(\): boolean/);
   assert.match(rendererSource, /new URLSearchParams\(window\.location\.search\)\.get\("draftChat"\)/);
@@ -54,11 +57,10 @@ test("renderer can open an unsaved draft chat from the window query string", () 
 });
 
 test("renderer binds Claude sessions to a chat id without forcing Claude assistant output into plain-text mode", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
-    readProjectFile("src/renderer/appMessageRenderUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource(
+    "src/renderer/appClaudeSafetyUiUtils.ts",
+    "src/renderer/appMessageRenderUiUtils.ts"
+  );
 
   assert.match(rendererSource, /function shouldRenderMessageAsPlainText\(msg: Message \| undefined\): boolean/);
   assert.match(rendererSource, /return msg\?\.role === "system";/);
@@ -69,10 +71,7 @@ test("renderer binds Claude sessions to a chat id without forcing Claude assista
 });
 
 test("renderer only enables Claude managed write mode when prompts include explicit workspace or file write signals", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource("src/renderer/appClaudeSafetyUiUtils.ts");
 
   assert.match(rendererSource, /function isClaudeManagedWriteRequest\(prompt: string, attachments: AttachmentPayload\[\] = \[\]\): boolean/);
   assert.match(rendererSource, /const hasWriteContext = editableAttachmentPaths\.length > 0 \|\| writableAttachmentRoots\.length > 0;/);
@@ -85,12 +84,11 @@ test("renderer only enables Claude managed write mode when prompts include expli
 });
 
 test("renderer preserves Claude system notices and applies sparse-chat density state", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
-    readProjectFile("src/renderer/appChatLoadUiUtils.ts"),
-    readProjectFile("src/renderer/appMessageRenderUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource(
+    "src/renderer/appClaudeSafetyUiUtils.ts",
+    "src/renderer/appChatLoadUiUtils.ts",
+    "src/renderer/appMessageRenderUiUtils.ts"
+  );
 
   assert.match(rendererSource, /role: "system"/);
   assert.match(rendererSource, /metadata:\s*\{\s*systemNotice: true\s*\}/);
@@ -100,10 +98,7 @@ test("renderer preserves Claude system notices and applies sparse-chat density s
 });
 
 test("renderer keeps chat loading resilient when restoring provider context fails", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appChatLoadUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource("src/renderer/appChatLoadUiUtils.ts");
 
   assert.match(rendererSource, /const storedContext = getStoredChatContext\(chat\);/);
   assert.match(rendererSource, /try \{\s*applyChatContextToUi\(storedContext\);\s*\} catch \(err\) \{/);
@@ -112,10 +107,7 @@ test("renderer keeps chat loading resilient when restoring provider context fail
 });
 
 test("renderer falls back to saved Ollama models when refresh fails during provider switching", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appChatContextProviderUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource("src/renderer/appChatContextProviderUiUtils.ts");
 
   assert.match(rendererSource, /try \{\s*models = await window\.api\.ollama\.listModels\(baseUrl\);\s*\} catch \(err\) \{/);
   assert.match(rendererSource, /models = \(base\.ollamaModels \?\? \[\]\)\.map\(\(model\) => model\.trim\(\)\)\.filter\(Boolean\);/);
@@ -123,10 +115,7 @@ test("renderer falls back to saved Ollama models when refresh fails during provi
 });
 
 test("renderer top stop button stops active Claude sessions", () => {
-  const rendererSource = [
-    readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
-  ].join("\n");
+  const rendererSource = readRendererSource("src/renderer/appClaudeSafetyUiUtils.ts");
 
   assert.match(rendererSource, /async function stopClaudeSessionFromUi\(toastMessage = "Claude stop requested\."\): Promise<boolean>/);
   assert.match(rendererSource, /suppressClaudeExitNotice = true;\s*setClaudeStatus\("Stopping Claude Code\.\.\.", "busy"\);/);

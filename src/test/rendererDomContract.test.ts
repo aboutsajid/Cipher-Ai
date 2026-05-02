@@ -10,6 +10,7 @@ function readProjectFile(path: string): string {
 function readRendererBindingSource(): string {
   return [
     "src/renderer/app.ts",
+    "src/renderer/appStateUiUtils.ts",
     "src/renderer/appClaudeSafetyUiUtils.ts",
     "src/renderer/appComposerAttachmentUiUtils.ts",
     "src/renderer/appMessageMetaUiUtils.ts",
@@ -25,6 +26,9 @@ function readRendererBindingSource(): string {
     "src/renderer/appChatDraftUiUtils.ts",
     "src/renderer/appChatListRenderUiUtils.ts",
     "src/renderer/appChatLoadUiUtils.ts",
+    "src/renderer/appAgentPromptSyncUiUtils.ts",
+    "src/renderer/appInteractionModeUiUtils.ts",
+    "src/renderer/appIpcListenerUiUtils.ts",
     "src/renderer/appSendUiUtils.ts",
     "src/renderer/appChatSummaryUiUtils.ts",
     "src/renderer/appPreviewModalUiUtils.ts",
@@ -50,6 +54,7 @@ function readRendererBindingSource(): string {
     "src/renderer/appSnapshotRestoreUiUtils.ts",
     "src/renderer/appAgentRouteSummaryUiUtils.ts",
     "src/renderer/appAgentRouteHealthUiUtils.ts",
+    "src/renderer/appAgentPlanPreviewUiUtils.ts",
     "src/renderer/appAgentRouteDiagnosticsUiUtils.ts",
     "src/renderer/appAgentTaskResultsUiUtils.ts",
     "src/renderer/appAgentHistoryUiUtils.ts",
@@ -63,7 +68,8 @@ function readRendererBindingSource(): string {
     "src/renderer/appSettingsUiUtils.ts",
     "src/renderer/appDesktopLaunchUiUtils.ts",
     "src/renderer/appRuntimeSetupUiUtils.ts",
-    "src/renderer/appKeyboardShortcutsUiUtils.ts"
+    "src/renderer/appKeyboardShortcutsUiUtils.ts",
+    "src/renderer/appBootstrapUiUtils.ts"
   ]
     .map((path) => readProjectFile(path))
     .join("\n");
@@ -114,13 +120,18 @@ test("renderer index html provides every id referenced by renderer app bindings"
 });
 
 test("renderer IPC listener setup is idempotent to avoid duplicate subscriptions", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
+    readProjectFile("src/renderer/appIpcListenerUiUtils.ts")
+  ].join("\n");
   assert.match(rendererSource, /function setupIpcListeners\(\)\s*\{\s*if \(ipcListenersInitialized\) return;\s*ipcListenersInitialized = true;/);
 });
 
 test("router status refresh only loads logs when explicitly requested", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
     readProjectFile("src/renderer/appPanelToggleUiUtils.ts"),
     readProjectFile("src/renderer/appRouterStatusUiUtils.ts")
   ].join("\n");
@@ -130,7 +141,12 @@ test("router status refresh only loads logs when explicitly requested", () => {
 });
 
 test("renderer tracks IPC unsubscriptions and tears listeners down on unload", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
+    readProjectFile("src/renderer/appIpcListenerUiUtils.ts"),
+    readProjectFile("src/renderer/appBootstrapUiUtils.ts")
+  ].join("\n");
   assert.match(rendererSource, /const ipcListenerUnsubscribers: Array<\(\) => void> = \[\];/);
   assert.match(rendererSource, /function teardownIpcListeners\(\): void/);
   assert.match(rendererSource, /window\.addEventListener\("beforeunload", teardownIpcListeners, \{ once: true \}\);/);
@@ -139,6 +155,7 @@ test("renderer tracks IPC unsubscriptions and tears listeners down on unload", (
 test("agent polling falls back only when task change events are stale", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
     readProjectFile("src/renderer/appAgentTaskRefreshUiUtils.ts")
   ].join("\n");
   assert.match(rendererSource, /let lastAgentTaskChangeAt = 0;/);

@@ -87,6 +87,61 @@ test("CcrService parses streamed SSE content and emits chunks", async () => {
   });
 });
 
+test("CcrService sends NVIDIA-compatible chat requests without OpenRouter-only headers", async () => {
+  const chunks: string[] = [];
+  const service = new CcrService(createSettings({
+    apiKey: "nvapi-test-secret",
+    baseUrl: "https://integrate.api.nvidia.com/v1"
+  }) as never);
+
+  await withMockFetch(async (_input, init) => {
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers["Authorization"], "Bearer nvapi-test-secret");
+    assert.equal(Object.hasOwn(headers, "HTTP-Referer"), false);
+    assert.equal(Object.hasOwn(headers, "X-Title"), false);
+    return createSseResponse([
+      'data: {"choices":[{"delta":{"content":"NVIDIA"}}]}\n',
+      "data: [DONE]\n"
+    ]);
+  }, async () => {
+    const result = await service.sendMessageAdvanced(
+      [{ role: "user", content: "hello" }],
+      "meta/llama-3.1-70b-instruct",
+      (chunk) => chunks.push(chunk)
+    );
+
+    assert.equal(result, "NVIDIA");
+    assert.deepEqual(chunks, ["NVIDIA"]);
+  });
+});
+
+test("CcrService respects an explicit NVIDIA provider on custom cloud endpoints", async () => {
+  const service = new CcrService(createSettings({
+    apiKey: "nvapi-test-secret",
+    baseUrl: "https://gateway.example.com/v1",
+    cloudProvider: "nvidia"
+  }) as never);
+
+  await withMockFetch(async (_input, init) => {
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers["Authorization"], "Bearer nvapi-test-secret");
+    assert.equal(Object.hasOwn(headers, "HTTP-Referer"), false);
+    assert.equal(Object.hasOwn(headers, "X-Title"), false);
+    return createSseResponse([
+      'data: {"choices":[{"delta":{"content":"custom nvidia"}}]}\n',
+      "data: [DONE]\n"
+    ]);
+  }, async () => {
+    const result = await service.sendMessageAdvanced(
+      [{ role: "user", content: "hello" }],
+      "meta/llama-3.1-70b-instruct",
+      () => undefined
+    );
+
+    assert.equal(result, "custom nvidia");
+  });
+});
+
 test("CcrService sendMessageAdvanced respects an explicit timeout override", async () => {
   const service = new CcrService(createSettings({ apiKey: "sk-or-v1-secret" }) as never);
   let capturedTimeoutMs = 0;

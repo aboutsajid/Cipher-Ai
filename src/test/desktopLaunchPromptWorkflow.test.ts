@@ -8,7 +8,11 @@ function readProjectFile(path: string): string {
 }
 
 test("desktop launch prompt queues on task completion transitions and recent completions", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
+    readProjectFile("src/renderer/appAgentTaskRefreshUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /function completedTaskIsRecent\(task: AgentTask, withinMs = 20_000\): boolean/);
   assert.match(rendererSource, /function shouldQueueDesktopLaunchPrompt\(\s*task: AgentTask,\s*previousStatus: AgentTask\["status"\] \| null,/);
@@ -17,7 +21,11 @@ test("desktop launch prompt queues on task completion transitions and recent com
 });
 
 test("refreshAgentTask queues desktop launch prompts before rendering the completed task", () => {
-  const rendererSource = readProjectFile("src/renderer/app.ts");
+  const rendererSource = [
+    readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
+    readProjectFile("src/renderer/appAgentTaskRefreshUiUtils.ts")
+  ].join("\n");
 
   assert.match(rendererSource, /if \(shouldQueueDesktopLaunchPrompt\(task, previousTaskStatus, restoreState\)\) \{\s*pendingDesktopLaunchPromptTasks\.add\(task\.id\);\s*\}[\s\S]*renderAgentTask\(task, logs\);/);
 });

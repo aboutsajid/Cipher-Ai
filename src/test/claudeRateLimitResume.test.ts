@@ -70,7 +70,9 @@ test("Claude rate-limit resume prompt includes the touched project path when ava
 test("renderer appends Claude rate-limit guidance from the Claude error path", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
-    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
+    readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
+    readProjectFile("src/renderer/appIpcListenerUiUtils.ts")
   ].join("\n");
 
   assert.match(rendererSource, /function isClaudeRateLimitError\(message: string\): boolean/);
@@ -83,6 +85,7 @@ test("renderer appends Claude rate-limit guidance from the Claude error path", (
 test("renderer exposes Claude target lock, resume action, and filesystem timeline hooks", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
     readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts")
   ].join("\n");
   const rendererHtml = readProjectFile("src/renderer/index.html");

@@ -109,6 +109,27 @@ test("buildClaudeConversationPrompt carries forward prior chat context and isola
   assert.match(prompt, /Do not inspect your current working directory/i);
 });
 
+test("buildClaudeConversationPrompt carries Claude filesystem breadcrumbs for continuation turns", () => {
+  const prompt = buildClaudeConversationPrompt("continue generating the remaining files", {
+    history: [
+      { role: "user", content: "Create the project inside D:\\Cipher Agent." },
+      { role: "system", content: "[Claude filesystem] writing D:\\Cipher Agent\\pc-agent\\README.md" },
+      { role: "system", content: "Claude Code session started." },
+      { role: "assistant", content: "I hit a rate limit before finishing." },
+      { role: "user", content: "continue generating the remaining files" }
+    ]
+  }, {
+    roots: ["D:\\Cipher Agent"],
+    allowWrite: true
+  });
+
+  assert.match(prompt, /\[Conversation transcript\]/);
+  assert.match(prompt, /App:\n\[Claude filesystem\] writing D:\\Cipher Agent\\pc-agent\\README\.md/);
+  assert.doesNotMatch(prompt, /Claude Code session started\./);
+  assert.doesNotMatch(prompt, /User:\ncontinue generating the remaining files\n\n\[Approved Claude chat filesystem access\]/);
+  assert.match(prompt, /\[Latest user message\]\n\ncontinue generating the remaining files/);
+});
+
 test("sendClaudePrompt does not expose filesystem tools for vague project questions", () => {
   const manager = createClaudeManager();
   const result = sendClaudePrompt(manager as never, "I have a project, needs improvements.", {

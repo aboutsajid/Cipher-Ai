@@ -51,8 +51,11 @@ test("Claude elapsed formatter renders seconds and minute-second labels", () => 
 test("renderer uses the shared streaming timer across app activity states", () => {
   const rendererSource = [
     readProjectFile("src/renderer/app.ts"),
+    readProjectFile("src/renderer/appStateUiUtils.ts"),
     readProjectFile("src/renderer/appClaudeSafetyUiUtils.ts"),
-    readProjectFile("src/renderer/appSendUiUtils.ts")
+    readProjectFile("src/renderer/appSendUiUtils.ts"),
+    readProjectFile("src/renderer/appImageStudioUiUtils.ts"),
+    readProjectFile("src/renderer/appAgentTaskRefreshUiUtils.ts")
   ].join("\n");
 
   assert.match(rendererSource, /function startClaudeElapsedTimer\(statusText: string\): void/);
