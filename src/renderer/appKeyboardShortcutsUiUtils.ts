@@ -57,6 +57,7 @@ function setupKeyboardShortcuts() {
       const imagePreviewModal = document.getElementById("image-preview-modal");
       const agentTargetModal = document.getElementById("agent-target-modal");
       const agentPreflightModal = document.getElementById("agent-preflight-modal");
+      const agentPlanPreviewModal = document.getElementById("agent-plan-preview-modal");
       const chatProviderMenu = document.getElementById("chat-provider-menu");
       const headerToolsMenu = document.getElementById("header-tools-menu");
       const codePreviewModal = document.getElementById("code-preview-modal");
@@ -71,6 +72,10 @@ function setupKeyboardShortcuts() {
       }
       if (agentPreflightModal instanceof HTMLElement && agentPreflightModal.style.display !== "none") {
         closeAgentPromptPreflightModal(true);
+        return;
+      }
+      if (agentPlanPreviewModal instanceof HTMLElement && agentPlanPreviewModal.style.display !== "none") {
+        closeAgentPlanPreviewModal({ approved: false, prompt: "" });
         return;
       }
       if (previewWorkspace instanceof HTMLElement && previewWorkspace.style.display !== "none") {

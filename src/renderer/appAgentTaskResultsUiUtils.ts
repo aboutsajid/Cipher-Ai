@@ -215,6 +215,35 @@ function buildExhaustedRouteBadges(summary: string | undefined): string {
   `;
 }
 
+function formatDoDGateLabel(gate: string): string {
+  if (gate === "installer-smoke") return "installer smoke";
+  return gate.replace(/-/g, " ");
+}
+
+function buildDoDGateTimeline(task: AgentTask): string {
+  const outcomes = task.telemetry?.dodGateOutcomes ?? [];
+  if (outcomes.length === 0) return "";
+
+  const gateOrder: AgentTaskDoDGateId[] = ["plan", "implement", "verify", "repair", "package", "installer-smoke", "approve"];
+  const byGate = new Map(outcomes.map((entry) => [entry.gate, entry]));
+  const ordered = gateOrder
+    .map((gate) => byGate.get(gate))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  const visible = ordered.length > 0 ? ordered : outcomes;
+  const badges = visible.map((entry) => {
+    const tone = entry.status === "passed" ? "ok" : entry.status === "failed" ? "err" : "";
+    return `<span class="agent-history-badge ${tone}" title="${escHtml(entry.summary ?? "")}">${escHtml(`${formatDoDGateLabel(entry.gate)}: ${entry.status}`)}</span>`;
+  }).join("");
+
+  return `
+    <div class="task-result-overview-verify">
+      <strong>DoD gate timeline</strong>
+      <span class="task-result-overview-meta">${badges}</span>
+    </div>
+  `;
+}
+
 function formatStarterProfileLabel(profile?: string): string {
   const normalized = (profile ?? "").trim();
   if (!normalized) return "Custom";
@@ -316,12 +345,19 @@ function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): st
     task.output?.workingDirectory ? `Dir: ${task.output.workingDirectory}` : "",
     task.output?.packageName ? `Package: ${task.output.packageName}` : ""
   ].filter(Boolean);
+  const dodGateOutcomes = task.telemetry?.dodGateOutcomes ?? [];
+  const dodFailedCount = dodGateOutcomes.filter((gate) => gate.status === "failed").length;
+  const dodSkippedCount = dodGateOutcomes.filter((gate) => gate.status === "skipped").length;
   const telemetryMeta = [
+    task.telemetry?.runMode ? `Run mode: ${task.telemetry.runMode}` : "",
     task.telemetry?.selectedModel ? `Model: ${task.telemetry.selectedModel}` : "",
     task.telemetry?.fallbackUsed && task.telemetry.fallbackModel ? `Fallback: ${task.telemetry.fallbackModel}` : "",
     task.telemetry?.failureStage ? `Failure stage: ${task.telemetry.failureStage}` : "",
     task.telemetry?.failureCategory ? `Failure type: ${task.telemetry.failureCategory}` : "",
     task.telemetry?.finalVerificationResult ? `Verification result: ${task.telemetry.finalVerificationResult}` : "",
+    dodGateOutcomes.length
+      ? `DoD gates: ${dodGateOutcomes.length} (${dodFailedCount} failed${dodSkippedCount > 0 ? `, ${dodSkippedCount} skipped` : ""})`
+      : "",
     task.telemetry?.routeDiagnostics?.blacklistedModels.length
       ? `Blacklisted models: ${task.telemetry.routeDiagnostics.blacklistedModels.length}`
       : "",
@@ -331,6 +367,7 @@ function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): st
   ].filter(Boolean);
   const verificationBadges = buildVerificationMiniBadges(task.verification?.checks);
   const exhaustedRouteBadges = buildExhaustedRouteBadges(task.summary);
+  const dodGateTimeline = buildDoDGateTimeline(task);
   const packagingRetryButton = buildPackagingRetryButton(task, variant);
   const summary = task.summary ? summarizeAgentTaskSummary(task.summary, task.status) : "";
 
@@ -348,6 +385,7 @@ function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): st
           ${task.artifactType ? `<span class="agent-history-badge">${escHtml(artifactLabel)}</span>` : ""}
         </div>
         ${summary ? `<div class="task-result-overview-summary">${escHtml(summary)}</div>` : ""}
+        ${dodGateTimeline}
         ${task.verification?.summary ? `<div class="task-result-overview-verify task-result-overview-verify-compact"><strong>Verification</strong><span>${escHtml(task.verification.summary)}</span></div>` : ""}
         ${compactMeta.length > 0 ? `<div class="task-result-overview-meta">${compactMeta.map((item) => `<span class="agent-history-badge">${escHtml(item)}</span>`).join("")}</div>` : ""}
         ${verificationBadges ? `<div class="task-result-overview-meta">${verificationBadges}</div>` : ""}
@@ -362,6 +400,7 @@ function buildTaskResultOverview(task: AgentTask, variant: "main" | "panel"): st
         ${task.artifactType ? `<span class="agent-history-badge">${escHtml(artifactLabel)}</span>` : ""}
       </div>
       ${summary ? `<div class="task-result-overview-summary">${escHtml(summary)}</div>` : ""}
+      ${dodGateTimeline}
       ${buildExecutionSpecSection(task.executionSpec)}
       ${buildTaskReviewSection(task)}
       ${usage ? `<div class="task-result-overview-usage"><strong>${escHtml(usage.title)}</strong><span>${escHtml(usage.detail)}</span></div>` : ""}

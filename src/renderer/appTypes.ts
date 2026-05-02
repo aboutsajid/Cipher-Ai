@@ -1,10 +1,63 @@
-﻿interface AttachmentPayload {
+interface AttachmentPayload {
   name: string;
   type: "text" | "image";
   content: string;
   mimeType?: string;
   sourcePath?: string;
   writableRoot?: string;
+}
+type ThemeMode = "dark" | "light";
+type UiMode = "write" | "code" | "think" | "claude" | "edit";
+type ProviderMode = "openrouter" | "nvidia" | "ollama";
+type CloudProviderMode = Exclude<ProviderMode, "ollama">;
+type ImageProviderMode = CloudProviderMode | "comfyui";
+type InteractionMode = "chat" | "agent" | "image";
+type UiExperienceMode = "default" | "simple";
+type ImageStudioSortMode = "newest" | "oldest" | "prompt-az" | "prompt-za";
+type ClaudeChatFilesystemRootDraft = {
+  path: string;
+  label?: string;
+  allowWrite: boolean;
+  overwritePolicy: "create-only" | "allow-overwrite" | "ask-before-overwrite";
+};
+type ClaudeFilesystemEvent = {
+  action: string;
+  path: string;
+  createdAt: string;
+};
+interface DirectSaveStatus {
+  state: "ready" | "warn" | "off" | "blocked";
+  badge: string;
+  detail: string;
+}
+type AgentTargetPromptChoice = "suggested" | "choose" | "skip";
+interface SpeechRecognitionResultLike {
+  0: { transcript: string };
+  isFinal: boolean;
+  length: number;
+}
+interface SpeechRecognitionEventLike extends Event {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+}
+interface SpeechRecognitionLike extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: ((this: SpeechRecognitionLike, ev: Event) => unknown) | null;
+  onend: ((this: SpeechRecognitionLike, ev: Event) => unknown) | null;
+  onresult: ((this: SpeechRecognitionLike, ev: SpeechRecognitionEventLike) => unknown) | null;
+  onerror: ((this: SpeechRecognitionLike, ev: Event & { error?: string }) => unknown) | null;
+  start(): void;
+  stop(): void;
+}
+interface VirtualChatItem {
+  key: string;
+  type: "single" | "compare";
+  message?: Message;
+  compareGroup?: string;
+  slotA?: Message;
+  slotB?: Message;
 }
 type ImageGenerationAspectRatio = "1:1" | "1:2" | "2:1" | "2:3" | "3:2" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
 interface GeneratedImageAsset {
@@ -157,7 +210,16 @@ interface AgentTaskModelAttempt {
   timestamp: string;
   error?: string;
 }
+type AgentTaskRunMode = "standard" | "build-product";
+type AgentTaskDoDGateId = "plan" | "implement" | "verify" | "repair" | "package" | "installer-smoke" | "approve";
+interface AgentTaskDoDGateOutcome {
+  gate: AgentTaskDoDGateId;
+  status: "passed" | "failed" | "skipped";
+  summary: string;
+  updatedAt: string;
+}
 interface AgentTaskTelemetry {
+  runMode?: AgentTaskRunMode;
   selectedModel?: string;
   fallbackModel?: string;
   fallbackUsed: boolean;
@@ -179,6 +241,7 @@ interface AgentTaskTelemetry {
   verificationSummary?: string;
   lastStage?: string;
   failureMemoryHints?: string[];
+  dodGateOutcomes?: AgentTaskDoDGateOutcome[];
   routeDiagnostics?: AgentTaskRouteTelemetrySummary;
   modelAttempts: AgentTaskModelAttempt[];
 }
@@ -240,15 +303,60 @@ interface AgentRouteDiagnostics {
   routes: AgentModelRouteDiagnostics[];
   task?: AgentTaskRouteDiagnostics;
 }
+interface AgentTaskRunBudget {
+  maxRuntimeMs?: number;
+  maxCommands?: number;
+  maxFileEdits?: number;
+  maxRepairAttempts?: number;
+}
+interface AgentTaskRunBudgetUsage {
+  runtimeMs: number;
+  commands: number;
+  fileEdits: number;
+  repairAttempts: number;
+}
+interface AgentTaskPlanPreview {
+  prompt: string;
+  runMode: AgentTaskRunMode;
+  targetPath?: string;
+  workingDirectory: string;
+  artifactType: AgentArtifactType;
+  summary: string;
+  stages: string[];
+  workItems: string[];
+  candidateFiles: string[];
+  qualityGates: string[];
+  requiredScripts: string[];
+}
 interface AgentTaskRequest {
   prompt: string;
   attachments?: AttachmentPayload[];
   targetPath?: string;
+  runMode?: AgentTaskRunMode;
+  budget?: AgentTaskRunBudget;
+}
+interface AgentPromptPreflightIssue {
+  severity: "error" | "warn";
+  code: string;
+  message: string;
+  suggestion?: string;
+}
+interface AgentPromptPreflightResult {
+  ok: boolean;
+  normalizedPrompt: string;
+  runMode: AgentTaskRunMode;
+  inferredArtifact: AgentArtifactType;
+  requirementIds: string[];
+  issues: AgentPromptPreflightIssue[];
+  summary: string;
 }
 interface AgentTask {
   id: string;
   prompt: string;
   attachments?: AttachmentPayload[];
+  runMode?: AgentTaskRunMode;
+  budget?: AgentTaskRunBudget;
+  budgetUsage?: AgentTaskRunBudgetUsage;
   status: "running" | "completed" | "failed" | "stopped";
   createdAt: string;
   updatedAt: string;
@@ -510,6 +618,8 @@ interface Window {
       getTask: (taskId: string) => Promise<AgentTask | null>;
       getLogs: (taskId: string) => Promise<string[]>;
       getRouteDiagnostics: (taskId?: string) => Promise<AgentRouteDiagnostics>;
+      preflightPrompt: (request: string | AgentTaskRequest) => Promise<AgentPromptPreflightResult>;
+      previewPlan: (request: string | AgentTaskRequest) => Promise<AgentTaskPlanPreview>;
       startTask: (request: string | AgentTaskRequest) => Promise<AgentTask>;
       restartTask: (taskId: string, mode: AgentTaskRestartMode) => Promise<AgentTask>;
       stopTask: (taskId: string) => Promise<boolean>;
@@ -551,4 +661,5 @@ interface Window {
     };
   };
 }
+
 

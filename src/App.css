@@ -1,0 +1,17 @@
+/* Elephant Theme */
+body {
+  background-color: #F5F5DC; /* Beige Background */
+  color: #333; /* Dark Gray Text */
+}
+
+.app-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+eh-element {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 24px;
+}

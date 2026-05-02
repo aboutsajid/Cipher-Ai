@@ -639,8 +639,17 @@
             </select>
           </div>
           <small class="field-help">Build Product enforces plan -> implement -> verify -> repair -> package -> installer smoke -> approve. Standard skips product-only packaging gates.</small>
+          <div class="field-row" style="align-items:center; gap:8px; flex-wrap:wrap;">
+            <label class="field-label" for="agent-budget-runtime-minutes" style="margin:0;">Run budgets</label>
+            <input id="agent-budget-runtime-minutes" type="number" min="1" step="1" class="field-input" style="max-width:160px;" placeholder="Max minutes" />
+            <input id="agent-budget-commands" type="number" min="1" step="1" class="field-input" style="max-width:150px;" placeholder="Max commands" />
+            <input id="agent-budget-files" type="number" min="1" step="1" class="field-input" style="max-width:150px;" placeholder="Max files" />
+            <input id="agent-budget-retries" type="number" min="1" step="1" class="field-input" style="max-width:150px;" placeholder="Max repairs" />
+          </div>
+          <small class="field-help">Optional guardrails. Leave blank for no limit.</small>
           <p id="agent-preflight-msg" class="status-msg"></p>
           <div class="btn-row">
+            <button id="agent-preview-plan-btn" class="btn-ghost" type="button">Preview Plan</button>
             <button id="agent-start-btn" class="btn-primary" type="button">Start Agent</button>
             <button id="agent-stop-btn" class="btn-ghost" type="button">Stop Agent</button>
             <button id="agent-restore-btn" class="btn-ghost" type="button">Restore Rollback</button>
@@ -942,6 +951,27 @@
     </div>
   </div>
 
+  <div id="agent-plan-preview-modal" class="modal-overlay" style="display:none">
+    <div class="modal agent-plan-preview-modal" role="dialog" aria-modal="true" aria-labelledby="agent-plan-preview-title">
+      <div class="code-preview-header">
+        <p id="agent-plan-preview-title" class="modal-title">Plan Preview</p>
+        <button id="agent-plan-preview-close-btn" class="btn-ghost-sm" type="button">Close</button>
+      </div>
+      <p id="agent-plan-preview-summary" class="field-help">Preview the plan and adjust prompt before run.</p>
+      <label class="field-label" for="agent-plan-preview-prompt">Prompt</label>
+      <textarea id="agent-plan-preview-prompt" class="field-input" rows="6" spellcheck="true"></textarea>
+      <div class="field-row" style="justify-content:space-between; align-items:center;">
+        <span id="agent-plan-preview-budget" class="field-help"></span>
+        <button id="agent-plan-preview-refresh-btn" class="btn-ghost-sm" type="button">Refresh Preview</button>
+      </div>
+      <div id="agent-plan-preview-details" class="agent-plan-preview-details"></div>
+      <div class="btn-row">
+        <button id="agent-plan-preview-approve-btn" class="btn-primary" type="button">Approve &amp; Run</button>
+        <button id="agent-plan-preview-cancel-btn" class="btn-ghost" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="agent-preflight-modal" class="modal-overlay" style="display:none">
     <div class="modal agent-preflight-modal" role="dialog" aria-modal="true" aria-labelledby="agent-preflight-modal-title">
       <div class="code-preview-header">
@@ -1011,6 +1041,7 @@
   <script src="./appAgentRouteSummaryUiUtils.js"></script>
   <script src="./appAgentRouteHealthUiUtils.js"></script>
   <script src="./appAgentPromptPreflightUiUtils.js"></script>
+  <script src="./appAgentPlanPreviewUiUtils.js"></script>
   <script src="./appAgentRouteDiagnosticsUiUtils.js"></script>
   <script src="./appAgentTaskResultsUiUtils.js"></script>
   <script src="./appAgentHistoryUiUtils.js"></script>

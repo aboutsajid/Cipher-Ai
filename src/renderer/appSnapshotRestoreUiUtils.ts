@@ -128,3 +128,10 @@ function closeSnapshotRestoreModal(): void {
   $("snapshot-compare-summary").textContent = "";
   $("snapshot-compare-section").style.display = "none";
 }
+
+function reportSnapshotRestoreResult(message: string, ok: boolean): void {
+  setAgentStatus(message, ok ? "ok" : "err");
+  if (!ok || rightPanelTab !== "agent") {
+    showToast(message, ok ? 2600 : 3800);
+  }
+}

@@ -46,6 +46,93 @@ function getSelectedAgentRunMode(): AgentTaskRunMode {
   return selectedMode;
 }
 
+function parseAgentBudgetInt(value: string, max: number): number | undefined {
+  const normalized = (value ?? "").trim();
+  if (!normalized) return undefined;
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.min(max, parsed);
+}
+
+function getSelectedAgentRunBudget(): AgentTaskRunBudget | undefined {
+  const runtimeInput = document.getElementById("agent-budget-runtime-minutes");
+  const commandsInput = document.getElementById("agent-budget-commands");
+  const filesInput = document.getElementById("agent-budget-files");
+  const retriesInput = document.getElementById("agent-budget-retries");
+  const runtimeMinutes = runtimeInput instanceof HTMLInputElement ? parseAgentBudgetInt(runtimeInput.value, 480) : undefined;
+  const maxCommands = commandsInput instanceof HTMLInputElement ? parseAgentBudgetInt(commandsInput.value, 300) : undefined;
+  const maxFileEdits = filesInput instanceof HTMLInputElement ? parseAgentBudgetInt(filesInput.value, 500) : undefined;
+  const maxRepairAttempts = retriesInput instanceof HTMLInputElement ? parseAgentBudgetInt(retriesInput.value, 100) : undefined;
+  const budget: AgentTaskRunBudget = {};
+  if (runtimeMinutes) budget.maxRuntimeMs = runtimeMinutes * 60_000;
+  if (maxCommands) budget.maxCommands = maxCommands;
+  if (maxFileEdits) budget.maxFileEdits = maxFileEdits;
+  if (maxRepairAttempts) budget.maxRepairAttempts = maxRepairAttempts;
+  return Object.keys(budget).length > 0 ? budget : undefined;
+}
+
+async function ensurePromptPreflightReady(prompt: string, runMode: AgentTaskRunMode): Promise<string | null> {
+  let promptForRun = (prompt ?? "").trim();
+  if (!promptForRun) return null;
+  let preflightResult = await runAgentPromptPreflight(promptForRun, runMode);
+  renderAgentPromptPreflight(preflightResult);
+  if (!preflightResult.ok) {
+    const consented = requestAgentPromptAutoEnhanceConsent(preflightResult);
+    if (consented) {
+      const enhanced = await autoEnhanceAgentPromptForPreflight(promptForRun, runMode, preflightResult);
+      if (enhanced.enhanced) {
+        promptForRun = enhanced.prompt;
+        preflightResult = enhanced.preflight;
+        applyAgentPromptToInputs(promptForRun);
+        renderAgentPromptPreflight(preflightResult);
+        showToast("Prompt auto-enhanced by agent preflight.", 2200);
+        if (preflightResult.ok) {
+          setAgentStatus("Prompt auto-enhanced. Ready to run.");
+        }
+      }
+    } else {
+      setAgentStatus("Auto-enhancement skipped. Review prompt issues in popup.", "err");
+    }
+  }
+  if (!preflightResult.ok) {
+    openAgentPromptPreflightModal(preflightResult);
+    const blockingMessage = getAgentPromptPreflightBlockingMessage(preflightResult);
+    setAgentStatus("Start blocked. Review prompt issues in popup.", "err");
+    showToast(blockingMessage, 3600);
+    return null;
+  }
+  return promptForRun;
+}
+
+async function previewAgentPlanForPrompt(prompt: string, runMode: AgentTaskRunMode): Promise<AgentPlanPreviewModalResolution | null> {
+  const normalizedPrompt = (prompt ?? "").trim();
+  if (!normalizedPrompt) return null;
+  const targetPath = getRequestedAgentTargetPath();
+  const budget = getSelectedAgentRunBudget();
+  return openAgentPlanPreviewModal(normalizedPrompt, runMode, targetPath || undefined, budget);
+}
+
+async function previewAgentPlanForCurrentPrompt(): Promise<boolean> {
+  const source = resolveAgentPromptInput();
+  if (!source) {
+    setAgentStatus("Agent prompt required for plan preview.", "err");
+    return false;
+  }
+  const runMode = getSelectedAgentRunMode();
+  const preflightReadyPrompt = await ensurePromptPreflightReady(source.input.value, runMode);
+  if (!preflightReadyPrompt) return false;
+  const previewResult = await previewAgentPlanForPrompt(preflightReadyPrompt, runMode);
+  if (!previewResult) return false;
+  if (previewResult.approved && previewResult.prompt.trim()) {
+    applyAgentPromptToInputs(previewResult.prompt.trim());
+    setAgentStatus("Plan approved. Press Start Agent to run.");
+    showToast("Plan approved and prompt updated.", 1800);
+    return true;
+  }
+  setAgentStatus("Plan preview closed.");
+  return false;
+}
+
 async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
   const normalized = (prompt ?? "").trim();
   if (!normalized) {
@@ -59,37 +146,28 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
   const attachmentsToSend = [...activeAttachments];
   const targetPath = getRequestedAgentTargetPath();
   const runMode = getSelectedAgentRunMode();
+  const budget = getSelectedAgentRunBudget();
   let promptForRun = normalized;
-  let preflightResult: AgentPromptPreflightResult | null = null;
 
   try {
-    preflightResult = await runAgentPromptPreflight(promptForRun, runMode);
-    renderAgentPromptPreflight(preflightResult);
-    if (!preflightResult.ok) {
-      const consented = requestAgentPromptAutoEnhanceConsent(preflightResult);
-      if (consented) {
-        const enhanced = await autoEnhanceAgentPromptForPreflight(promptForRun, runMode, preflightResult);
-        if (enhanced.enhanced) {
-          promptForRun = enhanced.prompt;
-          preflightResult = enhanced.preflight;
-          applyAgentPromptToInputs(promptForRun);
-          renderAgentPromptPreflight(preflightResult);
-          showToast("Prompt auto-enhanced by agent preflight.", 2200);
-          if (preflightResult.ok) {
-            setAgentStatus("Prompt auto-enhanced. Starting task...");
-          }
-        }
-      } else {
-        setAgentStatus("Auto-enhancement skipped. Review prompt issues in popup.", "err");
-      }
-    }
-    if (!preflightResult.ok) {
-      openAgentPromptPreflightModal(preflightResult);
-      const blockingMessage = getAgentPromptPreflightBlockingMessage(preflightResult);
-      setAgentStatus("Start blocked. Review prompt issues in popup.", "err");
-      showToast(blockingMessage, 3600);
+    const preflightReadyPrompt = await ensurePromptPreflightReady(promptForRun, runMode);
+    if (!preflightReadyPrompt) return false;
+    promptForRun = preflightReadyPrompt;
+
+    const planPreview = await previewAgentPlanForPrompt(promptForRun, runMode);
+    if (!planPreview || !planPreview.approved) {
+      setAgentStatus("Agent run cancelled at plan preview.");
       return false;
     }
+    promptForRun = (planPreview.prompt ?? "").trim();
+    if (!promptForRun) {
+      setAgentStatus("Agent prompt required.", "err");
+      return false;
+    }
+    const afterPlanPreflight = await ensurePromptPreflightReady(promptForRun, runMode);
+    if (!afterPlanPreflight) return false;
+    promptForRun = afterPlanPreflight;
+
     const warning = getAgentApprovalWarning(promptForRun);
     if (warning && !window.confirm(warning)) {
       setAgentStatus("Agent task cancelled before start.");
@@ -103,7 +181,8 @@ async function startAgentTaskPrompt(prompt: string): Promise<boolean> {
       prompt: promptForRun,
       attachments: attachmentsToSend,
       targetPath: targetPath || undefined,
-      runMode
+      runMode,
+      budget
     });
     activeAgentRestoreState = null;
     activeAgentTaskId = task.id;

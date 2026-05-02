@@ -134,6 +134,91 @@ function setImageStudioStatus(message: string): void {
   }
 }
 
+async function submitImageGeneration(): Promise<void> {
+  if (imageGenerationSubmitting) return;
+
+  const promptInput = $("image-generation-prompt-input") as HTMLTextAreaElement;
+  const modelInput = $("image-generation-model-input") as HTMLInputElement;
+  const aspectSelect = $("image-generation-aspect-select") as HTMLSelectElement;
+  const submitBtn = $("image-generation-submit-btn") as HTMLButtonElement;
+  const cancelBtn = $("image-generation-cancel-btn") as HTMLButtonElement;
+  const prompt = promptInput.value.trim();
+  const imageProvider = getActiveImageGenerationProvider() ?? "openrouter";
+  const requestedModel = modelInput.value.trim();
+  const model = isProviderCompatibleImageModel(imageProvider, requestedModel)
+    ? requestedModel
+    : getDefaultImageGenerationModel(imageProvider);
+  const aspectRatio = (aspectSelect.value || "1:1") as ImageGenerationAspectRatio;
+
+  if (!prompt) {
+    showToast("Image prompt required.", 2200);
+    promptInput.focus();
+    return;
+  }
+
+  imageGenerationSubmitting = true;
+  submitBtn.disabled = true;
+  cancelBtn.disabled = true;
+  submitBtn.textContent = "Generating...";
+
+  const chatId = await ensureActiveChatId();
+  const userMessage: Message = {
+    id: nextClientMessageId("img-user"),
+    role: "user",
+    content: buildImageGenerationUserPrompt(prompt, aspectRatio),
+    createdAt: new Date().toISOString()
+  };
+
+  appendMessage(userMessage);
+  await window.api.chat.appendMessage(chatId, userMessage);
+  void loadChatList();
+  setStreamingUi(true, "Generating image...");
+
+  try {
+    const result = await window.api.images.generate({ prompt, provider: imageProvider, model, aspectRatio });
+    const assistantMessage: Message = {
+      id: nextClientMessageId("img-assistant"),
+      role: "assistant",
+      content: buildImageGenerationAssistantMessage(result),
+      createdAt: new Date().toISOString(),
+      model: result.model,
+      metadata: result.images.some((image) => Boolean(image.id))
+        ? { generatedImageAssetIds: result.images.map((image) => image.id ?? "").filter(Boolean) }
+        : undefined
+    };
+    appendMessage(assistantMessage);
+    await window.api.chat.appendMessage(chatId, assistantMessage);
+    void loadChatList();
+    void maybeGenerateTitle(chatId);
+    if (document.getElementById("image-history-modal") instanceof HTMLElement
+      && ($("image-history-modal") as HTMLElement).style.display !== "none") {
+      void refreshImageHistory();
+    }
+    closeImageGenerationModal(true);
+    showToast(`Generated ${result.images.length} image${result.images.length === 1 ? "" : "s"}.`, 2200);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Image generation failed.";
+    const assistantError: Message = {
+      id: nextClientMessageId("img-error"),
+      role: "assistant",
+      content: message,
+      createdAt: new Date().toISOString(),
+      model: "Image Generation",
+      error: message
+    };
+    appendMessage(assistantError);
+    await window.api.chat.appendMessage(chatId, assistantError);
+    void loadChatList();
+    showToast(message, 3600);
+  } finally {
+    imageGenerationSubmitting = false;
+    submitBtn.disabled = false;
+    cancelBtn.disabled = false;
+    submitBtn.textContent = "Generate";
+    setStreamingUi(false);
+  }
+}
+
 function getDefaultImageGenerationModel(provider = getActiveImageGenerationProvider()): string {
   if (provider === "comfyui") {
     return COMFYUI_DEFAULT_IMAGE_MODEL;

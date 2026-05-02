@@ -1,10 +1,18 @@
 function setupAgentControls(): void {
   const agentInput = $("agent-prompt-input") as HTMLTextAreaElement;
   const agentTargetInput = $("agent-target-input") as HTMLInputElement;
+  const agentRunModeSelect = $("agent-run-mode-select") as HTMLSelectElement;
+  hydrateAgentRunModeSelection();
+  agentRunModeSelect.addEventListener("change", () => {
+    const nextMode = normalizeAgentRunMode(agentRunModeSelect.value);
+    syncAgentRunModeSelection(nextMode);
+    scheduleAgentPromptPreflight(agentInput.value, nextMode);
+  });
   agentInput.addEventListener("input", () => {
     if (currentInteractionMode === "agent") {
       syncComposerAgentPrompts("agent");
     }
+    scheduleAgentPromptPreflight(agentInput.value, getSelectedAgentRunMode());
   });
   agentInput.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -39,6 +47,12 @@ function setupAgentControls(): void {
   $("agent-target-clear-btn").addEventListener("click", () => {
     agentTargetInput.value = "";
     agentTargetInput.focus();
+  });
+
+  scheduleAgentPromptPreflight(agentInput.value, getSelectedAgentRunMode());
+
+  $("agent-preview-plan-btn").addEventListener("click", () => {
+    void previewAgentPlanForCurrentPrompt();
   });
 
   $("agent-start-btn").addEventListener("click", async () => {
